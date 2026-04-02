@@ -1,6 +1,8 @@
 use crate::domain::{Book, Chapter, FormatReader};
 use crate::error::{EruditioError, Result};
+#[cfg(feature = "cb7")]
 use crate::formats::cb7::Cb7Reader;
+#[cfg(feature = "cbr")]
 use crate::formats::cbr::CbrReader;
 use crate::formats::cbz::CbzReader;
 use std::io::{Cursor, Read};
@@ -161,7 +163,9 @@ fn read_inner_comic(data: &[u8], filename: &str) -> Result<Book> {
 
     match ext.as_str() {
         "cbz" => CbzReader::new().read_book(&mut cursor),
+        #[cfg(feature = "cbr")]
         "cbr" => CbrReader::new().read_book(&mut cursor),
+        #[cfg(feature = "cb7")]
         "cb7" => Cb7Reader::new().read_book(&mut cursor),
         _ => {
             // Try to detect by magic bytes
@@ -169,9 +173,11 @@ fn read_inner_comic(data: &[u8], filename: &str) -> Result<Book> {
                 if data.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
                     return CbzReader::new().read_book(&mut cursor);
                 }
+                #[cfg(feature = "cbr")]
                 if data.starts_with(b"Rar!\x1a\x07") {
                     return CbrReader::new().read_book(&mut cursor);
                 }
+                #[cfg(feature = "cb7")]
                 if data.starts_with(b"7z\xbc\xaf\x27\x1c") {
                     return Cb7Reader::new().read_book(&mut cursor);
                 }

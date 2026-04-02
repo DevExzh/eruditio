@@ -2,11 +2,13 @@ use std::collections::HashMap;
 
 use crate::domain::format::Format;
 use crate::domain::traits::{FormatReader, FormatWriter};
+#[cfg(feature = "cb7")]
+use crate::formats::cb7::Cb7Reader;
+#[cfg(feature = "cbr")]
+use crate::formats::cbr::CbrReader;
 use crate::formats::{
     azw4::Azw4Reader,
-    cb7::Cb7Reader,
     cbc::CbcReader,
-    cbr::CbrReader,
     cbz::{CbzReader, CbzWriter},
     chm::ChmReader,
     djvu::DjvuReader,
@@ -60,9 +62,11 @@ impl FormatRegistry {
         registry.register_writer(Format::Cbz, Box::new(CbzWriter::new()));
 
         // CB7 (Comic Book 7z, read-only)
+        #[cfg(feature = "cb7")]
         registry.register_reader(Format::Cb7, Box::new(Cb7Reader::new()));
 
         // CBR (Comic Book RAR, read-only)
+        #[cfg(feature = "cbr")]
         registry.register_reader(Format::Cbr, Box::new(CbrReader::new()));
 
         // CBC (Comic Book Collection, read-only)

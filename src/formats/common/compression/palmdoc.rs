@@ -15,6 +15,9 @@ use crate::error::{EruditioError, Result};
 /// Maximum uncompressed text record size.
 pub const RECORD_SIZE: usize = 4096;
 
+/// Maximum decompression output size (256 MB) to prevent decompression bombs.
+const MAX_DECOMPRESS_OUTPUT: usize = 256 * 1024 * 1024;
+
 /// Maximum LZ77 back-reference distance.
 const MAX_DISTANCE: usize = 2047;
 
@@ -240,6 +243,12 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
                 }
 
                 let start = output.len() - distance;
+                if output.len().saturating_add(length) > MAX_DECOMPRESS_OUTPUT {
+                    return Err(EruditioError::Compression(
+                        "PalmDoc: decompressed output exceeds size limit".into(),
+                    ));
+                }
+
                 if distance >= length {
                     // Non-overlapping: bulk copy is safe.
                     // Derive both pointers from as_mut_ptr() to avoid creating

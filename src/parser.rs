@@ -1,15 +1,18 @@
 use crate::domain::{Book, FormatReader};
 use crate::error::{EruditioError, Result};
 use crate::formats::{
-    azw4::Azw4Reader, cb7::Cb7Reader, cbc::CbcReader, cbr::CbrReader, cbz::CbzReader,
+    azw4::Azw4Reader, cbc::CbcReader, cbz::CbzReader,
     chm::ChmReader, djvu::DjvuReader, epub::EpubReader, fb2::Fb2Reader, fbz::FbzReader,
     html::HtmlReader, htmlz::HtmlzReader, kepub::KepubReader, lit::LitReader, lrf::LrfReader,
     md::MdReader, mobi::MobiReader, oeb::OebReader, pdb::PdbReader, pdf::PdfReader, pml::PmlReader,
     pmlz::PmlzReader, rb::RbReader, rtf::RtfReader, snb::SnbReader, tcr::TcrReader, txt::TxtReader,
     txtz::TxtzReader,
 };
+#[cfg(feature = "cb7")]
+use crate::formats::cb7::Cb7Reader;
+#[cfg(feature = "cbr")]
+use crate::formats::cbr::CbrReader;
 use std::io::Read;
-use std::path::Path;
 
 /// High-level parser that can automatically detect and parse various ebook formats.
 pub struct EruditioParser;
@@ -20,7 +23,9 @@ impl EruditioParser {
         match format_hint {
             Some(fmt) => match fmt.to_lowercase().as_str() {
                 "cbz" => CbzReader::new().read_book(reader),
+                #[cfg(feature = "cb7")]
                 "cb7" => Cb7Reader::new().read_book(reader),
+                #[cfg(feature = "cbr")]
                 "cbr" => CbrReader::new().read_book(reader),
                 "cbc" => CbcReader::new().read_book(reader),
                 "djvu" | "djv" => DjvuReader::new().read_book(reader),
@@ -62,7 +67,8 @@ impl EruditioParser {
     }
 
     /// Convenience method to parse an ebook from a file path.
-    pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<Book> {
+    #[cfg(feature = "native-fs")]
+    pub fn parse_file<P: AsRef<std::path::Path>>(path: P) -> Result<Book> {
         let path_ref = path.as_ref();
         let extension = path_ref.extension().and_then(|e| e.to_str()).unwrap_or("");
 

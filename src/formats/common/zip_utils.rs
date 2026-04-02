@@ -2,14 +2,18 @@ use crate::error::{EruditioError, Result};
 use std::io::{Read, Seek};
 use zip::ZipArchive;
 
+/// Maximum decompressed size for a single ZIP entry (256 MB).
+const MAX_ZIP_ENTRY: u64 = 256 * 1024 * 1024;
+
 /// Reads a file from a ZIP archive by name, returning its contents as a `String`.
 pub fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<String> {
-    let mut file = archive
+    let file = archive
         .by_name(name)
         .map_err(|_| EruditioError::Format(format!("File not found in archive: {}", name)))?;
 
     let mut contents = String::new();
-    file.read_to_string(&mut contents)
+    file.take(MAX_ZIP_ENTRY)
+        .read_to_string(&mut contents)
         .map_err(EruditioError::Io)?;
 
     Ok(contents)
@@ -17,12 +21,14 @@ pub fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) ->
 
 /// Reads a file from a ZIP archive by name, returning its contents as raw bytes.
 pub fn read_zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<Vec<u8>> {
-    let mut file = archive
+    let file = archive
         .by_name(name)
         .map_err(|_| EruditioError::Format(format!("File not found in archive: {}", name)))?;
 
     let mut data = Vec::new();
-    file.read_to_end(&mut data).map_err(EruditioError::Io)?;
+    file.take(MAX_ZIP_ENTRY)
+        .read_to_end(&mut data)
+        .map_err(EruditioError::Io)?;
 
     Ok(data)
 }

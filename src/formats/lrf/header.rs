@@ -227,11 +227,13 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
     Ok(meta)
 }
 
-/// Standard zlib decompression.
+/// Standard zlib decompression with output size cap to prevent decompression bombs.
 fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = ZlibDecoder::new(data);
+    const MAX_DECOMPRESS: u64 = 256 * 1024 * 1024; // 256 MB
+    let decoder = ZlibDecoder::new(data);
+    let mut limited = decoder.take(MAX_DECOMPRESS);
     let mut output = Vec::new();
-    decoder
+    limited
         .read_to_end(&mut output)
         .map_err(|e| EruditioError::Compression(format!("LRF zlib decompression error: {}", e)))?;
     Ok(output)

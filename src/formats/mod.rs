@@ -4,8 +4,10 @@
 pub mod common;
 
 pub mod azw4;
+#[cfg(feature = "cb7")]
 pub mod cb7;
 pub mod cbc;
+#[cfg(feature = "cbr")]
 pub mod cbr;
 pub mod cbz;
 pub mod chm;
@@ -33,8 +35,10 @@ pub mod txt;
 pub mod txtz;
 
 pub use azw4::Azw4Reader;
+#[cfg(feature = "cb7")]
 pub use cb7::Cb7Reader;
 pub use cbc::CbcReader;
+#[cfg(feature = "cbr")]
 pub use cbr::CbrReader;
 pub use cbz::{CbzReader, CbzWriter};
 pub use chm::ChmReader;

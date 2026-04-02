@@ -485,9 +485,11 @@ pub fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
                 current_content.clear();
             }
             pos += "<!-- pagebreak -->".len();
+        } else if let Some(ch) = html[pos..].chars().next() {
+            current_content.push(ch);
+            pos += ch.len_utf8();
         } else {
-            current_content.push(html[pos..].chars().next().unwrap());
-            pos += html[pos..].chars().next().unwrap().len_utf8();
+            break;
         }
     }
 
@@ -594,10 +596,11 @@ fn html_to_pml(html: &str, pml: &mut String) {
             let (ch, consumed) = decode_entity(html, pos);
             pml_escape_char(pml, ch);
             pos += consumed;
-        } else {
-            let ch = html[pos..].chars().next().unwrap();
+        } else if let Some(ch) = html[pos..].chars().next() {
             pml_escape_char(pml, ch);
             pos += ch.len_utf8();
+        } else {
+            break;
         }
     }
 }
