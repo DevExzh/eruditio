@@ -11,6 +11,9 @@ use crate::domain::{Book, Chapter, FormatReader};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::itss::{self, DirectoryEntry};
 
+/// Maximum number of directory entries to prevent DoS from crafted files.
+const MAX_ENTRIES: usize = 1_000_000;
+
 // Well-known internal paths
 const RESET_TABLE_PATH: &str = "::DataSpace/Storage/MSCompressed/Transform/\
     {7FC28940-9D31-11D0-9B27-00A0C91E9C7C}/InstanceData/ResetTable";
@@ -54,13 +57,17 @@ impl ChmContainer {
                 "Unsupported ITSF version: {version}"
             )));
         }
-        let header_len = itss::i32_le(&data[8..]) as usize;
-        let dir_offset = itss::u64_le(&data[0x48..]) as usize;
-        let dir_len = itss::u64_le(&data[0x50..]) as usize;
+        let header_len = usize::try_from(itss::i32_le(&data[8..]))
+            .map_err(|_| EruditioError::Format("CHM: negative header length".into()))?;
+        let dir_offset = usize::try_from(itss::u64_le(&data[0x48..]))
+            .map_err(|_| EruditioError::Format("CHM: directory offset too large".into()))?;
+        let dir_len = usize::try_from(itss::u64_le(&data[0x50..]))
+            .map_err(|_| EruditioError::Format("CHM: directory length too large".into()))?;
         let data_offset = if version == 3 && header_len >= 0x60 {
             itss::u64_le(&data[0x58..])
         } else {
-            (dir_offset + dir_len) as u64
+            u64::try_from(dir_offset + dir_len)
+                .map_err(|_| EruditioError::Format("CHM: data offset overflow".into()))?
         };
 
         if dir_offset + 0x54 > data.len() {
@@ -82,7 +89,8 @@ impl ChmContainer {
                 "Unsupported ITSP version: {itsp_version}"
             )));
         }
-        let itsp_header_len = itss::i32_le(&itsp[8..]) as usize;
+        let itsp_header_len = usize::try_from(itss::i32_le(&itsp[8..]))
+            .map_err(|_| EruditioError::Format("CHM: negative ITSP header length".into()))?;
         let block_len = itss::u32_le(&itsp[0x10..]) as usize;
         let num_blocks = itss::u32_le(&itsp[0x28..]) as usize;
 
@@ -111,6 +119,11 @@ impl ChmContainer {
 
             if let Ok(block_entries) = itss::parse_listing_entries(entry_data, entry_data_len) {
                 entries.extend(block_entries);
+                if entries.len() > MAX_ENTRIES {
+                    return Err(EruditioError::Format(
+                        "CHM: too many directory entries (possible corrupt file)".into(),
+                    ));
+                }
             }
         }
 
@@ -132,8 +145,17 @@ impl ChmContainer {
 
         if entry.section == 0 {
             // Uncompressed: read directly from data_offset + entry.offset
-            let start = (self.data_offset + entry.offset) as usize;
-            let end = start + entry.size as usize;
+            let start = self
+                .data_offset
+                .checked_add(entry.offset)
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| {
+                    EruditioError::Parse(format!("CHM entry '{name}' offset overflow"))
+                })?;
+            let end = usize::try_from(entry.size)
+                .ok()
+                .and_then(|sz| start.checked_add(sz))
+                .ok_or_else(|| EruditioError::Parse(format!("CHM entry '{name}' size overflow")))?;
             if end > self.data.len() {
                 return Err(EruditioError::Parse(format!(
                     "CHM entry '{name}' extends past file end"
@@ -146,8 +168,15 @@ impl ChmContainer {
             let decompressed = self.decompressed.as_ref().ok_or_else(|| {
                 EruditioError::Parse("CHM decompressed data unavailable after decompression".into())
             })?;
-            let start = entry.offset as usize;
-            let end = start + entry.size as usize;
+            let start = usize::try_from(entry.offset).map_err(|_| {
+                EruditioError::Parse(format!("CHM compressed entry '{name}' offset too large"))
+            })?;
+            let end = usize::try_from(entry.size)
+                .ok()
+                .and_then(|sz| start.checked_add(sz))
+                .ok_or_else(|| {
+                    EruditioError::Parse(format!("CHM compressed entry '{name}' size overflow"))
+                })?;
             if end > decompressed.len() {
                 return Err(EruditioError::Parse(format!(
                     "CHM compressed entry '{name}' extends past decompressed data"
@@ -184,8 +213,19 @@ impl ChmContainer {
             .get(name)
             .ok_or_else(|| EruditioError::Parse(format!("CHM entry not found: {name}")))?;
 
-        let start = (self.data_offset + entry.offset) as usize;
-        let end = start + entry.size as usize;
+        let start = self
+            .data_offset
+            .checked_add(entry.offset)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| {
+                EruditioError::Parse(format!("CHM section 0 entry '{name}' offset overflow"))
+            })?;
+        let end = usize::try_from(entry.size)
+            .ok()
+            .and_then(|sz| start.checked_add(sz))
+            .ok_or_else(|| {
+                EruditioError::Parse(format!("CHM section 0 entry '{name}' size overflow"))
+            })?;
         if end > self.data.len() {
             return Err(EruditioError::Parse(format!(
                 "CHM section 0 entry '{name}' extends past file end"

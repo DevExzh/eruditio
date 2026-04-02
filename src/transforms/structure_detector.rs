@@ -43,40 +43,54 @@ impl Transform for StructureDetector {
 
 /// Extracts heading text and level from HTML content.
 ///
-/// Finds `<h1>` through `<h3>` tags and returns their text content
-/// stripped of inner HTML. Returns (title, level) pairs.
+/// Performs a single linear scan of the document so headings are returned
+/// in document order (not grouped by level).
 fn extract_headings(html: &str) -> Vec<(String, u8)> {
     let mut headings = Vec::new();
+    let mut search_from = 0;
 
-    for level in 1..=3u8 {
-        let open_tag = format!("<h{}", level);
+    while search_from < html.len() {
+        // Find the next "<h" which could be h1, h2, or h3.
+        let pos = match html[search_from..].find("<h") {
+            Some(p) => search_from + p,
+            None => break,
+        };
+        let after_h = pos + 2;
+        if after_h >= html.len() {
+            break;
+        }
+
+        let level_byte = html.as_bytes()[after_h];
+        if !matches!(level_byte, b'1' | b'2' | b'3') {
+            search_from = pos + 1;
+            continue;
+        }
+        let level = level_byte - b'0';
         let close_tag = format!("</h{}>", level);
 
-        let mut search_from = 0;
-        while let Some(start) = html[search_from..].find(&open_tag) {
-            let abs_start = search_from + start;
+        // Find the end of the opening tag.
+        let content_start = match html[pos..].find('>') {
+            Some(gt) => pos + gt + 1,
+            None => break,
+        };
 
-            // Find the end of the opening tag.
-            let content_start = match html[abs_start..].find('>') {
-                Some(pos) => abs_start + pos + 1,
-                None => break,
-            };
+        // Find the closing tag.
+        let content_end = match html[content_start..].find(&close_tag) {
+            Some(ct) => content_start + ct,
+            None => {
+                search_from = content_start;
+                continue;
+            },
+        };
 
-            // Find the closing tag.
-            let content_end = match html[content_start..].find(&close_tag) {
-                Some(pos) => content_start + pos,
-                None => break,
-            };
+        let inner = &html[content_start..content_end];
+        let text = strip_tags(inner).trim().to_string();
 
-            let inner = &html[content_start..content_end];
-            let text = strip_tags(inner).trim().to_string();
-
-            if !text.is_empty() {
-                headings.push((text, level));
-            }
-
-            search_from = content_end + close_tag.len();
+        if !text.is_empty() {
+            headings.push((text, level));
         }
+
+        search_from = content_end + close_tag.len();
     }
 
     headings

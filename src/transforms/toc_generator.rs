@@ -1,5 +1,7 @@
 //! Generates or rebuilds the table of contents from spine content.
 
+use std::collections::HashSet;
+
 use crate::domain::Book;
 use crate::domain::toc::TocItem;
 use crate::domain::traits::Transform;
@@ -21,7 +23,7 @@ impl Transform for TocGenerator {
         let mut result = book;
 
         // Collect hrefs already in the TOC.
-        let existing_hrefs: Vec<String> = collect_toc_hrefs(&result.toc);
+        let existing_hrefs = collect_toc_hrefs(&result.toc);
 
         // Add entries for spine items that aren't already in the TOC.
         let mut new_entries = Vec::new();
@@ -81,14 +83,23 @@ fn strip_inner_tags(html: &str) -> String {
     result
 }
 
-/// Recursively collects all hrefs from a TOC tree.
-fn collect_toc_hrefs(items: &[TocItem]) -> Vec<String> {
-    let mut hrefs = Vec::new();
-    for item in items {
-        hrefs.push(item.href.clone());
-        hrefs.extend(collect_toc_hrefs(&item.children));
-    }
+/// Recursively collects all hrefs from a TOC tree into a set for O(1) lookup.
+fn collect_toc_hrefs(items: &[TocItem]) -> HashSet<String> {
+    let mut hrefs = HashSet::new();
+    collect_toc_hrefs_into(items, &mut hrefs);
     hrefs
+}
+
+fn collect_toc_hrefs_into(items: &[TocItem], out: &mut HashSet<String>) {
+    let mut stack: Vec<&[TocItem]> = vec![items];
+    while let Some(current) = stack.pop() {
+        for item in current {
+            out.insert(item.href.clone());
+            if !item.children.is_empty() {
+                stack.push(&item.children);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

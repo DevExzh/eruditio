@@ -42,15 +42,21 @@ pub fn u64_le(data: &[u8]) -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Format a 16-byte GUID in Microsoft registry format: `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`.
-pub fn format_guid(data: &[u8]) -> String {
-    assert!(data.len() >= 16);
+///
+/// Returns an error if `data` contains fewer than 16 bytes.
+pub fn format_guid(data: &[u8]) -> Result<String> {
+    if data.len() < 16 {
+        return Err(EruditioError::Parse(
+            "GUID data too short (need 16 bytes)".into(),
+        ));
+    }
     let d1 = u32_le(&data[0..4]);
     let d2 = u16_le(&data[4..6]);
     let d3 = u16_le(&data[6..8]);
-    format!(
+    Ok(format!(
         "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
         d1, d2, d3, data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -70,9 +76,17 @@ pub fn encint(data: &[u8]) -> Result<(u64, usize)> {
                 "Unexpected end of data in encint".into(),
             ));
         }
+        // A u64 holds at most 64 bits; each continuation byte contributes 7,
+        // so more than 10 bytes would overflow.
+        if pos >= 10 {
+            return Err(EruditioError::Parse("encint overflow (>10 bytes)".into()));
+        }
         let b = data[pos];
         pos += 1;
-        val = (val << 7) | u64::from(b & 0x7F);
+        val = val
+            .checked_shl(7)
+            .and_then(|v| v.checked_add(u64::from(b & 0x7F)))
+            .ok_or_else(|| EruditioError::Parse("encint value overflow".into()))?;
         if b & 0x80 == 0 {
             break;
         }
@@ -156,7 +170,7 @@ pub fn parse_listing_entries(
             name.clone(),
             DirectoryEntry {
                 name,
-                section: section as u32,
+                section: u32::try_from(section).unwrap_or(u32::MAX),
                 offset,
                 size,
             },
@@ -250,8 +264,16 @@ pub fn parse_lzx_reset_table(data: &[u8]) -> Result<LzxResetTable> {
     let block_len = u64_le(&data[32..]);
 
     // Read block address entries
-    let num_entries = block_count as usize + 1;
-    let entry_end = table_offset + num_entries * 8;
+    let num_entries = (block_count as usize)
+        .checked_add(1)
+        .ok_or_else(|| EruditioError::Parse("reset table block_count overflow".into()))?;
+    let entry_end = table_offset
+        .checked_add(
+            num_entries
+                .checked_mul(8)
+                .ok_or_else(|| EruditioError::Parse("reset table entry size overflow".into()))?,
+        )
+        .ok_or_else(|| EruditioError::Parse("reset table entry offset overflow".into()))?;
     if entry_end > data.len() {
         // Fall back: read as many entries as available
         let available = (data.len().saturating_sub(table_offset)) / 8;
@@ -313,7 +335,11 @@ pub fn lzx_decompress_section(
     let total_blocks = reset_table.block_count as usize;
     let uncompressed_len = reset_table.uncompressed_len;
 
-    let mut result = Vec::with_capacity(uncompressed_len as usize);
+    // Cap pre-allocation to prevent OOM from crafted headers claiming huge sizes.
+    // The actual output grows as blocks are decompressed, so a smaller initial
+    // capacity just means a few extra reallocations for legitimate large files.
+    const MAX_PREALLOC: usize = 64 * 1024 * 1024; // 64 MB
+    let mut result = Vec::with_capacity((uncompressed_len as usize).min(MAX_PREALLOC));
     let mut decoder: Option<Lzxd> = None;
 
     for i in 0..total_blocks {
@@ -565,7 +591,10 @@ mod tests {
             0xD3, 0x11, // d3 LE
             0x85, 0x40, 0x00, 0xC0, 0x4F, 0x58, 0xC3, 0xCF,
         ];
-        assert_eq!(format_guid(&data), "{67F6E4A2-60BF-11D3-8540-00C04F58C3CF}");
+        assert_eq!(
+            format_guid(&data).unwrap(),
+            "{67F6E4A2-60BF-11D3-8540-00C04F58C3CF}"
+        );
     }
 
     #[test]

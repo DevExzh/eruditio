@@ -20,17 +20,26 @@ pub enum RtfToken {
     Unicode(i32),
 }
 
+/// Maximum number of tokens to prevent DoS from crafted RTF files.
+const MAX_TOKENS: usize = 10_000_000;
+
 /// Tokenizes an RTF byte stream into a sequence of tokens.
 ///
 /// Handles control words, control symbols, hex escapes, Unicode escapes,
 /// group delimiters, and plain text. Newlines and carriage returns in
 /// the RTF source are ignored (they're not meaningful in RTF).
-pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
+///
+/// Returns an error if the token count exceeds `MAX_TOKENS`.
+pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str> {
     let mut tokens = Vec::new();
     let mut pos = 0;
     let len = input.len();
 
     while pos < len {
+        if tokens.len() >= MAX_TOKENS {
+            return Err("RTF token limit exceeded (possible malformed input)");
+        }
+
         match input[pos] {
             b'{' => {
                 tokens.push(RtfToken::GroupStart);
@@ -125,7 +134,7 @@ pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Reads a control word starting at `pos` (which points to the first letter).
@@ -171,9 +180,9 @@ fn skip_unicode_replacement(input: &[u8], mut pos: usize) -> usize {
         return pos;
     }
 
-    // Skip a hex escape (\'HH = 3 bytes), a control word, or a single byte.
-    if pos + 2 < len && input[pos] == b'\\' && input[pos + 1] == b'\'' {
-        pos += 4; // \' + HH
+    // Skip a hex escape (\'HH = 4 bytes total), a control word, or a single byte.
+    if pos + 3 < len && input[pos] == b'\\' && input[pos + 1] == b'\'' {
+        pos += 4; // \' + HH (backslash, apostrophe, hex-hi, hex-lo)
     } else if pos < len
         && input[pos] == b'\\'
         && pos + 1 < len
@@ -220,13 +229,13 @@ mod tests {
 
     #[test]
     fn tokenizes_group_delimiters() {
-        let tokens = tokenize(b"{}");
+        let tokens = tokenize(b"{}").unwrap();
         assert_eq!(tokens, vec![RtfToken::GroupStart, RtfToken::GroupEnd]);
     }
 
     #[test]
     fn tokenizes_control_word_no_param() {
-        let tokens = tokenize(b"\\par ");
+        let tokens = tokenize(b"\\par ").unwrap();
         assert_eq!(
             tokens,
             vec![RtfToken::ControlWord {
@@ -238,7 +247,7 @@ mod tests {
 
     #[test]
     fn tokenizes_control_word_with_param() {
-        let tokens = tokenize(b"\\fs24 ");
+        let tokens = tokenize(b"\\fs24 ").unwrap();
         assert_eq!(
             tokens,
             vec![RtfToken::ControlWord {
@@ -250,7 +259,7 @@ mod tests {
 
     #[test]
     fn tokenizes_negative_param() {
-        let tokens = tokenize(b"\\li-720 ");
+        let tokens = tokenize(b"\\li-720 ").unwrap();
         assert_eq!(
             tokens,
             vec![RtfToken::ControlWord {
@@ -262,7 +271,7 @@ mod tests {
 
     #[test]
     fn tokenizes_control_symbols() {
-        let tokens = tokenize(b"\\\\\\{\\}");
+        let tokens = tokenize(b"\\\\\\{\\}").unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -275,25 +284,25 @@ mod tests {
 
     #[test]
     fn tokenizes_hex_escape() {
-        let tokens = tokenize(b"\\'e9");
+        let tokens = tokenize(b"\\'e9").unwrap();
         assert_eq!(tokens, vec![RtfToken::HexByte(0xe9)]);
     }
 
     #[test]
     fn tokenizes_unicode() {
-        let tokens = tokenize(b"\\u8212?");
+        let tokens = tokenize(b"\\u8212?").unwrap();
         assert_eq!(tokens, vec![RtfToken::Unicode(8212)]);
     }
 
     #[test]
     fn tokenizes_plain_text() {
-        let tokens = tokenize(b"Hello World");
+        let tokens = tokenize(b"Hello World").unwrap();
         assert_eq!(tokens, vec![RtfToken::Text("Hello World".into())]);
     }
 
     #[test]
     fn tokenizes_mixed_content() {
-        let tokens = tokenize(b"{\\b Bold\\b0  text}");
+        let tokens = tokenize(b"{\\b Bold\\b0  text}").unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -315,7 +324,7 @@ mod tests {
 
     #[test]
     fn skips_bare_newlines() {
-        let tokens = tokenize(b"Hello\r\nWorld");
+        let tokens = tokenize(b"Hello\r\nWorld").unwrap();
         assert_eq!(
             tokens,
             vec![
@@ -328,7 +337,7 @@ mod tests {
     #[test]
     fn rtf_header_tokenizes() {
         let input = b"{\\rtf1\\ansi\\deff0 Hello}";
-        let tokens = tokenize(input);
+        let tokens = tokenize(input).unwrap();
         assert_eq!(tokens[0], RtfToken::GroupStart);
         assert_eq!(
             tokens[1],

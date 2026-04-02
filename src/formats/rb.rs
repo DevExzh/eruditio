@@ -229,6 +229,12 @@ impl FormatWriter for RbWriter {
         let total_size = pos;
 
         // Build file buffer.
+        const MAX_OUTPUT_SIZE: usize = 512 * 1024 * 1024; // 512 MB
+        if total_size > MAX_OUTPUT_SIZE {
+            return Err(EruditioError::Format(
+                "RB output exceeds maximum allowed size".into(),
+            ));
+        }
         let mut file = vec![0u8; total_size];
 
         // Write header.
@@ -360,7 +366,9 @@ fn parse_toc(data: &[u8], offset: usize) -> Result<Vec<TocEntry>> {
         ));
     }
 
-    let mut entries = Vec::with_capacity(page_count);
+    // Cap allocation to prevent DoS from malformed headers.
+    let max_entries = (data.len() - entries_start) / TOC_ENTRY_SIZE;
+    let mut entries = Vec::with_capacity(page_count.min(max_entries));
     for i in 0..page_count {
         let base = entries_start + i * TOC_ENTRY_SIZE;
         let name_bytes = &data[base..base + 32];
@@ -457,8 +465,9 @@ fn decompress_chunked(data: &[u8], name: &str) -> Result<Vec<u8>> {
         .map(|i| read_u32_le(data, sizes_start + i * 4) as usize)
         .collect();
 
-    // Decompress each chunk.
-    let mut result = Vec::with_capacity(uncompressed_size);
+    // Cap allocation to prevent DoS from crafted headers claiming huge sizes.
+    const MAX_PREALLOC: usize = 64 * 1024 * 1024;
+    let mut result = Vec::with_capacity(uncompressed_size.min(MAX_PREALLOC));
     let mut pos = sizes_end;
 
     for (i, &csize) in chunk_sizes.iter().enumerate() {
@@ -484,6 +493,8 @@ fn zlib_decompress_wbits(data: &[u8], wbits: u8) -> Result<Vec<u8>> {
     // Pre-allocate a reasonable buffer (4x compressed size or 4KB minimum).
     let initial_cap = (data.len() * 4).max(4096);
     let mut output = vec![0u8; initial_cap];
+    // Cap total decompressed output to prevent zip-bomb DoS.
+    const MAX_OUTPUT: usize = 256 * 1024 * 1024;
 
     loop {
         let in_before = decompress.total_in() as usize;
@@ -502,8 +513,13 @@ fn zlib_decompress_wbits(data: &[u8], wbits: u8) -> Result<Vec<u8>> {
         match status {
             flate2::Status::StreamEnd => break,
             flate2::Status::Ok | flate2::Status::BufError => {
+                if output.len() >= MAX_OUTPUT {
+                    return Err(EruditioError::Compression(
+                        "RB decompression exceeded 256 MB limit".into(),
+                    ));
+                }
                 // Need more output space.
-                output.resize(output.len() * 2, 0);
+                output.resize((output.len() * 2).min(MAX_OUTPUT), 0);
             },
         }
     }

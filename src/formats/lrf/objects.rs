@@ -121,9 +121,14 @@ pub fn parse_objects(
     number_of_objects: u64,
     xor_key: u16,
 ) -> Result<HashMap<u32, LrfObject>> {
-    let idx_start = object_index_offset as usize;
+    let idx_start = usize::try_from(object_index_offset)
+        .map_err(|_| EruditioError::Format("LRF object index offset too large".into()))?;
     let entry_size = 16; // 4 × u32
-    let idx_end = idx_start + (number_of_objects as usize) * entry_size;
+    let idx_end = usize::try_from(number_of_objects)
+        .ok()
+        .and_then(|n| n.checked_mul(entry_size))
+        .and_then(|n| n.checked_add(idx_start))
+        .ok_or_else(|| EruditioError::Format("LRF object index size overflow".into()))?;
 
     if idx_end > data.len() {
         return Err(EruditioError::Format(
@@ -131,7 +136,9 @@ pub fn parse_objects(
         ));
     }
 
-    let mut objects = HashMap::with_capacity(number_of_objects as usize);
+    // Cap allocation to prevent OOM from crafted number_of_objects.
+    let cap = (number_of_objects as usize).min(data.len() / entry_size);
+    let mut objects = HashMap::with_capacity(cap);
 
     for i in 0..number_of_objects as usize {
         let entry_offset = idx_start + i * entry_size;
@@ -253,11 +260,15 @@ fn process_stream(raw: &[u8], flags: u16, xor_key: u16, is_media: bool) -> Resul
                 "LRF compressed stream too short for size prefix".into(),
             ));
         }
-        let _decomp_size = read_u32_le(&buf, 0);
+        let decomp_size = read_u32_le(&buf, 0) as u64;
+        // Cap decompression output to prevent decompression bombs.
+        const MAX_DECOMPRESS: u64 = 256 * 1024 * 1024; // 256 MB
+        let limit = decomp_size.min(MAX_DECOMPRESS);
         let compressed = &buf[4..];
-        let mut decoder = ZlibDecoder::new(compressed);
+        let decoder = ZlibDecoder::new(compressed);
+        let mut limited = decoder.take(limit);
         let mut output = Vec::new();
-        decoder.read_to_end(&mut output).map_err(|e| {
+        limited.read_to_end(&mut output).map_err(|e| {
             EruditioError::Compression(format!("LRF stream decompression error: {}", e))
         })?;
         buf = output;

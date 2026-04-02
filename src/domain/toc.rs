@@ -1,5 +1,8 @@
+/// Maximum depth for TOC tree traversal to prevent stack overflow from malicious input.
+const MAX_TOC_DEPTH: usize = 64;
+
 /// An item in the table of contents. Supports hierarchical nesting.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TocItem {
     pub title: String,
     /// Relative href within the book (e.g. "chapter1.xhtml#section2").
@@ -39,16 +42,31 @@ impl TocItem {
     }
 
     /// Returns the total number of items in this subtree (including self).
+    /// Uses an iterative approach to avoid stack overflow on deeply nested input.
+    #[must_use]
     pub fn count(&self) -> usize {
-        1 + self.children.iter().map(TocItem::count).sum::<usize>()
+        let mut total = 0usize;
+        let mut stack: Vec<&TocItem> = vec![self];
+        while let Some(item) = stack.pop() {
+            total += 1;
+            stack.extend(item.children.iter());
+        }
+        total
     }
 
-    /// Flattens the TOC tree into a depth-first iterator of (depth, &TocItem).
+    /// Flattens the TOC tree into a depth-first list of (depth, &TocItem).
+    /// Uses an iterative approach to avoid stack overflow on deeply nested input.
+    #[must_use]
     pub fn flatten(&self) -> Vec<(usize, &TocItem)> {
-        let mut result = vec![(0, self)];
-        for child in &self.children {
-            for (depth, item) in child.flatten() {
-                result.push((depth + 1, item));
+        let mut result = Vec::new();
+        let mut stack: Vec<(usize, &TocItem)> = vec![(0, self)];
+        while let Some((depth, item)) = stack.pop() {
+            result.push((depth, item));
+            // Push children in reverse order so leftmost child is processed first.
+            if depth < MAX_TOC_DEPTH {
+                for child in item.children.iter().rev() {
+                    stack.push((depth + 1, child));
+                }
             }
         }
         result

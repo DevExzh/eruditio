@@ -177,12 +177,24 @@ impl FormatReader for SnbReader {
 
 /// Parses the SNB header.
 fn parse_header(data: &[u8]) -> Result<SnbHeader> {
+    // Validate i32 fields are non-negative before casting to usize,
+    // since crafted files with negative values would wrap to huge usize values.
+    let file_count = usize::try_from(read_i32_be(data, 0x14))
+        .map_err(|_| EruditioError::Format("SNB: negative file_count".into()))?;
+    let vfat_size = usize::try_from(read_i32_be(data, 0x18))
+        .map_err(|_| EruditioError::Format("SNB: negative vfat_size".into()))?;
+    let vfat_compressed = usize::try_from(read_i32_be(data, 0x1C))
+        .map_err(|_| EruditioError::Format("SNB: negative vfat_compressed".into()))?;
+    let bin_stream_size = usize::try_from(read_i32_be(data, 0x20))
+        .map_err(|_| EruditioError::Format("SNB: negative bin_stream_size".into()))?;
+    let _plain_uncompressed = usize::try_from(read_i32_be(data, 0x24))
+        .map_err(|_| EruditioError::Format("SNB: negative plain_uncompressed".into()))?;
     Ok(SnbHeader {
-        file_count: read_i32_be(data, 0x14) as usize,
-        vfat_size: read_i32_be(data, 0x18) as usize,
-        vfat_compressed: read_i32_be(data, 0x1C) as usize,
-        bin_stream_size: read_i32_be(data, 0x20) as usize,
-        _plain_uncompressed: read_i32_be(data, 0x24) as usize,
+        file_count,
+        vfat_size,
+        vfat_compressed,
+        bin_stream_size,
+        _plain_uncompressed,
     })
 }
 
@@ -247,8 +259,10 @@ fn parse_tail(data: &[u8]) -> Result<TailInfo> {
         return Err(EruditioError::Format("SNB tail magic mismatch".into()));
     }
 
-    let tail_compressed_size = read_i32_be(tail_footer, 0) as usize;
-    let tail_offset = read_i32_be(tail_footer, 4) as usize;
+    let tail_compressed_size = usize::try_from(read_i32_be(tail_footer, 0))
+        .map_err(|_| EruditioError::Format("SNB: negative tail compressed size".into()))?;
+    let tail_offset = usize::try_from(read_i32_be(tail_footer, 4))
+        .map_err(|_| EruditioError::Format("SNB: negative tail offset".into()))?;
 
     if tail_offset + tail_compressed_size > data.len() {
         return Err(EruditioError::Format(
@@ -274,7 +288,7 @@ fn parse_tail(data: &[u8]) -> Result<TailInfo> {
     // For simplicity, scan from the end: file records are at the end.
 
     // Read the header info to determine file_count.
-    let file_count = read_i32_be(data, 0x14) as usize;
+    let file_count = usize::try_from(read_i32_be(data, 0x14)).unwrap_or(0);
 
     // File records are at the end of the tail: file_count × 8 bytes.
     let records_size = file_count * 8;
@@ -289,7 +303,7 @@ fn parse_tail(data: &[u8]) -> Result<TailInfo> {
 
     // Parse block offsets.
     let block_offsets: Vec<usize> = (0..total_blocks)
-        .map(|i| read_i32_be(&tail_data, i * 4) as usize)
+        .map(|i| usize::try_from(read_i32_be(&tail_data, i * 4)).unwrap_or(0))
         .collect();
 
     // Parse file records.
@@ -297,14 +311,14 @@ fn parse_tail(data: &[u8]) -> Result<TailInfo> {
     let file_records: Vec<(usize, usize)> = (0..file_count)
         .map(|i| {
             let base = records_start + i * 8;
-            let block_idx = read_i32_be(&tail_data, base) as usize;
-            let content_off = read_i32_be(&tail_data, base + 4) as usize;
+            let block_idx = usize::try_from(read_i32_be(&tail_data, base)).unwrap_or(0);
+            let content_off = usize::try_from(read_i32_be(&tail_data, base + 4)).unwrap_or(0);
             (block_idx, content_off)
         })
         .collect();
 
     // Determine bin_block_count from the binary stream size.
-    let bin_stream_size = read_i32_be(data, 0x20) as usize;
+    let bin_stream_size = usize::try_from(read_i32_be(data, 0x20)).unwrap_or(0);
     let bin_block_count = if bin_stream_size > 0 {
         // Count how many block offsets fall within the binary stream range.
         block_offsets
@@ -381,7 +395,7 @@ fn extract_plain_file(
     // The plain stream blocks start after bin blocks in the offset table.
     let plain_block_base = tail.bin_block_count;
 
-    let mut result = Vec::with_capacity(file_size);
+    let mut result = Vec::with_capacity(file_size.min(64 * 1024 * 1024));
     let mut remaining = file_size;
     let mut first_block = true;
 
@@ -782,6 +796,12 @@ impl FormatWriter for SnbWriter {
         let total_size = footer_start + 16;
 
         // Build the file.
+        const MAX_OUTPUT_SIZE: usize = 512 * 1024 * 1024; // 512 MB
+        if total_size > MAX_OUTPUT_SIZE {
+            return Err(EruditioError::Format(
+                "SNB output exceeds maximum allowed size".into(),
+            ));
+        }
         let mut file = vec![0u8; total_size];
 
         // Header.
@@ -859,19 +879,24 @@ fn xml_escape(text: &str) -> String {
 
 // -- Helpers --
 
+/// Maximum decompression output to prevent decompression bombs.
+const MAX_DECOMPRESS_OUTPUT: u64 = 256 * 1024 * 1024; // 256 MB
+
 fn zlib_decompress(data: &[u8], _expected_size: usize) -> Result<Vec<u8>> {
-    let mut decoder = ZlibDecoder::new(data);
+    let decoder = ZlibDecoder::new(data);
+    let mut limited = decoder.take(MAX_DECOMPRESS_OUTPUT);
     let mut output = Vec::new();
-    decoder
+    limited
         .read_to_end(&mut output)
         .map_err(|e| EruditioError::Compression(format!("SNB zlib decompression error: {}", e)))?;
     Ok(output)
 }
 
 fn bz2_decompress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = BzDecoder::new(data);
+    let decoder = BzDecoder::new(data);
+    let mut limited = decoder.take(MAX_DECOMPRESS_OUTPUT);
     let mut output = Vec::new();
-    decoder
+    limited
         .read_to_end(&mut output)
         .map_err(|e| EruditioError::Compression(format!("SNB bz2 decompression error: {}", e)))?;
     Ok(output)
@@ -896,6 +921,9 @@ fn read_u32_be(data: &[u8], offset: usize) -> u32 {
 }
 
 fn read_cstring(data: &[u8], offset: usize) -> String {
+    if offset >= data.len() {
+        return String::new(); // out-of-bounds offset from crafted file
+    }
     let end = data[offset..]
         .iter()
         .position(|&b| b == 0)

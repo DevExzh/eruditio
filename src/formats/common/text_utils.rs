@@ -27,9 +27,14 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
     let len = bytes.len();
 
     // Fast path: scan for any special character. If none, return as-is.
-    let has_special = bytes
-        .iter()
-        .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''));
+    // Match only the characters that will actually be escaped in this mode.
+    let has_special = if xml_mode {
+        bytes
+            .iter()
+            .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''))
+    } else {
+        bytes.iter().any(|&b| matches!(b, b'&' | b'<' | b'>'))
+    };
     if !has_special {
         return text.to_string();
     }
@@ -54,7 +59,7 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
                     b'>' => result.push_str("&gt;"),
                     b'"' => result.push_str("&quot;"),
                     b'\'' => result.push_str("&apos;"),
-                    _ => unreachable!(),
+                    _ => {}, // position() guarantees only matched bytes reach here
                 }
                 pos += offset + 1;
             },
@@ -182,6 +187,8 @@ static CP1252_TABLE: [char; 256] = {
     }
     // Special mappings for 0x80-0x9F range.
     table[0x80] = '\u{20AC}'; // Euro sign
+    // 0x81 is undefined in CP-1252; map to U+FFFD replacement character.
+    table[0x81] = '\u{FFFD}';
     table[0x82] = '\u{201A}'; // Single low-9 quotation mark
     table[0x83] = '\u{0192}'; // Latin small letter f with hook
     table[0x84] = '\u{201E}'; // Double low-9 quotation mark
@@ -193,7 +200,13 @@ static CP1252_TABLE: [char; 256] = {
     table[0x8A] = '\u{0160}'; // Latin capital letter S with caron
     table[0x8B] = '\u{2039}'; // Single left-pointing angle quotation
     table[0x8C] = '\u{0152}'; // Latin capital ligature OE
+    // 0x8D is undefined in CP-1252; map to U+FFFD replacement character.
+    table[0x8D] = '\u{FFFD}';
     table[0x8E] = '\u{017D}'; // Latin capital letter Z with caron
+    // 0x8F is undefined in CP-1252; map to U+FFFD replacement character.
+    table[0x8F] = '\u{FFFD}';
+    // 0x90 is undefined in CP-1252; map to U+FFFD replacement character.
+    table[0x90] = '\u{FFFD}';
     table[0x91] = '\u{2018}'; // Left single quotation mark
     table[0x92] = '\u{2019}'; // Right single quotation mark
     table[0x93] = '\u{201C}'; // Left double quotation mark

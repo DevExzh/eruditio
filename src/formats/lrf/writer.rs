@@ -108,11 +108,17 @@ impl LrfWriteObject {
                 // StreamFlags: compressed (zlib).
                 write_tag_u16(&mut buf, 0x54, STREAM_FLAG_COMPRESSED);
                 // Prepend 4-byte uncompressed size before compressed data.
+                let uncompressed_len = u32::try_from(raw_stream.len()).map_err(|_| {
+                    EruditioError::Format("LRF stream too large for u32 size field".into())
+                })?;
                 let mut payload = Vec::with_capacity(4 + compressed.len());
-                payload.extend_from_slice(&(raw_stream.len() as u32).to_le_bytes());
+                payload.extend_from_slice(&uncompressed_len.to_le_bytes());
                 payload.extend_from_slice(&compressed);
                 // StreamSize.
-                write_tag_u32(&mut buf, 0x04, payload.len() as u32);
+                let payload_len = u32::try_from(payload.len()).map_err(|_| {
+                    EruditioError::Format("LRF compressed payload too large for u32".into())
+                })?;
+                write_tag_u32(&mut buf, 0x04, payload_len);
                 // StreamStart.
                 buf.push(0x05);
                 buf.push(0xF5);
@@ -122,8 +128,11 @@ impl LrfWriteObject {
                 buf.push(0xF5);
             } else {
                 // Uncompressed stream.
+                let stream_len = u32::try_from(raw_stream.len()).map_err(|_| {
+                    EruditioError::Format("LRF stream too large for u32 size field".into())
+                })?;
                 write_tag_u16(&mut buf, 0x54, 0x0000);
-                write_tag_u32(&mut buf, 0x04, raw_stream.len() as u32);
+                write_tag_u32(&mut buf, 0x04, stream_len);
                 buf.push(0x05);
                 buf.push(0xF5);
                 buf.extend_from_slice(raw_stream);
@@ -170,8 +179,10 @@ fn write_link_tag(buf: &mut Vec<u8>, target_id: u32) {
 /// Writes a ContainedObjectsList tag (0xF50B): u16 count + count * u32 ids.
 fn write_contained_objects_tag(buf: &mut Vec<u8>, ids: &[u32]) {
     write_tag_header(buf, 0x0B);
-    buf.extend_from_slice(&(ids.len() as u16).to_le_bytes());
-    for &id in ids {
+    // Object count limited to u16::MAX; in practice LRF files never exceed this.
+    let count = ids.len().min(u16::MAX as usize) as u16;
+    buf.extend_from_slice(&count.to_le_bytes());
+    for &id in &ids[..count as usize] {
         buf.extend_from_slice(&id.to_le_bytes());
     }
 }
@@ -210,10 +221,12 @@ fn emit_text_string(stream: &mut Vec<u8>, text: &str) {
         return;
     }
     let utf16: Vec<u8> = text.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+    // UTF-16 byte length capped to u16::MAX; truncate if extremely long.
+    let byte_len = utf16.len().min(u16::MAX as usize);
     stream.push(0xCC);
     stream.push(0xF5);
-    stream.extend_from_slice(&(utf16.len() as u16).to_le_bytes());
-    stream.extend_from_slice(&utf16);
+    stream.extend_from_slice(&(byte_len as u16).to_le_bytes());
+    stream.extend_from_slice(&utf16[..byte_len]);
 }
 
 /// Italic start tag (0xF581): 0 bytes.
@@ -285,43 +298,56 @@ fn html_to_text_stream(
                 None => break,
             };
             let tag_content = &html[pos + 1..tag_end];
-            let tag_lower = tag_content.to_ascii_lowercase();
-            let tag_name = tag_lower
+            let tag_name = tag_content
                 .split(|c: char| c.is_whitespace())
                 .next()
                 .unwrap_or("");
 
-            match tag_name {
-                "p" | "div" => {
+            match () {
+                _ if tag_name.eq_ignore_ascii_case("p") || tag_name.eq_ignore_ascii_case("div") => {
                     if in_para {
                         emit_p_end(&mut stream);
                     }
                     emit_p_start(&mut stream);
                     in_para = true;
                 },
-                "/p" | "/div" => {
+                _ if tag_name.eq_ignore_ascii_case("/p")
+                    || tag_name.eq_ignore_ascii_case("/div") =>
+                {
                     if in_para {
                         emit_p_end(&mut stream);
                         in_para = false;
                     }
                 },
-                "br" | "br/" | "br /" => {
+                _ if tag_name.eq_ignore_ascii_case("br")
+                    || tag_name.eq_ignore_ascii_case("br/")
+                    || tag_name.eq_ignore_ascii_case("br /") =>
+                {
                     emit_cr(&mut stream);
                 },
-                "b" | "strong" => {
+                _ if tag_name.eq_ignore_ascii_case("b")
+                    || tag_name.eq_ignore_ascii_case("strong") =>
+                {
                     emit_font_weight(&mut stream, 700);
                 },
-                "/b" | "/strong" => {
+                _ if tag_name.eq_ignore_ascii_case("/b")
+                    || tag_name.eq_ignore_ascii_case("/strong") =>
+                {
                     emit_font_weight(&mut stream, 400);
                 },
-                "i" | "em" => {
+                _ if tag_name.eq_ignore_ascii_case("i") || tag_name.eq_ignore_ascii_case("em") => {
                     emit_italic_start(&mut stream);
                 },
-                "/i" | "/em" => {
+                _ if tag_name.eq_ignore_ascii_case("/i")
+                    || tag_name.eq_ignore_ascii_case("/em") =>
+                {
                     emit_italic_end(&mut stream);
                 },
-                t if t.starts_with('h') && t.len() == 2 && t.as_bytes()[1].is_ascii_digit() => {
-                    let level = (t.as_bytes()[1] - b'1') as usize;
+                _ if tag_name.len() == 2
+                    && tag_name.as_bytes()[0].eq_ignore_ascii_case(&b'h')
+                    && tag_name.as_bytes()[1].is_ascii_digit() =>
+                {
+                    let level = (tag_name.as_bytes()[1] - b'1') as usize;
                     let size = if level < HEADING_SIZES.len() {
                         HEADING_SIZES[level]
                     } else {
@@ -335,7 +361,11 @@ fn html_to_text_stream(
                     emit_p_start(&mut stream);
                     in_para = true;
                 },
-                t if t.starts_with("/h") && t.len() == 3 && t.as_bytes()[2].is_ascii_digit() => {
+                _ if tag_name.len() == 3
+                    && tag_name.as_bytes()[0] == b'/'
+                    && tag_name.as_bytes()[1].eq_ignore_ascii_case(&b'h')
+                    && tag_name.as_bytes()[2].is_ascii_digit() =>
+                {
                     if in_para {
                         emit_p_end(&mut stream);
                         in_para = false;
@@ -343,7 +373,7 @@ fn html_to_text_stream(
                     emit_font_weight(&mut stream, 400);
                     emit_font_size(&mut stream, default_size);
                 },
-                t if t.starts_with("img") => {
+                _ if tag_name.len() >= 3 && tag_name[..3].eq_ignore_ascii_case("img") => {
                     // Extract src attribute.
                     if let Some(src) = extract_attr(tag_content, "src") {
                         // Look up the image object ID.
@@ -437,6 +467,8 @@ fn decode_html_entities(text: &str) -> String {
 
 /// Builds the metadata XML string from the Book's metadata.
 fn build_metadata_xml(book: &Book) -> String {
+    use std::fmt::Write as FmtWrite;
+
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     let author = book
         .metadata
@@ -451,23 +483,17 @@ fn build_metadata_xml(book: &Book) -> String {
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<Info version=\"1.1\">\n");
     xml.push_str("  <BookInfo>\n");
-    xml.push_str(&format!("    <Title>{}</Title>\n", escape_xml(title)));
-    xml.push_str(&format!("    <Author>{}</Author>\n", escape_xml(author)));
+    let _ = writeln!(xml, "    <Title>{}</Title>", escape_xml(title));
+    let _ = writeln!(xml, "    <Author>{}</Author>", escape_xml(author));
     if !publisher.is_empty() {
-        xml.push_str(&format!(
-            "    <Publisher>{}</Publisher>\n",
-            escape_xml(publisher)
-        ));
+        let _ = writeln!(xml, "    <Publisher>{}</Publisher>", escape_xml(publisher));
     }
     if let Some(ref desc) = book.metadata.description {
-        xml.push_str(&format!("    <FreeText>{}</FreeText>\n", escape_xml(desc)));
+        let _ = writeln!(xml, "    <FreeText>{}</FreeText>", escape_xml(desc));
     }
     xml.push_str("  </BookInfo>\n");
     xml.push_str("  <DocInfo>\n");
-    xml.push_str(&format!(
-        "    <Language>{}</Language>\n",
-        escape_xml(language)
-    ));
+    let _ = writeln!(xml, "    <Language>{}</Language>", escape_xml(language));
     xml.push_str("  </DocInfo>\n");
     xml.push_str("</Info>");
 
@@ -590,7 +616,10 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
         // StreamFlags = image type (no compression, no scramble)
         write_tag_u16(&mut is_bytes, 0x54, img_flag);
         // StreamSize
-        write_tag_u32(&mut is_bytes, 0x04, resource.data.len() as u32);
+        let data_len = u32::try_from(resource.data.len()).map_err(|_| {
+            EruditioError::Format("LRF image data too large for u32 size field".into())
+        })?;
+        write_tag_u32(&mut is_bytes, 0x04, data_len);
         // StreamStart
         is_bytes.push(0x05);
         is_bytes.push(0xF5);
@@ -776,7 +805,9 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // ---------------------------------------------------------------
     // 10. Build the file.
     // ---------------------------------------------------------------
-    let compressed_info_size = (compressed_xml.len() + 4) as u16;
+    let compressed_info_size = u16::try_from(compressed_xml.len() + 4).map_err(|_| {
+        EruditioError::Format("LRF compressed metadata too large for u16 field".into())
+    })?;
     let _uncompressed_info_size = xml_bytes.len() as u32;
 
     // Total file size.
@@ -822,8 +853,12 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // --- Object index ---
     for entry in &object_entries {
         file.extend_from_slice(&entry.id.to_le_bytes());
-        file.extend_from_slice(&(entry.offset as u32).to_le_bytes());
-        file.extend_from_slice(&(entry.size as u32).to_le_bytes());
+        let offset_u32 = u32::try_from(entry.offset)
+            .map_err(|_| EruditioError::Format("LRF object offset exceeds u32 range".into()))?;
+        let size_u32 = u32::try_from(entry.size)
+            .map_err(|_| EruditioError::Format("LRF object size exceeds u32 range".into()))?;
+        file.extend_from_slice(&offset_u32.to_le_bytes());
+        file.extend_from_slice(&size_u32.to_le_bytes());
         file.extend_from_slice(&0u32.to_le_bytes()); // reserved
     }
 

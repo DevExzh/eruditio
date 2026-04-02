@@ -205,6 +205,7 @@ impl<'a> BzzDecoder<'a> {
         Ok(dec)
     }
 
+    #[inline]
     fn read_byte(&mut self) -> Option<u8> {
         if self.inptr < self.data.len() {
             let b = self.data[self.inptr];
@@ -235,6 +236,7 @@ impl<'a> BzzDecoder<'a> {
         Ok(())
     }
 
+    #[inline]
     fn ffz(&self) -> u32 {
         let x = self.a;
         if x >= 0xFF00 {
@@ -253,8 +255,9 @@ impl<'a> BzzDecoder<'a> {
             let shift = self.ffz();
             self.scount -= shift as i32;
             self.a = (self.a << shift) & 0xFFFF;
+            let safe_scount = self.scount.max(0) as u32;
             self.code = ((self.code << shift)
-                | ((self.bufint >> self.scount as u32) & ((1 << shift) - 1)))
+                | ((self.bufint >> safe_scount) & ((1 << shift) - 1)))
                 & 0xFFFF;
             if self.scount < 16 {
                 self.preload()?;
@@ -267,8 +270,9 @@ impl<'a> BzzDecoder<'a> {
         } else {
             // MPS branch
             self.scount -= 1;
+            let safe_scount = self.scount.max(0) as u32;
             self.a = (z << 1) & 0xFFFF;
-            self.code = ((self.code << 1) | ((self.bufint >> self.scount as u32) & 1)) & 0xFFFF;
+            self.code = ((self.code << 1) | ((self.bufint >> safe_scount) & 1)) & 0xFFFF;
             if self.scount < 16 {
                 self.preload()?;
             }
@@ -293,9 +297,10 @@ impl<'a> BzzDecoder<'a> {
             self.ctx[ctx] = ZP_TABLE[self.ctx[ctx] as usize].dn;
             let shift = self.ffz();
             self.scount -= shift as i32;
+            let safe_scount = self.scount.max(0) as u32;
             self.a = (self.a << shift) & 0xFFFF;
             self.code = ((self.code << shift)
-                | ((self.bufint >> self.scount as u32) & ((1 << shift) - 1)))
+                | ((self.bufint >> safe_scount) & ((1 << shift) - 1)))
                 & 0xFFFF;
             if self.scount < 16 {
                 self.preload()?;
@@ -312,8 +317,9 @@ impl<'a> BzzDecoder<'a> {
                 self.ctx[ctx] = entry.up;
             }
             self.scount -= 1;
+            let safe_scount = self.scount.max(0) as u32;
             self.a = (z << 1) & 0xFFFF;
-            self.code = ((self.code << 1) | ((self.bufint >> self.scount as u32) & 1)) & 0xFFFF;
+            self.code = ((self.code << 1) | ((self.bufint >> safe_scount) & 1)) & 0xFFFF;
             if self.scount < 16 {
                 self.preload()?;
             }
@@ -494,6 +500,11 @@ impl<'a> BzzDecoder<'a> {
         let mut idx: usize = 0;
         let mut remaining = xsize - 1;
         while remaining > 0 {
+            if idx >= posn.len() {
+                return Err(EruditioError::Format(
+                    "BZZ: corrupt block — inverse BWT index out of bounds".into(),
+                ));
+            }
             let n = posn[idx];
             let c = (n >> 24) as u8;
             remaining -= 1;
@@ -518,8 +529,15 @@ pub fn bzz_decompress(data: &[u8]) -> Result<Vec<u8>> {
     }
     let mut decoder = BzzDecoder::new(data)?;
     let mut output = Vec::new();
+    // Cap total decompressed output to prevent zip-bomb DoS.
+    const MAX_OUTPUT: usize = 256 * 1024 * 1024;
 
     while let Some(block) = decoder.decode_block()? {
+        if output.len().saturating_add(block.len()) > MAX_OUTPUT {
+            return Err(EruditioError::Format(
+                "BZZ: decompressed output exceeds 256 MB limit".into(),
+            ));
+        }
         output.extend_from_slice(&block);
     }
 

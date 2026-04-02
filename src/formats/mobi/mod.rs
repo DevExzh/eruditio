@@ -167,7 +167,10 @@ fn decompress_text(
     let num_text_records = palmdoc.text_record_count as usize;
     let extra_flags = mobi_header.map(|h| h.extra_data_flags).unwrap_or(0);
 
-    let mut text = Vec::with_capacity(palmdoc.text_length as usize);
+    // Cap pre-allocation to prevent OOM from crafted text_length headers.
+    const MAX_PREALLOC: usize = 64 * 1024 * 1024; // 64 MB
+    const MAX_TEXT_OUTPUT: usize = 256 * 1024 * 1024; // 256 MB cumulative limit
+    let mut text = Vec::with_capacity((palmdoc.text_length as usize).min(MAX_PREALLOC));
     let mut huff_reader: Option<HuffCdicReader> = None;
 
     for i in 1..=num_text_records {
@@ -192,6 +195,11 @@ fn decompress_text(
             COMPRESSION_PALMDOC => {
                 let decompressed = palmdoc::decompress(record_data)?;
                 text.extend_from_slice(&decompressed);
+                if text.len() > MAX_TEXT_OUTPUT {
+                    return Err(EruditioError::Format(
+                        "Decompressed text exceeds maximum allowed size".into(),
+                    ));
+                }
             },
             COMPRESSION_HUFFCDIC => {
                 // HUFF/CDIC: lazily initialize the decompressor on first use.
@@ -203,6 +211,11 @@ fn decompress_text(
                     EruditioError::Compression(format!("HUFF/CDIC decompression failed: {}", e))
                 })?;
                 text.extend_from_slice(&decompressed);
+                if text.len() > MAX_TEXT_OUTPUT {
+                    return Err(EruditioError::Format(
+                        "Decompressed text exceeds maximum allowed size".into(),
+                    ));
+                }
             },
             other => {
                 return Err(EruditioError::Format(format!(
@@ -316,6 +329,7 @@ fn extract_images(pdb: &PdbFile, book: &mut Book, mobi: Option<&MobiHeader>) {
     }
 
     let mut image_index = 0u32;
+    const MAX_IMAGES: u32 = 100_000;
 
     for i in first_image..pdb.record_count() {
         let Ok(data) = pdb.record_data(i) else {
@@ -334,7 +348,10 @@ fn extract_images(pdb: &PdbFile, book: &mut Book, mobi: Option<&MobiHeader>) {
         let href = format!("images/{}.{}", image_index, ext);
         book.add_resource(&id, &href, data.to_vec(), media_type);
 
-        image_index += 1;
+        image_index = match image_index.checked_add(1) {
+            Some(v) if v <= MAX_IMAGES => v,
+            _ => break,
+        };
     }
 }
 

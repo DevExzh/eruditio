@@ -44,10 +44,24 @@ pub enum Format {
 
 impl Format {
     /// Attempts to determine the format from a file extension (case-insensitive).
+    ///
+    /// Avoids heap allocation by lowering ASCII in a stack buffer.
     pub fn from_extension(ext: &str) -> Option<Self> {
-        match ext.to_lowercase().as_str() {
-            "epub" | "kepub.epub" => Some(Self::Epub),
-            "mobi" | "pobi" => Some(Self::Mobi),
+        // File extensions are always short ASCII; use a stack buffer to avoid
+        // the `to_lowercase()` heap allocation.
+        let ext_bytes = ext.as_bytes();
+        if ext_bytes.len() > 16 {
+            return None;
+        }
+        let mut buf = [0u8; 16];
+        for (i, &b) in ext_bytes.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        let lower = std::str::from_utf8(&buf[..ext_bytes.len()]).ok()?;
+        match lower {
+            "epub" => Some(Self::Epub),
+            "mobi" => Some(Self::Mobi),
+            "kepub" | "kepub.epub" => Some(Self::Kepub),
             "azw" => Some(Self::Azw),
             "azw3" | "kf8" | "kfx" => Some(Self::Azw3),
             "azw4" => Some(Self::Azw4),
@@ -76,7 +90,6 @@ impl Format {
             "djvu" | "djv" => Some(Self::Djvu),
             "snb" => Some(Self::Snb),
             "rb" => Some(Self::Rb),
-            "kepub" => Some(Self::Kepub),
             "md" | "markdown" => Some(Self::Md),
             "oeb" | "opf" | "oebzip" => Some(Self::Oeb),
             "zip" => Some(Self::Zip),
@@ -247,7 +260,50 @@ impl Format {
 
 impl fmt::Display for Format {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.extension().to_uppercase())
+        f.write_str(self.name())
+    }
+}
+
+impl Format {
+    /// Returns the uppercase display name for this format.
+    /// Uses a static string to avoid per-call allocation.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Epub => "EPUB",
+            Self::Mobi => "MOBI",
+            Self::Azw => "AZW",
+            Self::Azw3 => "AZW3",
+            Self::Azw4 => "AZW4",
+            Self::Pdf => "PDF",
+            Self::Fb2 => "FB2",
+            Self::Fbz => "FBZ",
+            Self::Cbz => "CBZ",
+            Self::Cbr => "CBR",
+            Self::Cb7 => "CB7",
+            Self::Cbc => "CBC",
+            Self::Txt => "TXT",
+            Self::Txtz => "TXTZ",
+            Self::Tcr => "TCR",
+            Self::Rtf => "RTF",
+            Self::Html => "HTML",
+            Self::Htmlz => "HTMLZ",
+            Self::Docx => "DOCX",
+            Self::Odt => "ODT",
+            Self::Pdb => "PDB",
+            Self::Pml => "PML",
+            Self::Pmlz => "PMLZ",
+            Self::Prc => "PRC",
+            Self::Lit => "LIT",
+            Self::Lrf => "LRF",
+            Self::Chm => "CHM",
+            Self::Djvu => "DJVU",
+            Self::Snb => "SNB",
+            Self::Rb => "RB",
+            Self::Kepub => "KEPUB",
+            Self::Md => "MD",
+            Self::Oeb => "OEB",
+            Self::Zip => "ZIP",
+        }
     }
 }
 

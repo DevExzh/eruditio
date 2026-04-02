@@ -15,6 +15,7 @@ use crate::formats::common::palm_db::{
 use flate2::Compression;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
+use std::collections::HashSet;
 use std::io::{Read, Write};
 
 /// PDB ebook format reader.
@@ -302,13 +303,26 @@ impl FormatReader for PdbReader {
 // zlib helper
 // ---------------------------------------------------------------------------
 
-/// Decompresses zlib-compressed data.
+/// Decompresses zlib-compressed data with a size cap to prevent zip-bomb DoS.
 fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = ZlibDecoder::new(data);
     let mut output = Vec::new();
-    decoder
-        .read_to_end(&mut output)
-        .map_err(|e| EruditioError::Compression(format!("zlib decompression failed: {}", e)))?;
+    const MAX_OUTPUT: usize = 256 * 1024 * 1024;
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = decoder
+            .read(&mut buf)
+            .map_err(|e| EruditioError::Compression(format!("zlib decompression failed: {}", e)))?;
+        if n == 0 {
+            break;
+        }
+        if output.len().saturating_add(n) > MAX_OUTPUT {
+            return Err(EruditioError::Compression(
+                "zlib decompression exceeded 256 MB limit".into(),
+            ));
+        }
+        output.extend_from_slice(&buf[..n]);
+    }
     Ok(output)
 }
 
@@ -750,14 +764,22 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
             PLUCKER_PHTML => {
                 let paragraph_offsets =
                     parse_paragraph_offsets(section_data, section_header.paragraphs);
-                let phtml_data = &section_data[section_header.paragraphs as usize * 4..];
+                let para_table_end = (section_header.paragraphs as usize).saturating_mul(4);
+                if para_table_end > section_data.len() {
+                    continue;
+                }
+                let phtml_data = &section_data[para_table_end..];
                 let html = process_phtml(phtml_data, &paragraph_offsets);
                 text_sections.push((section_header.uid, html));
             },
             PLUCKER_PHTML_COMPRESSED => {
                 let paragraph_offsets =
                     parse_paragraph_offsets(section_data, section_header.paragraphs);
-                let compressed_data = &section_data[section_header.paragraphs as usize * 4..];
+                let para_table_end = (section_header.paragraphs as usize).saturating_mul(4);
+                if para_table_end > section_data.len() {
+                    continue;
+                }
+                let compressed_data = &section_data[para_table_end..];
                 let decompressed = plucker_decompress(compressed_data, compression)?;
                 let html = process_phtml(&decompressed, &paragraph_offsets);
                 text_sections.push((section_header.uid, html));
@@ -845,8 +867,8 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
 }
 
 /// Parses paragraph offset/size table from a Plucker text section.
-fn parse_paragraph_offsets(data: &[u8], count: u16) -> Vec<usize> {
-    let mut offsets = Vec::new();
+fn parse_paragraph_offsets(data: &[u8], count: u16) -> HashSet<usize> {
+    let mut offsets = HashSet::new();
     let mut running = 0usize;
     for i in 0..count as usize {
         let base = i * 4;
@@ -855,7 +877,7 @@ fn parse_paragraph_offsets(data: &[u8], count: u16) -> Vec<usize> {
         }
         let size = read_u16_be(data, base) as usize;
         running += size;
-        offsets.push(running);
+        offsets.insert(running);
     }
     offsets
 }
@@ -876,7 +898,7 @@ fn plucker_decompress(data: &[u8], compression: u16) -> Result<Vec<u8>> {
 ///
 /// PHTML uses escape sequences (0x00 prefix byte) for formatting, links,
 /// images, and structural elements.
-fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
+fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
     let mut html = String::with_capacity(data.len() * 2);
     html.push_str("<p>");
     let mut offset = 0usize;
@@ -1500,7 +1522,7 @@ mod tests {
     #[test]
     fn plucker_phtml_basic_text() {
         let data = b"Hello world";
-        let html = process_phtml(data, &[]);
+        let html = process_phtml(data, &HashSet::new());
         assert!(html.contains("Hello world"));
     }
 
@@ -1512,7 +1534,7 @@ mod tests {
         data.extend_from_slice(b"text");
         data.push(0x00);
         data.push(0x48); // italic off
-        let html = process_phtml(&data, &[]);
+        let html = process_phtml(&data, &HashSet::new());
         assert!(html.contains("<i>text</i>"));
     }
 
@@ -1524,7 +1546,7 @@ mod tests {
         data.push(0x33); // hr
         data.extend_from_slice(&[0, 0, 0]); // 3 bytes params
         data.extend_from_slice(b"after");
-        let html = process_phtml(&data, &[]);
+        let html = process_phtml(&data, &HashSet::new());
         assert!(html.contains("<hr />"));
     }
 

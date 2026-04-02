@@ -35,7 +35,7 @@ impl FormatReader for RtfReader {
             return Err(EruditioError::Format("Not a valid RTF document".into()));
         }
 
-        let tokens = tokenize(&data);
+        let tokens = tokenize(&data).map_err(|e| EruditioError::Parse(e.to_string()))?;
         let mut book = Book::new();
 
         // Parse tokens into book content.

@@ -76,7 +76,10 @@ impl ExthHeader {
         let _total_length = read_u32_be(data, 4);
         let num_records = read_u32_be(data, 8);
 
-        let mut records = Vec::with_capacity(num_records as usize);
+        // Cap pre-allocation to prevent OOM from crafted num_records.
+        // The loop below breaks on truncated data, so a smaller capacity is safe.
+        let cap = (num_records as usize).min(data.len() / 8);
+        let mut records = Vec::with_capacity(cap);
         let mut pos = 12;
 
         for _ in 0..num_records {

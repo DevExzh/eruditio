@@ -12,6 +12,9 @@ use crate::error::{EruditioError, Result};
 /// Maximum recursion depth for dictionary entry decompression.
 const MAX_DEPTH: usize = 32;
 
+/// Maximum total decompressed output size to prevent decompression bombs.
+const MAX_UNPACK_OUTPUT: usize = 64 * 1024 * 1024; // 64 MB
+
 /// A single entry in dict1 (the fast-lookup table).
 #[derive(Clone, Copy)]
 struct Dict1Entry {
@@ -69,7 +72,10 @@ impl HuffCdicReader {
         let off2 = read_u32_be(huff, 12) as usize;
 
         // dict1: 256 packed u32 entries at off1.
-        if off1 + 256 * 4 > huff.len() {
+        let dict1_end = off1
+            .checked_add(256 * 4)
+            .ok_or_else(|| EruditioError::Format("HUFF dict1 offset overflow".into()))?;
+        if dict1_end > huff.len() {
             return Err(EruditioError::Format("HUFF dict1 out of bounds".into()));
         }
         for i in 0..256 {
@@ -90,7 +96,10 @@ impl HuffCdicReader {
 
         // dict2: 64 u32 entries at off2, alternating (mincode, maxcode) pairs for
         // code lengths 1..32.
-        if off2 + 64 * 4 > huff.len() {
+        let dict2_end = off2
+            .checked_add(64 * 4)
+            .ok_or_else(|| EruditioError::Format("HUFF dict2 offset overflow".into()))?;
+        if dict2_end > huff.len() {
             return Err(EruditioError::Format("HUFF dict2 out of bounds".into()));
         }
         let mut dict2 = [0u32; 64];
@@ -132,6 +141,10 @@ impl HuffCdicReader {
 
         let phrases = read_u32_be(cdic, 8) as usize;
         let bits = read_u32_be(cdic, 12) as usize;
+        // Cap bit shift to prevent panic/overflow from crafted CDIC headers.
+        if bits >= usize::BITS as usize {
+            return Err(EruditioError::Format("CDIC bits field too large".into()));
+        }
         let n = std::cmp::min(
             1usize << bits,
             phrases.saturating_sub(self.dictionary.len()),
@@ -193,6 +206,11 @@ impl HuffCdicReader {
         let mut result = Vec::new();
 
         loop {
+            if result.len() > MAX_UNPACK_OUTPUT {
+                return Err(EruditioError::Compression(
+                    "HUFF/CDIC decompressed output exceeds size limit".into(),
+                ));
+            }
             if n <= 0 {
                 pos += 4;
                 if pos + 8 > padded.len() {
@@ -248,11 +266,17 @@ impl HuffCdicReader {
                         DictEntry::Decompressed(Vec::new()),
                     ) {
                         DictEntry::Compressed(data) => data,
-                        _ => unreachable!(),
+                        _ => {
+                            return Err(EruditioError::Compression(
+                                "HUFF/CDIC unexpected dictionary state".into(),
+                            ));
+                        },
                     };
                     let decompressed = self.unpack_inner(&compressed, depth + 1)?;
-                    self.dictionary[r] = DictEntry::Decompressed(decompressed.clone());
-                    result.extend_from_slice(&decompressed);
+                    self.dictionary[r] = DictEntry::Decompressed(decompressed);
+                    if let DictEntry::Decompressed(ref cached) = self.dictionary[r] {
+                        result.extend_from_slice(cached);
+                    }
                 },
             }
         }
@@ -340,7 +364,7 @@ mod tests {
         // Offset table: n * 2 bytes
         // Data: sum of (2 + entry.len()) for each entry
         let offset_table_start = 16usize;
-        let data_start = offset_table_start + n * 2;
+        let _data_start = offset_table_start + n * 2;
 
         let mut cdic = vec![0u8; 16]; // will extend
         cdic[0..8].copy_from_slice(b"CDIC\x00\x00\x00\x10");

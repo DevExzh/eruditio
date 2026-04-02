@@ -72,12 +72,21 @@ impl LitContainer {
                 "Unsupported LIT version: {version}"
             )));
         }
-        let hdr_len = itss::i32_le(&data[12..]) as usize;
-        let num_pieces = itss::i32_le(&data[16..]) as usize;
-        let sec_hdr_len = itss::i32_le(&data[20..]) as usize;
+        // Validate i32 header fields are non-negative before casting to usize,
+        // since a crafted file with negative values would wrap to huge usize values.
+        let hdr_len = usize::try_from(itss::i32_le(&data[12..]))
+            .map_err(|_| EruditioError::Format("Negative LIT header length".into()))?;
+        let num_pieces = usize::try_from(itss::i32_le(&data[16..]))
+            .map_err(|_| EruditioError::Format("Negative LIT piece count".into()))?;
+        let sec_hdr_len = usize::try_from(itss::i32_le(&data[20..]))
+            .map_err(|_| EruditioError::Format("Negative LIT secondary header length".into()))?;
 
         // --- Secondary header (CAOL + ITSF) ---
-        let sec_hdr_offset = hdr_len + num_pieces * 16;
+        // Use checked arithmetic to prevent overflow with crafted values.
+        let sec_hdr_offset = num_pieces
+            .checked_mul(16)
+            .and_then(|v| v.checked_add(hdr_len))
+            .ok_or_else(|| EruditioError::Format("LIT header offset overflow".into()))?;
         if sec_hdr_offset + sec_hdr_len > data.len() {
             return Err(EruditioError::Format(
                 "Secondary header out of range".into(),
@@ -91,7 +100,9 @@ impl LitContainer {
         let mut found_itsf = false;
 
         if sec_hdr.len() >= 8 {
-            let mut off = itss::i32_le(&sec_hdr[4..]) as usize;
+            let mut off = usize::try_from(itss::i32_le(&sec_hdr[4..])).map_err(|_| {
+                EruditioError::Format("LIT: negative secondary header offset".into())
+            })?;
             while off + 8 <= sec_hdr.len() {
                 let block_type = &sec_hdr[off..off + 4];
                 if block_type == b"CAOL" && off + 48 <= sec_hdr.len() {
@@ -121,7 +132,8 @@ impl LitContainer {
                 break;
             }
             let piece_offset = itss::u32_le(&data[p..]) as usize;
-            let piece_size = itss::i32_le(&data[p + 8..]) as usize;
+            let piece_size = usize::try_from(itss::i32_le(&data[p + 8..]))
+                .map_err(|_| EruditioError::Format("LIT: negative piece size".into()))?;
             if piece_offset + piece_size > data.len() {
                 continue;
             }
@@ -133,8 +145,12 @@ impl LitContainer {
                     return Err(EruditioError::Format("Piece 1 is not IFCM".into()));
                 }
                 if piece.len() >= 28 {
-                    let chunk_size = itss::i32_le(&piece[8..]) as usize;
-                    let num_chunks = itss::i32_le(&piece[24..]) as usize;
+                    let chunk_size = usize::try_from(itss::i32_le(&piece[8..])).map_err(|_| {
+                        EruditioError::Format("LIT: negative IFCM chunk size".into())
+                    })?;
+                    let num_chunks = usize::try_from(itss::i32_le(&piece[24..])).map_err(|_| {
+                        EruditioError::Format("LIT: negative IFCM chunk count".into())
+                    })?;
 
                     if chunk_size > 0 && piece.len() >= 32 {
                         Self::parse_ifcm_directory(
@@ -197,7 +213,8 @@ impl LitContainer {
             if chunk.len() < 48 || &chunk[0..4] != b"AOLL" {
                 continue;
             }
-            let remaining_raw = itss::i32_le(&chunk[4..]) as usize;
+            let remaining_raw = usize::try_from(itss::i32_le(&chunk[4..]))
+                .map_err(|_| EruditioError::Format("LIT: negative AOLL remaining value".into()))?;
             let remaining = chunk_size.saturating_sub(remaining_raw + 48);
             // Entry data starts at offset 48 within the chunk
             let entry_data = &chunk[48..];
@@ -364,7 +381,9 @@ impl LitContainer {
                 if pos + 4 > raw.len() {
                     break;
                 }
-                let num_files = itss::i32_le(&raw[pos..]) as usize;
+                let num_files = usize::try_from(itss::i32_le(&raw[pos..])).map_err(|_| {
+                    EruditioError::Format("LIT: negative manifest file count".into())
+                })?;
                 pos += 4;
                 for _ in 0..num_files {
                     if pos + 4 > raw.len() {
@@ -396,8 +415,14 @@ impl LitContainer {
     }
 
     fn read_raw(data: &[u8], content_offset: u64, entry: &DirectoryEntry) -> Result<Vec<u8>> {
-        let start = (content_offset + entry.offset) as usize;
-        let end = start + entry.size as usize;
+        // Use checked arithmetic to prevent overflow from crafted offsets/sizes.
+        let start = content_offset
+            .checked_add(entry.offset)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| EruditioError::Parse("LIT entry offset overflow".into()))?;
+        let end = start
+            .checked_add(entry.size as usize)
+            .ok_or_else(|| EruditioError::Parse("LIT entry size overflow".into()))?;
         if end > data.len() {
             return Err(EruditioError::Parse("Entry extends past file end".into()));
         }
@@ -459,9 +484,15 @@ impl LitContainer {
 
         let mut t_pos = 0;
         while t_pos + 16 <= transform.len() {
-            let guid = itss::format_guid(&transform[t_pos..]);
+            let guid = itss::format_guid(&transform[t_pos..])?;
+            // Compute control block size with checked arithmetic to avoid
+            // signed overflow when the i32 field contains crafted values.
             let csize = if control.len() >= 4 {
-                ((itss::i32_le(&control) + 1) * 4) as usize
+                let raw = itss::i32_le(&control);
+                raw.checked_add(1)
+                    .and_then(|v| v.checked_mul(4))
+                    .and_then(|v| usize::try_from(v).ok())
+                    .unwrap_or(0)
             } else {
                 0
             };
@@ -621,7 +652,16 @@ fn parse_lit_reset_table(data: &[u8]) -> Result<itss::LzxResetTable> {
         ));
     }
 
-    let num_entries = block_count as usize + 1;
+    const MAX_RESET_TABLE_ENTRIES: usize = 16_000_000;
+
+    let num_entries = (block_count as usize)
+        .checked_add(1)
+        .ok_or_else(|| EruditioError::Parse("LIT reset table entry count overflow".into()))?;
+    if num_entries > MAX_RESET_TABLE_ENTRIES {
+        return Err(EruditioError::Parse(
+            "LIT reset table has too many entries (possible corrupt file)".into(),
+        ));
+    }
     let mut block_addresses = Vec::with_capacity(num_entries);
     for i in 0..num_entries {
         let off = table_offset + i * 8;

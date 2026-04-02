@@ -264,7 +264,10 @@ fn read_u16_safe(data: &[u8], offset: usize) -> u16 {
 /// Extracts the full book title from Record 0.
 fn extract_full_title(record0: &[u8], offset: u32, length: u32) -> String {
     let start = offset as usize;
-    let end = start + length as usize;
+    let end = match start.checked_add(length as usize) {
+        Some(e) => e,
+        None => return String::new(), // overflow from crafted header values
+    };
 
     if start < record0.len() && end <= record0.len() && start < end {
         String::from_utf8_lossy(&record0[start..end])
@@ -293,7 +296,7 @@ pub fn trailing_data_size(record_data: &[u8], extra_flags: u32) -> usize {
 
     // Multibyte trailing data (bit 0).
     if extra_flags & 1 != 0 {
-        let effective_len = record_data.len() - total;
+        let effective_len = record_data.len().saturating_sub(total);
         if effective_len > 0 {
             let last_byte = record_data[effective_len - 1];
             let mb_size = (last_byte & 0x03) as usize + 1;

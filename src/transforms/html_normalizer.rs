@@ -1,5 +1,7 @@
 //! Normalizes HTML content to well-formed XHTML.
 
+use std::borrow::Cow;
+
 use crate::domain::Book;
 use crate::domain::traits::Transform;
 use crate::error::Result;
@@ -75,7 +77,18 @@ fn normalize_xhtml(html: &str) -> String {
                 }
             }
             if is_entity {
+                // Advance the real iterator past the entity body + semicolon,
+                // emitting the full entity verbatim.
                 output.push('&');
+                for _ in 0..lookahead.len() {
+                    if let Some(c) = chars.next() {
+                        output.push(c);
+                    }
+                }
+                // Consume the semicolon.
+                if let Some(c) = chars.next() {
+                    output.push(c);
+                }
             } else {
                 output.push_str("&amp;");
             }
@@ -88,7 +101,7 @@ fn normalize_xhtml(html: &str) -> String {
 }
 
 /// If the tag is a void element without a self-closing slash, add one.
-fn ensure_self_closing_voids(tag: &str) -> String {
+fn ensure_self_closing_voids(tag: &str) -> Cow<'_, str> {
     const VOID_ELEMENTS: &[&str] = &[
         "br", "hr", "img", "meta", "link", "input", "area", "base", "col", "embed", "source",
         "track", "wbr",
@@ -96,22 +109,29 @@ fn ensure_self_closing_voids(tag: &str) -> String {
 
     // Skip closing tags and already self-closing tags.
     if tag.starts_with("</") || tag.ends_with("/>") {
-        return tag.to_string();
+        return Cow::Borrowed(tag);
     }
 
     // Extract the element name (after '<', before space or '>').
     let inner = &tag[1..tag.len() - 1]; // strip < and >
-    let name = inner
-        .split(|c: char| c.is_whitespace() || c == '/')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let name_bytes = inner.as_bytes();
+    let name_end = name_bytes
+        .iter()
+        .position(|&b| b.is_ascii_whitespace() || b == b'/')
+        .unwrap_or(name_bytes.len());
+    let name_slice = &inner[..name_end];
 
-    if VOID_ELEMENTS.contains(&name.as_str()) {
+    // Check if the lowercased name matches a void element without allocating
+    // when it doesn't match.
+    let is_void = VOID_ELEMENTS
+        .iter()
+        .any(|&ve| name_slice.eq_ignore_ascii_case(ve));
+
+    if is_void {
         // Insert self-closing slash.
-        format!("{} />", &tag[..tag.len() - 1])
+        Cow::Owned(format!("{} />", &tag[..tag.len() - 1]))
     } else {
-        tag.to_string()
+        Cow::Borrowed(tag)
     }
 }
 

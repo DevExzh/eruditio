@@ -107,10 +107,11 @@ impl HashChain {
             }
 
             // SAFETY: match_length_simd requires that both slices have at
-            // least `max_len` readable bytes. `cand < pos` and
-            // `cand + max_len <= cand + remaining <= data.len()` (since
-            // `remaining = data.len() - pos` and `cand < pos`, we have room).
-            // Similarly, `pos + max_len <= data.len()`.
+            // least `max_len` readable bytes.
+            // For `data[pos..]`: `max_len <= remaining = data.len() - pos`,
+            //   so `pos + max_len <= data.len()`.
+            // For `data[cand..]`: `cand < pos`, so `data.len() - cand >
+            //   data.len() - pos >= max_len`, giving `cand + max_len < data.len()`.
             let length = unsafe { match_length_simd(&data[cand..], &data[pos..], max_len) };
 
             if length >= MIN_MATCH && length > best_length {
@@ -241,15 +242,17 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
                 let start = output.len() - distance;
                 if distance >= length {
                     // Non-overlapping: bulk copy is safe.
-                    // SAFETY: `start + length <= output.len()` because
-                    // `distance >= length` and `start = output.len() - distance`.
-                    // We reserve `length` bytes so `as_mut_ptr().add(len)` is
-                    // valid for writes of `length` bytes.
+                    // Derive both pointers from as_mut_ptr() to avoid creating
+                    // aliasing &/*mut pairs that could violate Stacked Borrows.
                     output.reserve(length);
                     let len = output.len();
                     unsafe {
-                        let src = output.as_ptr().add(start);
-                        let dst = output.as_mut_ptr().add(len);
+                        let base = output.as_mut_ptr();
+                        let src = base.add(start) as *const u8;
+                        let dst = base.add(len);
+                        // SAFETY: `start + length <= len` because `distance >= length`
+                        // and `start = len - distance`. We reserved `length` bytes so
+                        // `dst` is valid for writes. Regions do not overlap.
                         std::ptr::copy_nonoverlapping(src, dst, length);
                         output.set_len(len + length);
                     }
