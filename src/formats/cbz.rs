@@ -23,8 +23,7 @@ impl FormatReader for CbzReader {
         reader.read_to_end(&mut buffer)?;
         let cursor = std::io::Cursor::new(buffer);
 
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| EruditioError::Format(format!("Failed to open CBZ as ZIP: {}", e)))?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         let mut book = Book::new();
         let mut image_files = Vec::new();
@@ -213,13 +212,11 @@ fn write_cbz<W: Write + std::io::Seek>(book: &Book, writer: W) -> Result<()> {
     }
 
     for (href, data) in &images {
-        zip.start_file(href.as_str(), options)
-            .map_err(|e| EruditioError::Format(format!("Failed to write ZIP entry: {}", e)))?;
+        zip.start_file(href.as_str(), options)?;
         zip.write_all(data)?;
     }
 
-    zip.finish()
-        .map_err(|e| EruditioError::Format(format!("Failed to finalize ZIP: {}", e)))?;
+    zip.finish()?;
 
     Ok(())
 }

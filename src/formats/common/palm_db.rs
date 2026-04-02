@@ -205,13 +205,13 @@ fn parse_pdb_header(data: &[u8]) -> Result<PdbHeader> {
 
 /// Reads a big-endian u16 from a byte slice at the given offset.
 #[inline]
-pub fn read_u16_be(data: &[u8], offset: usize) -> u16 {
+pub const fn read_u16_be(data: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([data[offset], data[offset + 1]])
 }
 
 /// Reads a big-endian u32 from a byte slice at the given offset.
 #[inline]
-pub fn read_u32_be(data: &[u8], offset: usize) -> u32 {
+pub const fn read_u32_be(data: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes([
         data[offset],
         data[offset + 1],

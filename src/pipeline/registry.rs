@@ -36,6 +36,7 @@ use crate::formats::{
 };
 
 /// Registry mapping `Format` values to their reader/writer implementations.
+#[must_use]
 pub struct FormatRegistry {
     readers: HashMap<Format, Box<dyn FormatReader>>,
     writers: HashMap<Format, Box<dyn FormatWriter>>,

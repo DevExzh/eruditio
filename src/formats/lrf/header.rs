@@ -240,11 +240,11 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-pub(crate) fn read_u16_le(data: &[u8], offset: usize) -> u16 {
+pub(crate) const fn read_u16_le(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
 }
 
-pub(crate) fn read_u32_le(data: &[u8], offset: usize) -> u32 {
+pub(crate) const fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([
         data[offset],
         data[offset + 1],
@@ -253,7 +253,7 @@ pub(crate) fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     ])
 }
 
-pub(crate) fn read_u64_le(data: &[u8], offset: usize) -> u64 {
+pub(crate) const fn read_u64_le(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes([
         data[offset],
         data[offset + 1],

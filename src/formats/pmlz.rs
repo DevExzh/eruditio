@@ -23,8 +23,7 @@ impl FormatReader for PmlzReader {
         reader.read_to_end(&mut data)?;
 
         let cursor = Cursor::new(&data);
-        let mut archive =
-            zip::ZipArchive::new(cursor).map_err(|e| EruditioError::Format(e.to_string()))?;
+        let mut archive = zip::ZipArchive::new(cursor)?;
 
         // Find the .pml file inside the ZIP.
         let pml_name = (0..archive.len())
@@ -41,10 +40,7 @@ impl FormatReader for PmlzReader {
             .ok_or_else(|| EruditioError::Format("No .pml file found in PMLZ archive".into()))?;
 
         let mut pml_data = Vec::new();
-        archive
-            .by_name(&pml_name)
-            .map_err(|e| EruditioError::Format(e.to_string()))?
-            .read_to_end(&mut pml_data)?;
+        archive.by_name(&pml_name)?.read_to_end(&mut pml_data)?;
 
         let mut cursor = Cursor::new(pml_data);
         PmlReader::new().read_book(&mut cursor)
@@ -73,11 +69,9 @@ impl FormatWriter for PmlzWriter {
             let mut zip = zip::ZipWriter::new(&mut cursor);
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
-            zip.start_file("content.pml", options)
-                .map_err(|e| EruditioError::Format(e.to_string()))?;
+            zip.start_file("content.pml", options)?;
             zip.write_all(&pml_buf)?;
-            zip.finish()
-                .map_err(|e| EruditioError::Format(e.to_string()))?;
+            zip.finish()?;
         }
 
         output.write_all(&cursor.into_inner())?;

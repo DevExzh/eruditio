@@ -33,6 +33,9 @@ pub enum EruditioError {
 
     #[error("Validation error: {0}")]
     Validation(String),
+
+    #[error("ZIP error: {0}")]
+    Zip(#[from] zip::result::ZipError),
 }
 
 /// A specialized `Result` type for the `eruditio` crate.

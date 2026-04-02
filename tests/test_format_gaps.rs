@@ -73,7 +73,7 @@ fn oeb_to_epub_conversion() {
     // Convert OEB → EPUB.
     let mut input = Cursor::new(oeb_buf);
     let mut output = Vec::new();
-    pipeline
+    let _ = pipeline
         .convert(
             Format::Oeb,
             Format::Epub,
@@ -109,7 +109,7 @@ fn epub_to_oeb_conversion() {
     // Convert EPUB → OEB.
     let mut input = Cursor::new(epub_buf);
     let mut output = Vec::new();
-    pipeline
+    let _ = pipeline
         .convert(
             Format::Epub,
             Format::Oeb,

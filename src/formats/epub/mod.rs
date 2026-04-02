@@ -1,5 +1,5 @@
 use crate::domain::{Book, FormatReader, FormatWriter, TocItem};
-use crate::error::{EruditioError, Result};
+use crate::error::Result;
 use std::io::{Read, Write};
 use zip::ZipArchive;
 
@@ -27,8 +27,7 @@ impl FormatReader for EpubReader {
         reader.read_to_end(&mut buffer)?;
         let cursor = std::io::Cursor::new(buffer);
 
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| EruditioError::Format(format!("Failed to open EPUB as ZIP: {}", e)))?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         // 1. Verify mimetype
         mimetype::verify_mimetype(&mut archive)?;

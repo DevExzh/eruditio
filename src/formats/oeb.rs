@@ -29,8 +29,7 @@ impl FormatReader for OebReader {
         reader.read_to_end(&mut data)?;
         let cursor = Cursor::new(data);
 
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| EruditioError::Format(format!("Failed to open OEB as ZIP: {}", e)))?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         // Find the OPF file.
         let opf_name = find_opf_file(&archive)
@@ -201,8 +200,7 @@ impl FormatWriter for OebWriter {
                     &chapter.content
                 );
 
-                zip.start_file(&filename, options)
-                    .map_err(|e| EruditioError::Format(format!("ZIP write error: {}", e)))?;
+                zip.start_file(&filename, options)?;
                 zip.write_all(xhtml.as_bytes())?;
 
                 content_items.push((id, filename));
@@ -217,8 +215,7 @@ impl FormatWriter for OebWriter {
                 let filename = format!("images/{}", basename);
                 let id = format!("image_{}", i);
 
-                zip.start_file(&filename, options)
-                    .map_err(|e| EruditioError::Format(format!("ZIP write error: {}", e)))?;
+                zip.start_file(&filename, options)?;
                 zip.write_all(resource.data)?;
 
                 resource_items.push((id, filename, resource.media_type));
@@ -226,12 +223,10 @@ impl FormatWriter for OebWriter {
 
             // Generate OPF.
             let opf = build_opf(book, &content_items, &resource_items);
-            zip.start_file("content.opf", options)
-                .map_err(|e| EruditioError::Format(format!("ZIP write error: {}", e)))?;
+            zip.start_file("content.opf", options)?;
             zip.write_all(opf.as_bytes())?;
 
-            zip.finish()
-                .map_err(|e| EruditioError::Format(format!("ZIP finalize error: {}", e)))?;
+            zip.finish()?;
         }
 
         output.write_all(zip_buf.get_ref())?;

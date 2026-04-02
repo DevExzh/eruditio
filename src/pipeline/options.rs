@@ -4,6 +4,7 @@ use crate::domain::Metadata;
 
 /// Options controlling the conversion pipeline behavior.
 #[derive(Debug, Clone, Default)]
+#[must_use]
 pub struct ConversionOptions {
     /// Metadata overrides to apply (non-None fields replace book metadata).
     pub metadata_overrides: Option<Metadata>,

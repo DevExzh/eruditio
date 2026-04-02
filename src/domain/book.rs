@@ -29,6 +29,7 @@ pub struct ResourceView<'a> {
 /// Internally uses an OEB-like model with a manifest (all files), spine (reading order),
 /// table of contents (navigation), and guide (semantic landmarks).
 #[derive(Debug, Clone, Default)]
+#[must_use]
 pub struct Book {
     pub metadata: Metadata,
     pub manifest: Manifest,

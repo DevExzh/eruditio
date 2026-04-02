@@ -28,8 +28,7 @@ impl FormatReader for CbcReader {
         reader.read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| EruditioError::Format(format!("Failed to open CBC as ZIP: {}", e)))?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         let manifest = read_manifest(&mut archive)?;
 

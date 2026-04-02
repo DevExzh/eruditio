@@ -353,7 +353,7 @@ fn three_hop_conversion_fb2_epub_mobi() {
     // Step 2: FB2 → EPUB.
     let mut fb2_input = Cursor::new(fb2_buf);
     let mut epub_buf = Vec::new();
-    pipeline
+    let _ = pipeline
         .convert(
             Format::Fb2,
             Format::Epub,
@@ -609,7 +609,7 @@ fn four_hop_html_rtf_epub_mobi() {
     // Step 2: HTML → RTF.
     let mut html_input = Cursor::new(html_buf);
     let mut rtf_buf = Vec::new();
-    pipeline
+    let _ = pipeline
         .convert(
             Format::Html,
             Format::Rtf,
@@ -622,7 +622,7 @@ fn four_hop_html_rtf_epub_mobi() {
     // Step 3: RTF → EPUB.
     let mut rtf_input = Cursor::new(rtf_buf);
     let mut epub_buf = Vec::new();
-    pipeline
+    let _ = pipeline
         .convert(
             Format::Rtf,
             Format::Epub,

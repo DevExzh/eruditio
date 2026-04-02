@@ -13,6 +13,7 @@ use super::registry::FormatRegistry;
 use crate::domain::traits::Transform;
 
 /// The conversion pipeline: reads, transforms, and writes ebooks.
+#[must_use]
 pub struct Pipeline {
     registry: FormatRegistry,
 }

@@ -630,7 +630,7 @@ fn djvu_to_epub_conversion() {
 
     let mut input = Cursor::new(data);
     let mut epub_buf = Vec::new();
-    pipeline
+    let _ = pipeline
         .convert(
             Format::Djvu,
             Format::Epub,

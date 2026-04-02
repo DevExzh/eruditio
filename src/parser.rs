@@ -14,6 +14,7 @@ use crate::formats::{
 use std::io::Read;
 
 /// High-level parser that can automatically detect and parse various ebook formats.
+#[must_use]
 pub struct EruditioParser;
 
 impl EruditioParser {

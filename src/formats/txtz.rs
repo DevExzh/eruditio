@@ -21,8 +21,7 @@ impl FormatReader for TxtzReader {
         reader.read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| EruditioError::Format(format!("Failed to open TXTZ as ZIP: {}", e)))?;
+        let mut archive = ZipArchive::new(cursor)?;
 
         // Find the first .txt file in the archive.
         let txt_name = find_file_by_extension(&mut archive, "txt")
@@ -94,8 +93,7 @@ fn write_single_file_zip<W: Write + Seek>(
     zip.start_file(filename, options)
         .map_err(|e| EruditioError::Format(format!("Failed to create {}: {}", filename, e)))?;
     zip.write_all(data)?;
-    zip.finish()
-        .map_err(|e| EruditioError::Format(format!("Failed to finalize ZIP: {}", e)))?;
+    zip.finish()?;
 
     Ok(())
 }
