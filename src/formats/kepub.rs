@@ -1,0 +1,338 @@
+//! Kepub (Kobo EPUB) format reader and writer.
+//!
+//! Kepub is Kobo's EPUB variant that wraps text segments in `<span>` elements
+//! for reading progress tracking. The reader delegates to the standard EPUB
+//! reader (Kepub files are valid EPUBs). The writer adds Kobo span markup
+//! before delegating to the EPUB writer.
+
+use crate::domain::{Book, FormatReader, FormatWriter};
+use crate::domain::manifest::ManifestData;
+use crate::error::Result;
+use crate::formats::epub::{EpubReader, EpubWriter};
+use std::io::{Read, Write};
+
+/// Kepub format reader.
+///
+/// Delegates entirely to the EPUB reader since Kepub files are valid EPUBs.
+/// Kobo-specific `<span class="koboSpan">` elements are left in the content
+/// as-is (they are harmless HTML and will be stripped by transforms if needed).
+#[derive(Default)]
+pub struct KepubReader {
+    inner: EpubReader,
+}
+
+impl KepubReader {
+    pub fn new() -> Self {
+        Self {
+            inner: EpubReader::new(),
+        }
+    }
+}
+
+impl FormatReader for KepubReader {
+    fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
+        self.inner.read_book(reader)
+    }
+}
+
+/// Kepub format writer.
+///
+/// Adds Kobo span markup to text content, then delegates to the EPUB writer.
+/// Each text node in paragraph-level elements gets wrapped in:
+/// `<span class="koboSpan" id="kobo.{paragraph}.{segment}">text</span>`
+#[derive(Default)]
+pub struct KepubWriter {
+    inner: EpubWriter,
+}
+
+impl KepubWriter {
+    pub fn new() -> Self {
+        Self {
+            inner: EpubWriter::new(),
+        }
+    }
+}
+
+impl FormatWriter for KepubWriter {
+    fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
+        let kobo_book = add_kobo_spans(book);
+        self.inner.write_book(&kobo_book, output)
+    }
+}
+
+/// Adds Kobo reading-progress spans to all text content documents in the book.
+fn add_kobo_spans(book: &Book) -> Book {
+    let mut result = book.clone();
+
+    // Collect IDs of manifest items that contain HTML/XML text content.
+    let text_ids: Vec<String> = result
+        .manifest
+        .iter()
+        .filter(|item| {
+            (item.media_type.contains("html") || item.media_type.contains("xml"))
+                && item.data.as_text().is_some()
+        })
+        .map(|item| item.id.clone())
+        .collect();
+
+    for id in &text_ids {
+        if let Some(item) = result.manifest.get_mut(id)
+            && let Some(text) = item.data.as_text()
+        {
+            let wrapped = insert_kobo_spans(text);
+            item.data = ManifestData::Text(wrapped);
+        }
+    }
+
+    result
+}
+
+/// Inserts `<span class="koboSpan">` wrappers around text segments within
+/// paragraph-level elements (`<p>`, `<h1>`–`<h6>`, `<li>`, `<blockquote>`,
+/// `<div>`).
+///
+/// Uses a lightweight state machine rather than a full HTML parser.
+fn insert_kobo_spans(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + html.len() / 4);
+    let mut para_idx: u32 = 0;
+    let mut seg_idx: u32;
+    let mut pos = 0;
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+
+    // Track whether we're inside a paragraph-level element where spans should
+    // be inserted.
+    let mut in_block = false;
+    let mut in_tag = false;
+
+    while pos < len {
+        if bytes[pos] == b'<' {
+            // Find the end of this tag.
+            let tag_start = pos;
+            let tag_end = match html[pos..].find('>') {
+                Some(e) => pos + e + 1,
+                None => {
+                    out.push_str(&html[pos..]);
+                    break;
+                }
+            };
+
+            let tag_content = &html[tag_start..tag_end];
+            let tag_lower = tag_content.to_lowercase();
+
+            // Check for block-level open/close tags.
+            if is_block_open_tag(&tag_lower) {
+                in_block = true;
+                para_idx += 1;
+                seg_idx = 0;
+                out.push_str(tag_content);
+                pos = tag_end;
+
+                // Now wrap text segments until the closing block tag.
+                let close_tag = closing_tag_for(&tag_lower);
+                loop {
+                    if pos >= len {
+                        break;
+                    }
+
+                    if bytes[pos] == b'<' {
+                        let inner_end = match html[pos..].find('>') {
+                            Some(e) => pos + e + 1,
+                            None => len,
+                        };
+                        let inner_tag = &html[pos..inner_end];
+                        let inner_lower = inner_tag.to_lowercase();
+
+                        if inner_lower.starts_with(&close_tag) {
+                            // Closing block tag — stop wrapping.
+                            out.push_str(inner_tag);
+                            pos = inner_end;
+                            in_block = false;
+                            break;
+                        }
+
+                        // Nested tag (e.g. <b>, <i>, <span>) — pass through.
+                        out.push_str(inner_tag);
+                        pos = inner_end;
+                        in_tag = false;
+                    } else {
+                        // Text segment — wrap in koboSpan.
+                        let text_start = pos;
+                        while pos < len && bytes[pos] != b'<' {
+                            pos += 1;
+                        }
+                        let text = &html[text_start..pos];
+                        if !text.trim().is_empty() {
+                            seg_idx += 1;
+                            out.push_str(&format!(
+                                "<span class=\"koboSpan\" id=\"kobo.{}.{}\">",
+                                para_idx, seg_idx
+                            ));
+                            out.push_str(text);
+                            out.push_str("</span>");
+                        } else {
+                            out.push_str(text);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Non-block tag — pass through.
+            out.push_str(tag_content);
+            pos = tag_end;
+            in_tag = false;
+        } else {
+            // Text outside block elements — pass through without wrapping.
+            let start = pos;
+            while pos < len && bytes[pos] != b'<' {
+                pos += 1;
+            }
+            out.push_str(&html[start..pos]);
+        }
+    }
+
+    // Suppress unused variable warnings.
+    let _ = in_block;
+    let _ = in_tag;
+
+    out
+}
+
+/// Returns `true` if the tag opens a block-level element where Kobo spans
+/// should be inserted.
+fn is_block_open_tag(tag_lower: &str) -> bool {
+    tag_lower.starts_with("<p")
+        && (tag_lower.len() < 3
+            || tag_lower.as_bytes()[2] == b'>'
+            || tag_lower.as_bytes()[2] == b' ')
+        || tag_lower.starts_with("<h1")
+        || tag_lower.starts_with("<h2")
+        || tag_lower.starts_with("<h3")
+        || tag_lower.starts_with("<h4")
+        || tag_lower.starts_with("<h5")
+        || tag_lower.starts_with("<h6")
+        || tag_lower.starts_with("<li")
+        || tag_lower.starts_with("<blockquote")
+}
+
+/// Returns the lowercase closing tag string for a given opening tag.
+fn closing_tag_for(tag_lower: &str) -> String {
+    // Extract the tag name from something like "<p class='x'>"
+    let name_end = tag_lower[1..]
+        .find(['>', ' ', '/'])
+        .map(|i| i + 1)
+        .unwrap_or(tag_lower.len());
+    let name = &tag_lower[1..name_end];
+    format!("</{}", name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Chapter;
+    use std::io::Cursor;
+
+    #[test]
+    fn kepub_reader_delegates_to_epub() {
+        // Build a minimal EPUB via the EPUB writer.
+        let mut book = Book::new();
+        book.metadata.title = Some("Kepub Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello Kobo</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut epub_buf = Vec::new();
+        EpubWriter::new().write_book(&book, &mut epub_buf).unwrap();
+
+        // Read it back via KepubReader.
+        let mut cursor = Cursor::new(epub_buf);
+        let decoded = KepubReader::new().read_book(&mut cursor).unwrap();
+        assert_eq!(decoded.metadata.title.as_deref(), Some("Kepub Test"));
+        assert!(!decoded.chapters().is_empty());
+    }
+
+    #[test]
+    fn kepub_writer_produces_valid_epub() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Kobo Book".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter One".into()),
+            content: "<p>Some text here.</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Write via KepubWriter.
+        let mut buf = Vec::new();
+        KepubWriter::new().write_book(&book, &mut buf).unwrap();
+
+        // Should be readable as a standard EPUB.
+        let mut cursor = Cursor::new(buf);
+        let decoded = EpubReader::new().read_book(&mut cursor).unwrap();
+        assert_eq!(decoded.metadata.title.as_deref(), Some("Kobo Book"));
+    }
+
+    #[test]
+    fn kobo_spans_wrap_text() {
+        let html = "<p>Hello world</p>";
+        let result = insert_kobo_spans(html);
+        assert!(result.contains("koboSpan"));
+        assert!(result.contains("Hello world"));
+        assert!(result.contains("kobo.1.1"));
+    }
+
+    #[test]
+    fn kobo_spans_skip_empty_text() {
+        let html = "<p>  </p>";
+        let result = insert_kobo_spans(html);
+        // Whitespace-only text should not get a span.
+        assert!(!result.contains("koboSpan"));
+    }
+
+    #[test]
+    fn kobo_spans_handle_inline_tags() {
+        let html = "<p><b>Bold</b> and <i>italic</i></p>";
+        let result = insert_kobo_spans(html);
+        assert!(result.contains("koboSpan"));
+        assert!(result.contains("<b>"));
+        assert!(result.contains("<i>"));
+    }
+
+    #[test]
+    fn kobo_spans_increment_paragraph_counter() {
+        let html = "<p>First</p><p>Second</p>";
+        let result = insert_kobo_spans(html);
+        assert!(result.contains("kobo.1.1"));
+        assert!(result.contains("kobo.2.1"));
+    }
+
+    #[test]
+    fn closing_tag_extraction() {
+        assert_eq!(closing_tag_for("<p>"), "</p");
+        assert_eq!(closing_tag_for("<p class=\"x\">"), "</p");
+        assert_eq!(closing_tag_for("<blockquote>"), "</blockquote");
+        assert_eq!(closing_tag_for("<h2>"), "</h2");
+    }
+
+    #[test]
+    fn kepub_round_trip() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Round Trip".into());
+        book.metadata.authors.push("Author".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter".into()),
+            content: "<p>Content here</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut buf = Vec::new();
+        KepubWriter::new().write_book(&book, &mut buf).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let decoded = KepubReader::new().read_book(&mut cursor).unwrap();
+        assert_eq!(decoded.metadata.title.as_deref(), Some("Round Trip"));
+        assert!(decoded.metadata.authors.contains(&"Author".to_string()));
+    }
+}

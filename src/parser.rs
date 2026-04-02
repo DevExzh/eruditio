@@ -1,0 +1,98 @@
+use crate::domain::{Book, FormatReader};
+use crate::error::{EruditioError, Result};
+use crate::formats::{
+    cbz::CbzReader, cb7::Cb7Reader, cbr::CbrReader, cbc::CbcReader,
+    chm::ChmReader, djvu::DjvuReader, epub::EpubReader, fb2::Fb2Reader, fbz::FbzReader,
+    html::HtmlReader, htmlz::HtmlzReader, kepub::KepubReader, lit::LitReader, lrf::LrfReader,
+    md::MdReader, mobi::MobiReader, pdb::PdbReader, pdf::PdfReader, pml::PmlReader,
+    pmlz::PmlzReader, rb::RbReader, rtf::RtfReader, snb::SnbReader, tcr::TcrReader,
+    txt::TxtReader, txtz::TxtzReader,
+};
+use std::io::Read;
+use std::path::Path;
+
+/// High-level parser that can automatically detect and parse various ebook formats.
+pub struct EruditioParser;
+
+impl EruditioParser {
+    /// Parse an ebook from a reader, using a format hint (typically a file extension).
+    pub fn parse<R: Read>(reader: &mut R, format_hint: Option<&str>) -> Result<Book> {
+        match format_hint {
+            Some(fmt) => match fmt.to_lowercase().as_str() {
+                "cbz" => CbzReader::new().read_book(reader),
+                "cb7" => Cb7Reader::new().read_book(reader),
+                "cbr" => CbrReader::new().read_book(reader),
+                "cbc" => CbcReader::new().read_book(reader),
+                "djvu" | "djv" => DjvuReader::new().read_book(reader),
+                "epub" => EpubReader::new().read_book(reader),
+                "mobi" | "azw" | "azw3" | "prc" => MobiReader::new().read_book(reader),
+                "pdf" => PdfReader::new().read_book(reader),
+                "fb2" => Fb2Reader::new().read_book(reader),
+                "fbz" | "fb2.zip" => FbzReader::new().read_book(reader),
+                "txt" => TxtReader::new().read_book(reader),
+                "txtz" => TxtzReader::new().read_book(reader),
+                "tcr" => TcrReader::new().read_book(reader),
+                "htm" | "html" | "xhtml" | "xhtm" => HtmlReader::new().read_book(reader),
+                "htmlz" => HtmlzReader::new().read_book(reader),
+                "rtf" => RtfReader::new().read_book(reader),
+                "kepub" | "kepub.epub" => KepubReader::new().read_book(reader),
+                "pdb" => PdbReader::new().read_book(reader),
+                "pml" => PmlReader::new().read_book(reader),
+                "pmlz" => PmlzReader::new().read_book(reader),
+                "rb" => RbReader::new().read_book(reader),
+                "lrf" | "lrs" => LrfReader::new().read_book(reader),
+                "snb" => SnbReader::new().read_book(reader),
+                "chm" => ChmReader::new().read_book(reader),
+                "lit" => LitReader::new().read_book(reader),
+                "md" | "markdown" => MdReader::new().read_book(reader),
+                _ => Err(EruditioError::Unsupported(format!("Unsupported format: {}", fmt))),
+            },
+            None => {
+                // Default to EPUB if no hint provided.
+                EpubReader::new().read_book(reader)
+            }
+        }
+    }
+
+    /// Convenience method to parse an ebook from a file path.
+    pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<Book> {
+        let path_ref = path.as_ref();
+        let extension = path_ref
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let mut file = std::fs::File::open(path_ref).map_err(EruditioError::Io)?;
+        Self::parse(&mut file, Some(extension))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_parse_unsupported_format() {
+        let mut data = Cursor::new(b"dummy data");
+        let result = EruditioParser::parse(&mut data, Some("unknown"));
+        assert!(result.is_err());
+        if let Err(EruditioError::Unsupported(msg)) = result {
+            assert_eq!(msg, "Unsupported format: unknown");
+        } else {
+            panic!("Expected Unsupported error");
+        }
+    }
+
+    #[test]
+    fn test_parse_pdf_not_implemented() {
+        let mut data = Cursor::new(b"dummy pdf data");
+        let result = EruditioParser::parse(&mut data, Some("pdf"));
+        assert!(result.is_err());
+        if let Err(EruditioError::Unsupported(msg)) = result {
+            assert_eq!(msg, "PDF reading not yet implemented");
+        } else {
+            panic!("Expected Unsupported error");
+        }
+    }
+}

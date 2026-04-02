@@ -1,0 +1,57 @@
+//! Format-specific modules for reading and writing different ebook formats.
+
+pub mod common;
+
+pub mod cb7;
+pub mod cbr;
+pub mod cbc;
+pub mod cbz;
+pub mod chm;
+pub mod djvu;
+pub mod epub;
+pub mod fb2;
+pub mod fbz;
+pub mod html;
+pub mod htmlz;
+pub mod kepub;
+pub mod lit;
+pub mod lrf;
+pub mod md;
+pub mod mobi;
+pub mod pdf;
+pub mod pdb;
+pub mod pml;
+pub mod pmlz;
+pub mod rb;
+pub mod rtf;
+pub mod snb;
+pub mod tcr;
+pub mod txt;
+pub mod txtz;
+
+pub use cb7::Cb7Reader;
+pub use cbr::CbrReader;
+pub use cbc::CbcReader;
+pub use cbz::{CbzReader, CbzWriter};
+pub use chm::ChmReader;
+pub use djvu::DjvuReader;
+pub use epub::{EpubReader, EpubWriter};
+pub use fb2::{Fb2Reader, Fb2Writer};
+pub use fbz::{FbzReader, FbzWriter};
+pub use html::{HtmlReader, HtmlWriter};
+pub use htmlz::{HtmlzReader, HtmlzWriter};
+pub use kepub::{KepubReader, KepubWriter};
+pub use lit::LitReader;
+pub use lrf::LrfReader;
+pub use md::MdReader;
+pub use mobi::{MobiReader, MobiWriter};
+pub use pdf::{PdfReader, PdfWriter};
+pub use pdb::{PdbReader, PdbWriter};
+pub use pml::{PmlReader, PmlWriter};
+pub use pmlz::{PmlzReader, PmlzWriter};
+pub use rb::{RbReader, RbWriter};
+pub use rtf::{RtfReader, RtfWriter};
+pub use snb::{SnbReader, SnbWriter};
+pub use tcr::{TcrReader, TcrWriter};
+pub use txt::{TxtReader, TxtWriter};
+pub use txtz::{TxtzReader, TxtzWriter};
