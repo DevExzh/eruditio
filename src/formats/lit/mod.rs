@@ -374,7 +374,7 @@ impl LitContainer {
             if pos + root_len > raw.len() {
                 break;
             }
-            let _root = String::from_utf8_lossy(&raw[pos..pos + root_len]).to_string();
+            let _root = String::from_utf8_lossy(&raw[pos..pos + root_len]).into_owned();
             pos += root_len;
 
             for state_name in &["spine", "not spine", "css", "images"] {
@@ -555,7 +555,7 @@ impl LitContainer {
             }
             tags.insert(
                 i as u32,
-                String::from_utf8_lossy(&raw[pos..pos + size]).to_string(),
+                String::from_utf8_lossy(&raw[pos..pos + size]).into_owned(),
             );
             pos += size;
         }
@@ -575,7 +575,7 @@ impl LitContainer {
                 }
                 attrs.insert(
                     i as u32,
-                    String::from_utf8_lossy(&raw[pos..pos + size]).to_string(),
+                    String::from_utf8_lossy(&raw[pos..pos + size]).into_owned(),
                 );
                 pos += size;
             }

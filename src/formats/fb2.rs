@@ -43,13 +43,13 @@ impl FormatReader for Fb2Reader {
         loop {
             match xml_reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                     if name == "body" {
                         in_body = true;
                     } else if name == "binary" {
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-                            let val = String::from_utf8_lossy(&attr.value).to_string();
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            let val = String::from_utf8_lossy(&attr.value).into_owned();
                             if key == "id" {
                                 current_binary_id = Some(val);
                             } else if key == "content-type" {
@@ -64,7 +64,7 @@ impl FormatReader for Fb2Reader {
                     current_text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 },
                 Ok(Event::End(ref e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                     let path_str = current_path.join("/");
 
                     if name == "binary" {
@@ -131,7 +131,7 @@ impl FormatReader for Fb2Reader {
                     current_text.clear();
                 },
                 Ok(Event::Empty(ref e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                     if in_body && name == "empty-line" {
                         current_section_content.push_str("<br/>\n");
                     }

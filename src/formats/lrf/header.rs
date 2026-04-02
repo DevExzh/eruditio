@@ -160,7 +160,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 match name.as_str() {
                     "BookInfo" => in_book_info = true,
                     "DocInfo" => in_doc_info = true,
@@ -171,7 +171,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"reading" {
                                     pending_reading =
-                                        Some(String::from_utf8_lossy(&attr.value).to_string());
+                                        Some(String::from_utf8_lossy(&attr.value).into_owned());
                                 }
                             }
                         }
@@ -179,7 +179,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                 }
             },
             Ok(Event::End(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 match name.as_str() {
                     "BookInfo" => in_book_info = false,
                     "DocInfo" => in_doc_info = false,
@@ -189,7 +189,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                 pending_reading = None;
             },
             Ok(Event::Text(ref e)) => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 if text.trim().is_empty() {
                     continue;
                 }

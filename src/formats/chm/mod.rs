@@ -294,7 +294,7 @@ fn parse_system_file(data: &[u8]) -> ChmSystemInfo {
 
 fn extract_cstring(data: &[u8]) -> String {
     let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-    String::from_utf8_lossy(&data[..end]).to_string()
+    String::from_utf8_lossy(&data[..end]).into_owned()
 }
 
 // ---------------------------------------------------------------------------

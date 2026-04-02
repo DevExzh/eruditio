@@ -110,10 +110,10 @@ fn parse_comic_info(xml: &str, book: &mut Book) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                current_tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
             },
             Ok(Event::Text(ref e)) => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 if text.trim().is_empty() {
                     continue;
                 }
