@@ -224,11 +224,22 @@ impl MsDes {
         Self { keys }
     }
 
-    /// Decrypt a single 8-byte block in place.
-    pub fn decrypt_block(&self, block: &mut [u8; 8]) {
+    /// Create an encryptor for the given 8-byte key.
+    pub fn new_encrypt(key: &[u8; 8]) -> Self {
+        let keys = deskey(key, false);
+        Self { keys }
+    }
+
+    /// Process a single 8-byte block in place (encrypt or decrypt depending on construction).
+    pub fn process_block(&self, block: &mut [u8; 8]) {
         let mut work = scrunch(block);
         desfunc(&mut work, &self.keys);
         unscrun(&work, block);
+    }
+
+    /// Decrypt a single 8-byte block in place.
+    pub fn decrypt_block(&self, block: &mut [u8; 8]) {
+        self.process_block(block);
     }
 
     /// Decrypt data in ECB mode. Pads the last block with zeros if needed.
@@ -242,6 +253,21 @@ impl MsDes {
         for chunk in result.chunks_exact_mut(8) {
             let block: &mut [u8; 8] = chunk.try_into().unwrap();
             self.decrypt_block(block);
+        }
+        result
+    }
+
+    /// Encrypt data in ECB mode. Pads the last block with zeros if needed.
+    /// Returns the encrypted bytes (same length as padded input).
+    pub fn encrypt_ecb(&self, data: &[u8]) -> Vec<u8> {
+        let mut result = data.to_vec();
+        let extra = result.len() % 8;
+        if extra != 0 {
+            result.resize(result.len() + (8 - extra), 0);
+        }
+        for chunk in result.chunks_exact_mut(8) {
+            let block: &mut [u8; 8] = chunk.try_into().unwrap();
+            self.process_block(block);
         }
         result
     }

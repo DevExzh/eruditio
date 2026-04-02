@@ -15,9 +15,9 @@ use crate::formats::{
     html::{HtmlReader, HtmlWriter},
     htmlz::{HtmlzReader, HtmlzWriter},
     kepub::{KepubReader, KepubWriter},
-    lit::LitReader,
-    lrf::LrfReader,
-    md::MdReader,
+    lit::{LitReader, LitWriter},
+    lrf::{LrfReader, LrfWriter},
+    md::{MdReader, MdWriter},
     mobi::{MobiReader, MobiWriter},
     pdb::{PdbReader, PdbWriter},
     pdf::{PdfReader, PdfWriter},
@@ -72,8 +72,9 @@ impl FormatRegistry {
         // CHM (Compiled HTML Help, read-only)
         registry.register_reader(Format::Chm, Box::new(ChmReader::new()));
 
-        // LIT (Microsoft Reader, read-only)
+        // LIT (Microsoft Reader)
         registry.register_reader(Format::Lit, Box::new(LitReader::new()));
+        registry.register_writer(Format::Lit, Box::new(LitWriter::new()));
 
         // TXT
         registry.register_reader(Format::Txt, Box::new(TxtReader::new()));
@@ -118,8 +119,9 @@ impl FormatRegistry {
         registry.register_reader(Format::Kepub, Box::new(KepubReader::new()));
         registry.register_writer(Format::Kepub, Box::new(KepubWriter::new()));
 
-        // LRF (Sony BBeB, read-only)
+        // LRF (Sony BBeB)
         registry.register_reader(Format::Lrf, Box::new(LrfReader::new()));
+        registry.register_writer(Format::Lrf, Box::new(LrfWriter::new()));
 
         // PDB (Palm Database — PalmDOC subtype)
         registry.register_reader(Format::Pdb, Box::new(PdbReader::new()));
@@ -143,6 +145,7 @@ impl FormatRegistry {
 
         // Markdown
         registry.register_reader(Format::Md, Box::new(MdReader::new()));
+        registry.register_writer(Format::Md, Box::new(MdWriter::new()));
 
         registry
     }

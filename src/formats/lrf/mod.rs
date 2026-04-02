@@ -9,10 +9,13 @@ pub mod header;
 pub mod objects;
 pub mod tags;
 pub mod text;
+pub mod writer;
 
 use crate::domain::{Book, Chapter, FormatReader};
 use crate::error::{EruditioError, Result};
 use std::io::Read;
+
+pub use writer::LrfWriter;
 
 use header::{LrfHeader, parse_metadata};
 use objects::{LrfObject, ObjType, parse_objects, parse_toc_stream};

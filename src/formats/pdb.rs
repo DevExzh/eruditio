@@ -11,6 +11,8 @@ use crate::error::{EruditioError, Result};
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be, PdbFile, read_u16_be};
 use flate2::bufread::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use std::io::{Read, Write};
 
 /// PDB ebook format reader.
@@ -98,6 +100,157 @@ impl FormatWriter for PdbWriter {
         Ok(())
     }
 }
+
+/// PDB (zTXT) format writer.
+///
+/// Writes a book as a zTXT (`zTXTGPlm`) PDB file with zlib compression.
+#[derive(Default)]
+pub struct PdbZtxtWriter;
+
+impl PdbZtxtWriter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl FormatWriter for PdbZtxtWriter {
+    fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
+        let mut text = String::new();
+        for chapter in book.chapters() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&strip_html(&chapter.content));
+        }
+
+        let text_bytes = text.as_bytes();
+        let max_record_size = 8192usize;
+
+        // Split into records and compress with zlib.
+        let mut records: Vec<Vec<u8>> = Vec::new();
+        let mut offset = 0;
+        while offset < text_bytes.len() {
+            let end = (offset + max_record_size).min(text_bytes.len());
+            records.push(zlib_compress(&text_bytes[offset..end])?);
+            offset = end;
+        }
+        if records.is_empty() {
+            records.push(zlib_compress(&[])?);
+        }
+
+        // Build zTXT header record (20 bytes).
+        let mut header_rec = vec![0u8; 20];
+        write_u16_be(&mut header_rec, 0, 0x012C); // version 1.44
+        write_u16_be(&mut header_rec, 2, records.len() as u16); // num text records
+        write_u32_be(&mut header_rec, 4, text_bytes.len() as u32); // uncompressed size
+        write_u16_be(&mut header_rec, 8, max_record_size as u16); // max record size
+        // 10-11: num_bookmarks = 0, 12-13: bookmark_record = 0
+        // 14-15: num_annotations = 0, 16-17: annotation_record = 0
+        header_rec[18] = 0x01; // flags: random access
+
+        // Calculate record offsets.
+        let total_records = 1 + records.len();
+        let header_size = 78 + total_records * 8 + 2;
+
+        let mut offsets = Vec::with_capacity(total_records);
+        let mut pos = header_size as u32;
+        offsets.push(pos);
+        pos += header_rec.len() as u32;
+        for rec in &records {
+            offsets.push(pos);
+            pos += rec.len() as u32;
+        }
+
+        let name = book.metadata.title.as_deref().unwrap_or("Untitled");
+        let pdb = build_pdb_header(name, b"zTXT", b"GPlm", total_records as u16, &offsets);
+
+        output.write_all(&pdb).map_err(EruditioError::Io)?;
+        output.write_all(&header_rec).map_err(EruditioError::Io)?;
+        for rec in &records {
+            output.write_all(rec).map_err(EruditioError::Io)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// PDB (eReader) format writer.
+///
+/// Writes a book as an eReader (`PNRdPPrs`) PDB file with zlib-compressed
+/// PML markup pages.
+#[derive(Default)]
+pub struct PdbEreaderWriter;
+
+impl PdbEreaderWriter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl FormatWriter for PdbEreaderWriter {
+    fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
+        // Convert book to PML markup.
+        let pml = crate::formats::pml::parser::book_to_pml(book);
+        let pml_bytes = pml.as_bytes();
+        let max_page_size = 4096usize;
+
+        // Split PML into pages and compress with zlib (compression type 10).
+        let mut text_records: Vec<Vec<u8>> = Vec::new();
+        let mut offset = 0;
+        while offset < pml_bytes.len() {
+            let end = (offset + max_page_size).min(pml_bytes.len());
+            text_records.push(zlib_compress(&pml_bytes[offset..end])?);
+            offset = end;
+        }
+        if text_records.is_empty() {
+            text_records.push(zlib_compress(&[])?);
+        }
+
+        let num_text_pages = text_records.len();
+        let non_text_offset = (num_text_pages + 1) as u16;
+
+        // Record layout: header + text pages + 1 placeholder (chapter index).
+        let total_records = 1 + num_text_pages + 1;
+
+        // Build eReader header (132 bytes).
+        let mut header_rec = vec![0u8; 132];
+        write_u16_be(&mut header_rec, 0, 10); // compression = zlib
+        write_u32_be(&mut header_rec, 4, pml_bytes.len() as u32); // uncompressed text size
+        write_u16_be(&mut header_rec, 8, num_text_pages as u16); // text page count
+        write_u16_be(&mut header_rec, 10, max_page_size as u16); // max record size
+        write_u16_be(&mut header_rec, 12, non_text_offset); // non_text_offset
+
+        // Placeholder record for chapter/link index.
+        let placeholder = vec![0u8; 4];
+
+        // Calculate record offsets.
+        let pdb_header_size = 78 + total_records * 8 + 2;
+        let mut offsets = Vec::with_capacity(total_records);
+        let mut pos = pdb_header_size as u32;
+
+        offsets.push(pos);
+        pos += header_rec.len() as u32;
+
+        for rec in &text_records {
+            offsets.push(pos);
+            pos += rec.len() as u32;
+        }
+
+        offsets.push(pos);
+
+        let name = book.metadata.title.as_deref().unwrap_or("Untitled");
+        let pdb = build_pdb_header(name, b"PNRd", b"PPrs", total_records as u16, &offsets);
+
+        output.write_all(&pdb).map_err(EruditioError::Io)?;
+        output.write_all(&header_rec).map_err(EruditioError::Io)?;
+        for rec in &text_records {
+            output.write_all(rec).map_err(EruditioError::Io)?;
+        }
+        output.write_all(&placeholder).map_err(EruditioError::Io)?;
+
+        Ok(())
+    }
+}
 const IDENT_PALMDOC: &[u8; 8] = b"TEXtREAd";
 const IDENT_ZTXT: &[u8; 8] = b"zTXTGPlm";
 const IDENT_EREADER: &[u8; 8] = b"PNRdPPrs";
@@ -155,6 +308,17 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
         .read_to_end(&mut output)
         .map_err(|e| EruditioError::Compression(format!("zlib decompression failed: {}", e)))?;
     Ok(output)
+}
+
+/// Compresses data with zlib.
+fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+    encoder
+        .write_all(data)
+        .map_err(|e| EruditioError::Compression(format!("zlib compression failed: {}", e)))?;
+    encoder
+        .finish()
+        .map_err(|e| EruditioError::Compression(format!("zlib compression failed: {}", e)))
 }
 
 // ---------------------------------------------------------------------------
@@ -1370,5 +1534,49 @@ mod tests {
         assert_eq!(strip_html("<p>Hello <b>world</b></p>"), "Hello world");
         assert_eq!(strip_html("No tags"), "No tags");
         assert_eq!(strip_html("&amp; &lt; &gt;"), "& < >");
+    }
+
+    #[test]
+    fn ztxt_writer_round_trip() {
+        let mut book = Book::new();
+        book.metadata.title = Some("zTXT Write Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Hello zTXT world!</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        PdbZtxtWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read it back.
+        let mut cursor = Cursor::new(output);
+        let decoded = PdbReader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(decoded.metadata.title.as_deref(), Some("zTXT Write Test"));
+        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        assert!(content.contains("Hello zTXT world!"));
+    }
+
+    #[test]
+    fn ereader_writer_round_trip() {
+        let mut book = Book::new();
+        book.metadata.title = Some("eReader Write Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Hello eReader world!</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        PdbEreaderWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read it back.
+        let mut cursor = Cursor::new(output);
+        let decoded = PdbReader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(decoded.metadata.title.as_deref(), Some("eReader Write Test"));
+        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        assert!(content.contains("Hello eReader world"));
     }
 }

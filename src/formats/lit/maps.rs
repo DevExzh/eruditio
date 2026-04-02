@@ -136,7 +136,7 @@ pub static HTML_TAGS: [Option<&str>; 109] = [
 // HTML global attributes (ATTRS0) — sorted by code for binary search
 // ---------------------------------------------------------------------------
 
-static HTML_GLOBAL_ATTRS: &[(u16, &str)] = &[
+pub(super) static HTML_GLOBAL_ATTRS: &[(u16, &str)] = &[
     (0x8010, "tabindex"),
     (0x8046, "title"),
     (0x804b, "style"),
@@ -203,47 +203,47 @@ static HTML_GLOBAL_ATTRS: &[(u16, &str)] = &[
 // ---------------------------------------------------------------------------
 
 // <a> (3)
-static ATTRS_A: &[(u16, &str)] = &[
+pub(super) static ATTRS_A: &[(u16, &str)] = &[
     (0x0001, "href"), (0x03ec, "target"), (0x03ee, "rel"), (0x03ef, "rev"),
     (0x03f0, "urn"), (0x03f1, "methods"), (0x8001, "name"), (0x8046, "title"),
     (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
 ];
 // <address> (5)
-static ATTRS_ADDRESS: &[(u16, &str)] = &[(0x9399, "clear")];
+pub(super) static ATTRS_ADDRESS: &[(u16, &str)] = &[(0x9399, "clear")];
 // <applet> (6)
-static ATTRS_APPLET: &[(u16, &str)] = &[
+pub(super) static ATTRS_APPLET: &[(u16, &str)] = &[
     (0x8001, "name"), (0x8006, "width"), (0x8007, "height"), (0x804a, "align"),
     (0x8bbb, "classid"), (0x8bbc, "data"), (0x8bbf, "codebase"),
     (0x8bc0, "codetype"), (0x8bc1, "code"), (0x8bc2, "type"),
     (0x8bc5, "vspace"), (0x8bc6, "hspace"), (0x978e, "onerror"),
 ];
 // <area> (7)
-static ATTRS_AREA: &[(u16, &str)] = &[
+pub(super) static ATTRS_AREA: &[(u16, &str)] = &[
     (0x0001, "href"), (0x03ea, "shape"), (0x03eb, "coords"), (0x03ed, "target"),
     (0x03ee, "alt"), (0x03ef, "nohref"), (0x8046, "title"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"),
 ];
 // <b> (8)
-static ATTRS_STYLE_CLASS_ID: &[(u16, &str)] = &[
+pub(super) static ATTRS_STYLE_CLASS_ID: &[(u16, &str)] = &[
     (0x8046, "title"), (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
 ];
 // <base> (9)
-static ATTRS_BASE: &[(u16, &str)] = &[(0x03ec, "href"), (0x03ed, "target")];
+pub(super) static ATTRS_BASE: &[(u16, &str)] = &[(0x03ec, "href"), (0x03ed, "target")];
 // <basefont> (10)
-static ATTRS_BASEFONT: &[(u16, &str)] = &[
+pub(super) static ATTRS_BASEFONT: &[(u16, &str)] = &[
     (0x938b, "color"), (0x939b, "face"), (0x93a3, "size"),
 ];
 // <bgsound> (12)
-static ATTRS_BGSOUND: &[(u16, &str)] = &[
+pub(super) static ATTRS_BGSOUND: &[(u16, &str)] = &[
     (0x03ea, "src"), (0x03eb, "loop"), (0x03ec, "volume"), (0x03ed, "balance"),
 ];
 // <blockquote> (15)
-static ATTRS_CLEAR_STYLE: &[(u16, &str)] = &[
+pub(super) static ATTRS_CLEAR_STYLE: &[(u16, &str)] = &[
     (0x8046, "title"), (0x804b, "style"), (0x83ea, "class"),
     (0x83eb, "id"), (0x9399, "clear"),
 ];
 // <body> (16)
-static ATTRS_BODY: &[(u16, &str)] = &[
+pub(super) static ATTRS_BODY: &[(u16, &str)] = &[
     (0x07db, "link"), (0x07dc, "alink"), (0x07dd, "vlink"),
     (0x8046, "title"), (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
     (0x938a, "background"), (0x938b, "text"), (0x938e, "nowrap"),
@@ -255,9 +255,9 @@ static ATTRS_BODY: &[(u16, &str)] = &[
     (0x97b4, "onafterprint"), (0xfe0c, "bgcolor"),
 ];
 // <button> (18)
-static ATTRS_BUTTON: &[(u16, &str)] = &[(0x07d1, "type"), (0x8001, "name")];
+pub(super) static ATTRS_BUTTON: &[(u16, &str)] = &[(0x07d1, "type"), (0x8001, "name")];
 // <caption> (19)
-static ATTRS_CAPTION: &[(u16, &str)] = &[
+pub(super) static ATTRS_CAPTION: &[(u16, &str)] = &[
     (0x8046, "title"), (0x8049, "align"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x93a8, "valign"),
 ];
@@ -265,53 +265,53 @@ static ATTRS_CAPTION: &[(u16, &str)] = &[
 // reuse ATTRS_CLEAR_STYLE or ATTRS_STYLE_CLASS_ID as appropriate
 
 // <col> (23), <colgroup> (24)
-static ATTRS_COL: &[(u16, &str)] = &[
+pub(super) static ATTRS_COL: &[(u16, &str)] = &[
     (0x03ea, "span"), (0x8006, "width"), (0x8049, "align"),
     (0x93a8, "valign"), (0xfe0c, "bgcolor"),
 ];
 // <dd> (27)
-static ATTRS_DD: &[(u16, &str)] = &[
+pub(super) static ATTRS_DD: &[(u16, &str)] = &[
     (0x8046, "title"), (0x804b, "style"), (0x83ea, "class"),
     (0x83eb, "id"), (0x938e, "nowrap"),
 ];
 // <div> (31)
-static ATTRS_DIV: &[(u16, &str)] = &[
+pub(super) static ATTRS_DIV: &[(u16, &str)] = &[
     (0x8046, "title"), (0x8049, "align"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x938e, "nowrap"),
 ];
 // <dl> (32)
-static ATTRS_DL: &[(u16, &str)] = &[
+pub(super) static ATTRS_DL: &[(u16, &str)] = &[
     (0x03ea, "compact"), (0x8046, "title"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"),
 ];
 // <embed> (35)
-static ATTRS_EMBED: &[(u16, &str)] = &[
+pub(super) static ATTRS_EMBED: &[(u16, &str)] = &[
     (0x8001, "name"), (0x8006, "width"), (0x8007, "height"),
     (0x804a, "align"), (0x8bbd, "palette"), (0x8bbe, "pluginspage"),
     (0x8bbf, "src"), (0x8bc1, "units"), (0x8bc2, "type"), (0x8bc3, "hidden"),
 ];
 // <fieldset> (36)
-static ATTRS_FIELDSET: &[(u16, &str)] = &[(0x804a, "align")];
+pub(super) static ATTRS_FIELDSET: &[(u16, &str)] = &[(0x804a, "align")];
 // <font> (37)
-static ATTRS_FONT: &[(u16, &str)] = &[
+pub(super) static ATTRS_FONT: &[(u16, &str)] = &[
     (0x8046, "title"), (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
     (0x938b, "color"), (0x939b, "face"), (0x939c, "size"),
 ];
 // <form> (38)
-static ATTRS_FORM: &[(u16, &str)] = &[
+pub(super) static ATTRS_FORM: &[(u16, &str)] = &[
     (0x03ea, "action"), (0x03ec, "enctype"), (0x03ed, "method"),
     (0x03ef, "target"), (0x03f4, "accept-charset"), (0x8001, "name"),
     (0x977c, "onsubmit"), (0x977d, "onreset"),
 ];
 // <frame> (39)
-static ATTRS_FRAME: &[(u16, &str)] = &[
+pub(super) static ATTRS_FRAME: &[(u16, &str)] = &[
     (0x8000, "align"), (0x8001, "name"), (0x8bb9, "src"),
     (0x8bbb, "border"), (0x8bbc, "frameborder"), (0x8bbd, "framespacing"),
     (0x8bbe, "marginwidth"), (0x8bbf, "marginheight"), (0x8bc0, "noresize"),
     (0x8bc1, "scrolling"), (0x8fa2, "bordercolor"),
 ];
 // <frameset> (40)
-static ATTRS_FRAMESET: &[(u16, &str)] = &[
+pub(super) static ATTRS_FRAMESET: &[(u16, &str)] = &[
     (0x03e9, "rows"), (0x03ea, "cols"), (0x03eb, "border"),
     (0x03ec, "bordercolor"), (0x03ed, "frameborder"), (0x03ee, "framespacing"),
     (0x8001, "name"), (0x9791, "onload"), (0x9792, "onunload"),
@@ -319,18 +319,18 @@ static ATTRS_FRAMESET: &[(u16, &str)] = &[
     (0x97b4, "onafterprint"),
 ];
 // <h1..h6> (42-47): align + clear + style/class/id
-static ATTRS_HEADING: &[(u16, &str)] = &[
+pub(super) static ATTRS_HEADING: &[(u16, &str)] = &[
     (0x8046, "title"), (0x8049, "align"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x9399, "clear"),
 ];
 // <hr> (49)
-static ATTRS_HR: &[(u16, &str)] = &[
+pub(super) static ATTRS_HR: &[(u16, &str)] = &[
     (0x03ea, "noshade"), (0x8006, "width"), (0x8007, "size"),
     (0x8046, "title"), (0x8049, "align"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x938b, "color"),
 ];
 // <iframe> (52)
-static ATTRS_IFRAME: &[(u16, &str)] = &[
+pub(super) static ATTRS_IFRAME: &[(u16, &str)] = &[
     (0x8001, "name"), (0x8006, "width"), (0x8007, "height"),
     (0x804a, "align"), (0x8bb9, "src"), (0x8bbb, "border"),
     (0x8bbc, "frameborder"), (0x8bbd, "framespacing"),
@@ -339,7 +339,7 @@ static ATTRS_IFRAME: &[(u16, &str)] = &[
     (0x8fa2, "vspace"), (0x8fa3, "hspace"),
 ];
 // <img> (53)
-static ATTRS_IMG: &[(u16, &str)] = &[
+pub(super) static ATTRS_IMG: &[(u16, &str)] = &[
     (0x03eb, "alt"), (0x03ec, "src"), (0x03ed, "border"),
     (0x03ee, "vspace"), (0x03ef, "hspace"), (0x03f0, "lowsrc"),
     (0x03f1, "vrml"), (0x03f2, "dynsrc"), (0x03f4, "loop"),
@@ -350,7 +350,7 @@ static ATTRS_IMG: &[(u16, &str)] = &[
     (0x978d, "onabort"), (0x978e, "onerror"), (0x9791, "onload"),
 ];
 // <input> (54)
-static ATTRS_INPUT: &[(u16, &str)] = &[
+pub(super) static ATTRS_INPUT: &[(u16, &str)] = &[
     (0x07d1, "type"), (0x07d3, "size"), (0x07d4, "maxlength"),
     (0x07d6, "readonly"), (0x07d8, "indeterminate"), (0x07da, "checked"),
     (0x07db, "alt"), (0x07dc, "src"), (0x07dd, "border"),
@@ -362,30 +362,30 @@ static ATTRS_INPUT: &[(u16, &str)] = &[
     (0x978f, "onchange"), (0x9791, "onload"),
 ];
 // <label> (57)
-static ATTRS_LABEL: &[(u16, &str)] = &[(0x03e9, "for")];
+pub(super) static ATTRS_LABEL: &[(u16, &str)] = &[(0x03e9, "for")];
 // <legend> (58)
-static ATTRS_LEGEND: &[(u16, &str)] = &[(0x804a, "align")];
+pub(super) static ATTRS_LEGEND: &[(u16, &str)] = &[(0x804a, "align")];
 // <li> (59)
-static ATTRS_LI: &[(u16, &str)] = &[
+pub(super) static ATTRS_LI: &[(u16, &str)] = &[
     (0x03ea, "value"), (0x8046, "title"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x939a, "type"),
 ];
 // <link> (60)
-static ATTRS_LINK: &[(u16, &str)] = &[
+pub(super) static ATTRS_LINK: &[(u16, &str)] = &[
     (0x03ee, "href"), (0x03ef, "rel"), (0x03f0, "rev"),
     (0x03f1, "type"), (0x03f9, "media"), (0x03fa, "target"),
     (0x8046, "title"), (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
     (0x978e, "onerror"), (0x9791, "onload"),
 ];
 // <tag61> (61)
-static ATTRS_TAG61: &[(u16, &str)] = &[(0x9399, "clear")];
+pub(super) static ATTRS_TAG61: &[(u16, &str)] = &[(0x9399, "clear")];
 // <map> (62)
-static ATTRS_MAP: &[(u16, &str)] = &[
+pub(super) static ATTRS_MAP: &[(u16, &str)] = &[
     (0x8001, "name"), (0x8046, "title"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"),
 ];
 // <tag63> (63) — marquee
-static ATTRS_TAG63: &[(u16, &str)] = &[
+pub(super) static ATTRS_TAG63: &[(u16, &str)] = &[
     (0x1771, "scrolldelay"), (0x1772, "direction"), (0x1773, "behavior"),
     (0x1774, "scrollamount"), (0x1775, "loop"), (0x1776, "vspace"),
     (0x1777, "hspace"), (0x1778, "truespeed"),
@@ -394,14 +394,14 @@ static ATTRS_TAG63: &[(u16, &str)] = &[
     (0xfe0c, "bgcolor"),
 ];
 // <meta> (65)
-static ATTRS_META: &[(u16, &str)] = &[
+pub(super) static ATTRS_META: &[(u16, &str)] = &[
     (0x03ea, "http-equiv"), (0x03eb, "content"), (0x03ec, "url"),
     (0x03f6, "charset"), (0x8001, "name"),
 ];
 // <nextid> (66)
-static ATTRS_NEXTID: &[(u16, &str)] = &[(0x03f5, "n")];
+pub(super) static ATTRS_NEXTID: &[(u16, &str)] = &[(0x03f5, "n")];
 // <object> (71)
-static ATTRS_OBJECT: &[(u16, &str)] = &[
+pub(super) static ATTRS_OBJECT: &[(u16, &str)] = &[
     (0x8000, "usemap"), (0x8001, "name"), (0x8006, "width"),
     (0x8007, "height"), (0x8046, "title"), (0x804a, "align"),
     (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
@@ -410,38 +410,38 @@ static ATTRS_OBJECT: &[(u16, &str)] = &[
     (0x8bc5, "vspace"), (0x8bc6, "hspace"), (0x978e, "onerror"),
 ];
 // <ol> (72)
-static ATTRS_OL: &[(u16, &str)] = &[
+pub(super) static ATTRS_OL: &[(u16, &str)] = &[
     (0x03eb, "compact"), (0x03ec, "start"), (0x8046, "title"),
     (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"), (0x939a, "type"),
 ];
 // <option> (73)
-static ATTRS_OPTION: &[(u16, &str)] = &[(0x03ea, "selected"), (0x03eb, "value")];
+pub(super) static ATTRS_OPTION: &[(u16, &str)] = &[(0x03ea, "selected"), (0x03eb, "value")];
 // <p> (74)
-static ATTRS_P: &[(u16, &str)] = &[
+pub(super) static ATTRS_P: &[(u16, &str)] = &[
     (0x8046, "title"), (0x8049, "align"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x9399, "clear"),
 ];
 // <param> (75)
-static ATTRS_PARAM: &[(u16, &str)] = &[(0x8000, "type")];
+pub(super) static ATTRS_PARAM: &[(u16, &str)] = &[(0x8000, "type")];
 // <plaintext> (76)
-static ATTRS_PLAINTEXT: &[(u16, &str)] = &[(0x9399, "clear")];
+pub(super) static ATTRS_PLAINTEXT: &[(u16, &str)] = &[(0x9399, "clear")];
 // <script> (84)
-static ATTRS_SCRIPT: &[(u16, &str)] = &[
+pub(super) static ATTRS_SCRIPT: &[(u16, &str)] = &[
     (0x03ea, "src"), (0x03ed, "for"), (0x03ee, "event"),
     (0x03f0, "defer"), (0x03f2, "type"), (0x978e, "onerror"),
 ];
 // <select> (85)
-static ATTRS_SELECT: &[(u16, &str)] = &[
+pub(super) static ATTRS_SELECT: &[(u16, &str)] = &[
     (0x03eb, "size"), (0x03ec, "multiple"), (0x8000, "align"),
     (0x8001, "name"), (0x978f, "onchange"),
 ];
 // <style> (90)
-static ATTRS_STYLE: &[(u16, &str)] = &[
+pub(super) static ATTRS_STYLE: &[(u16, &str)] = &[
     (0x03eb, "type"), (0x03ef, "media"), (0x8046, "title"),
     (0x978e, "onerror"), (0x9791, "onload"),
 ];
 // <table> (93)
-static ATTRS_TABLE: &[(u16, &str)] = &[
+pub(super) static ATTRS_TABLE: &[(u16, &str)] = &[
     (0x03ea, "cols"), (0x03eb, "border"), (0x03ec, "rules"),
     (0x03ed, "frame"), (0x03ee, "cellspacing"), (0x03ef, "cellpadding"),
     (0x03fa, "datapagesize"), (0x8006, "width"), (0x8007, "height"),
@@ -451,13 +451,13 @@ static ATTRS_TABLE: &[(u16, &str)] = &[
     (0x93a7, "bordercolordark"), (0xfe0c, "bgcolor"),
 ];
 // <tbody> (94), <tfoot> (98), <thead> (100)
-static ATTRS_TBODY: &[(u16, &str)] = &[
+pub(super) static ATTRS_TBODY: &[(u16, &str)] = &[
     (0x8049, "align"), (0x93a8, "valign"), (0xfe0c, "bgcolor"),
 ];
 // <tc> (95) — just align/valign
-static ATTRS_TC: &[(u16, &str)] = &[(0x8049, "align"), (0x93a8, "valign")];
+pub(super) static ATTRS_TC: &[(u16, &str)] = &[(0x8049, "align"), (0x93a8, "valign")];
 // <td> (96), <th> (99)
-static ATTRS_TD: &[(u16, &str)] = &[
+pub(super) static ATTRS_TD: &[(u16, &str)] = &[
     (0x07d2, "rowspan"), (0x07d3, "colspan"), (0x8006, "width"),
     (0x8007, "height"), (0x8046, "title"), (0x8049, "align"),
     (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
@@ -466,25 +466,25 @@ static ATTRS_TD: &[(u16, &str)] = &[
     (0x93a7, "bordercolordark"), (0x93a8, "valign"), (0xfe0c, "bgcolor"),
 ];
 // <textarea> (97)
-static ATTRS_TEXTAREA: &[(u16, &str)] = &[
+pub(super) static ATTRS_TEXTAREA: &[(u16, &str)] = &[
     (0x1b5a, "rows"), (0x1b5b, "cols"), (0x1b5c, "wrap"),
     (0x1b5d, "readonly"), (0x8001, "name"),
     (0x977b, "onselect"), (0x978f, "onchange"),
 ];
 // <tr> (102)
-static ATTRS_TR: &[(u16, &str)] = &[
+pub(super) static ATTRS_TR: &[(u16, &str)] = &[
     (0x8007, "height"), (0x8046, "title"), (0x8049, "align"),
     (0x804b, "style"), (0x83ea, "class"), (0x83eb, "id"),
     (0x93a5, "bordercolor"), (0x93a6, "bordercolorlight"),
     (0x93a7, "bordercolordark"), (0x93a8, "valign"), (0xfe0c, "bgcolor"),
 ];
 // <ul> (105)
-static ATTRS_UL: &[(u16, &str)] = &[
+pub(super) static ATTRS_UL: &[(u16, &str)] = &[
     (0x03eb, "compact"), (0x8046, "title"), (0x804b, "style"),
     (0x83ea, "class"), (0x83eb, "id"), (0x939a, "type"),
 ];
 // <wbr> (107) — just clear
-static ATTRS_WBR: &[(u16, &str)] = &[(0x9399, "clear")];
+pub(super) static ATTRS_WBR: &[(u16, &str)] = &[(0x9399, "clear")];
 
 // ---------------------------------------------------------------------------
 // Per-tag attribute dispatch
@@ -610,7 +610,7 @@ pub static OPF_TAGS: [Option<&str>; 43] = [
 ];
 
 // OPF global attributes
-static OPF_ATTRS: &[(u16, &str)] = &[
+pub(super) static OPF_ATTRS: &[(u16, &str)] = &[
     (0x0001, "href"),
     (0x0002, "%never-used"),
     (0x0003, "%guid"),

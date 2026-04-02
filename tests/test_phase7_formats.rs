@@ -686,12 +686,13 @@ fn phase7_formats_registered_in_registry() {
     assert!(reg.can_write(&Format::Pdb));
     assert!(reg.can_write(&Format::Rb));
     assert!(reg.can_write(&Format::Snb));
+    // LRF and LIT now have writers too.
+    assert!(reg.can_write(&Format::Lrf));
+    assert!(reg.can_write(&Format::Lit));
     // The rest remain read-only.
-    assert!(!reg.can_write(&Format::Lrf));
     assert!(!reg.can_write(&Format::Cb7));
     assert!(!reg.can_write(&Format::Cbr));
     assert!(!reg.can_write(&Format::Cbc));
     assert!(!reg.can_write(&Format::Djvu));
     assert!(!reg.can_write(&Format::Chm));
-    assert!(!reg.can_write(&Format::Lit));
 }

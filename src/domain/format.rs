@@ -47,7 +47,7 @@ impl Format {
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext.to_lowercase().as_str() {
             "epub" | "kepub.epub" => Some(Self::Epub),
-            "mobi" => Some(Self::Mobi),
+            "mobi" | "pobi" => Some(Self::Mobi),
             "azw" => Some(Self::Azw),
             "azw3" | "kf8" | "kfx" => Some(Self::Azw3),
             "azw4" => Some(Self::Azw4),
@@ -66,7 +66,7 @@ impl Format {
             "htmlz" => Some(Self::Htmlz),
             "docx" => Some(Self::Docx),
             "odt" => Some(Self::Odt),
-            "pdb" => Some(Self::Pdb),
+            "pdb" | "updb" => Some(Self::Pdb),
             "pml" => Some(Self::Pml),
             "pmlz" => Some(Self::Pmlz),
             "prc" => Some(Self::Prc),
@@ -78,7 +78,7 @@ impl Format {
             "rb" => Some(Self::Rb),
             "kepub" => Some(Self::Kepub),
             "md" | "markdown" => Some(Self::Md),
-            "oeb" | "opf" => Some(Self::Oeb),
+            "oeb" | "opf" | "oebzip" => Some(Self::Oeb),
             "zip" => Some(Self::Zip),
             _ => None,
         }

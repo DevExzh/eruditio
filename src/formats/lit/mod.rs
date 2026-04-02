@@ -1,4 +1,4 @@
-//! LIT (Microsoft Reader) format reader.
+//! LIT (Microsoft Reader) format reader and writer.
 //!
 //! LIT files use the ITOLITLS container: a variant of ITSS with CAOL+ITSF
 //! secondary headers, IFCM/AOLL directory chunks, named sections with LZX
@@ -8,6 +8,7 @@ pub mod maps;
 pub mod msdes;
 pub mod mssha1;
 pub mod unbinary;
+pub mod writer;
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -20,6 +21,8 @@ use crate::error::{EruditioError, Result};
 use crate::formats::common::itss::{self, DirectoryEntry};
 
 use unbinary::{consume_sized_utf8_string, AtomTable, ManifestPath};
+
+pub use writer::LitWriter;
 
 const DESENCRYPT_GUID: &str = "{67F6E4A2-60BF-11D3-8540-00C04F58C3CF}";
 const LZXCOMPRESS_GUID: &str = "{0A9007C6-4076-11D3-8789-0000F8105754}";
