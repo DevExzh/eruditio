@@ -1,0 +1,57 @@
+[package]
+name = "eruditio-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.eruditio]
+path = ".."
+
+[[bin]]
+name = "fuzz_palmdoc"
+path = "fuzz_targets/fuzz_palmdoc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_text_utils"
+path = "fuzz_targets/fuzz_text_utils.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_html_parser"
+path = "fuzz_targets/fuzz_html_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtf_tokenizer"
+path = "fuzz_targets/fuzz_rtf_tokenizer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_pml_parser"
+path = "fuzz_targets/fuzz_pml_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_format_readers"
+path = "fuzz_targets/fuzz_format_readers.rs"
+test = false
+doc = false
+bench = false

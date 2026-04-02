@@ -413,9 +413,10 @@ pub fn pml_to_html(pml: &str) -> String {
                         html.push(ch);
                     }
                 }
-                // Unknown escape — skip.
+                // Unknown escape — skip one full UTF-8 character.
                 _ => {
-                    pos += 1;
+                    let ch_len = pml[pos..].chars().next().map_or(1, |c| c.len_utf8());
+                    pos += ch_len;
                 }
             }
         } else if bytes[pos] == b'\n' {
