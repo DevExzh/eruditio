@@ -21,6 +21,10 @@ impl FormatReader for Fb2Reader {
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
 
+        if contents.trim().is_empty() {
+            return Err(EruditioError::Format("Empty FB2 input".into()));
+        }
+
         let mut xml_reader = XmlReader::from_str(&contents);
         xml_reader.config_mut().trim_text(true);
 
