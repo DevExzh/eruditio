@@ -1,6 +1,8 @@
 //! HTML parsing utilities for extracting metadata and content.
 
 use crate::domain::metadata::Metadata;
+use crate::formats::common::text_utils;
+
 
 /// Extracts metadata from HTML `<head>` section.
 ///
@@ -50,14 +52,14 @@ pub fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
         let close_tag = format!("</h{}>", level);
 
         let mut search_from = 0;
-        while let Some(pos) = body[search_from..].to_lowercase().find(&open_tag) {
+        while let Some(pos) = text_utils::find_case_insensitive(body[search_from..].as_bytes(), open_tag.as_bytes()) {
             let abs_pos = search_from + pos;
 
             // Extract the heading text.
             let after_open = &body[abs_pos..];
             if let Some(gt) = after_open.find('>') {
                 let content_start = abs_pos + gt + 1;
-                if let Some(close_pos) = body[content_start..].to_lowercase().find(&close_tag) {
+                if let Some(close_pos) = text_utils::find_case_insensitive(body[content_start..].as_bytes(), close_tag.as_bytes()) {
                     let heading_text = strip_html_tags(&body[content_start..content_start + close_pos])
                         .trim()
                         .to_string();
@@ -236,17 +238,7 @@ fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
 
 /// Strips HTML tags from a string.
 fn strip_html_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(ch),
-            _ => {}
-        }
-    }
-    result
+    crate::formats::common::text_utils::strip_tags(html)
 }
 
 /// Strips outer HTML structure tags (html, head, body) leaving content.
@@ -280,10 +272,7 @@ fn strip_outer_tags(html: &str) -> String {
 
 /// Escapes text for safe use in HTML attributes and content.
 fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    crate::formats::common::text_utils::escape_xml(text)
 }
 
 #[cfg(test)]

@@ -84,19 +84,7 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
 
 /// Strips HTML tags from a string, returning only text content.
 fn strip_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(ch),
-            _ => {}
-        }
-    }
-
-    result
+    crate::formats::common::text_utils::strip_tags(html)
 }
 
 #[cfg(test)]

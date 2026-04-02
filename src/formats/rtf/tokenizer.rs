@@ -109,15 +109,14 @@ pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
             _ => {
                 // Plain text — collect until we hit a control character.
                 let start = pos;
-                while pos < len
-                    && input[pos] != b'\\'
-                    && input[pos] != b'{'
-                    && input[pos] != b'}'
-                    && input[pos] != b'\n'
-                    && input[pos] != b'\r'
-                {
-                    pos += 1;
-                }
+                let remaining = &input[pos..len];
+                // Find next structural delimiter (\ { })
+                let struct_end = memchr::memchr3(b'\\', b'{', b'}', remaining)
+                    .unwrap_or(remaining.len());
+                // Also check for newlines within that range
+                let nl_end = memchr::memchr2(b'\n', b'\r', &remaining[..struct_end])
+                    .unwrap_or(struct_end);
+                pos += struct_end.min(nl_end);
                 let text = String::from_utf8_lossy(&input[start..pos]).to_string();
                 if !text.is_empty() {
                     tokens.push(RtfToken::Text(text));

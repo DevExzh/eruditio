@@ -460,58 +460,12 @@ fn extract_first_heading(html: &str) -> Option<String> {
 
 /// Very simple HTML tag stripper for heading extraction.
 fn strip_html_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-
-    for c in html.chars() {
-        if c == '<' {
-            in_tag = true;
-        } else if c == '>' {
-            in_tag = false;
-        } else if !in_tag {
-            result.push(c);
-        }
-    }
-
-    result
+    crate::formats::common::text_utils::strip_tags(html)
 }
 
 /// Decodes CP-1252 bytes to a UTF-8 string.
 fn decode_cp1252(data: &[u8]) -> String {
-    data.iter()
-        .map(|&b| {
-            match b {
-                0x80 => '\u{20AC}', // Euro sign
-                0x82 => '\u{201A}', // Single low-9 quotation
-                0x83 => '\u{0192}', // Latin small f with hook
-                0x84 => '\u{201E}', // Double low-9 quotation
-                0x85 => '\u{2026}', // Horizontal ellipsis
-                0x86 => '\u{2020}', // Dagger
-                0x87 => '\u{2021}', // Double dagger
-                0x88 => '\u{02C6}', // Modifier circumflex
-                0x89 => '\u{2030}', // Per mille
-                0x8A => '\u{0160}', // S with caron
-                0x8B => '\u{2039}', // Single left-pointing angle
-                0x8C => '\u{0152}', // OE ligature
-                0x8E => '\u{017D}', // Z with caron
-                0x91 => '\u{2018}', // Left single quotation
-                0x92 => '\u{2019}', // Right single quotation
-                0x93 => '\u{201C}', // Left double quotation
-                0x94 => '\u{201D}', // Right double quotation
-                0x95 => '\u{2022}', // Bullet
-                0x96 => '\u{2013}', // En dash
-                0x97 => '\u{2014}', // Em dash
-                0x98 => '\u{02DC}', // Small tilde
-                0x99 => '\u{2122}', // Trade mark
-                0x9A => '\u{0161}', // s with caron
-                0x9B => '\u{203A}', // Single right-pointing angle
-                0x9C => '\u{0153}', // oe ligature
-                0x9E => '\u{017E}', // z with caron
-                0x9F => '\u{0178}', // Y with diaeresis
-                _ => b as char,     // ASCII and Latin-1 supplement
-            }
-        })
-        .collect()
+    crate::formats::common::text_utils::decode_cp1252(data)
 }
 
 #[cfg(test)]

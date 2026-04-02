@@ -931,10 +931,7 @@ fn text_to_html(text: &str) -> String {
         if !trimmed.is_empty() {
             html.push_str("<p>");
             html.push_str(
-                &trimmed
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;")
+                &crate::formats::common::text_utils::escape_html(trimmed)
                     .replace('\n', "<br />"),
             );
             html.push_str("</p>\n");
@@ -950,38 +947,7 @@ fn text_to_html(text: &str) -> String {
 
 /// Decodes CP-1252 bytes to UTF-8.
 fn decode_cp1252(data: &[u8]) -> String {
-    data.iter()
-        .map(|&b| match b {
-            0x80 => '\u{20AC}',
-            0x82 => '\u{201A}',
-            0x83 => '\u{0192}',
-            0x84 => '\u{201E}',
-            0x85 => '\u{2026}',
-            0x86 => '\u{2020}',
-            0x87 => '\u{2021}',
-            0x88 => '\u{02C6}',
-            0x89 => '\u{2030}',
-            0x8A => '\u{0160}',
-            0x8B => '\u{2039}',
-            0x8C => '\u{0152}',
-            0x8E => '\u{017D}',
-            0x91 => '\u{2018}',
-            0x92 => '\u{2019}',
-            0x93 => '\u{201C}',
-            0x94 => '\u{201D}',
-            0x95 => '\u{2022}',
-            0x96 => '\u{2013}',
-            0x97 => '\u{2014}',
-            0x98 => '\u{02DC}',
-            0x99 => '\u{2122}',
-            0x9A => '\u{0161}',
-            0x9B => '\u{203A}',
-            0x9C => '\u{0153}',
-            0x9E => '\u{017E}',
-            0x9F => '\u{0178}',
-            _ => b as char,
-        })
-        .collect()
+    crate::formats::common::text_utils::decode_cp1252(data)
 }
 
 /// Detects image media type from magic bytes.
@@ -1012,26 +978,8 @@ fn media_type_to_ext(media_type: &str) -> &str {
 
 /// Strips HTML tags from a string, returning plain text.
 fn strip_html(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                // Add space after block tags
-            }
-            _ if !in_tag => result.push(ch),
-            _ => {}
-        }
-    }
-    // Decode HTML entities
-    result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&nbsp;", " ")
-        .replace("&quot;", "\"")
+    let stripped = crate::formats::common::text_utils::strip_tags(html);
+    crate::formats::common::text_utils::unescape_basic_entities(&stripped)
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,10 +1080,7 @@ fn haodoo_text_to_html(text: &str) -> String {
         if !trimmed.is_empty() {
             html.push_str("<p>");
             html.push_str(
-                &trimmed
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;"),
+                &crate::formats::common::text_utils::escape_html(trimmed),
             );
             html.push_str("</p>\n");
         }

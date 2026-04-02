@@ -178,11 +178,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     in_pict = false;
                     if !pict_format.is_empty() && pict_hex.len() >= 2 {
                         // Decode hex pairs to bytes.
-                        let bytes: Vec<u8> = (0..pict_hex.len() / 2)
-                            .filter_map(|i| {
-                                u8::from_str_radix(&pict_hex[i * 2..i * 2 + 2], 16).ok()
-                            })
-                            .collect();
+                        let bytes = crate::formats::common::text_utils::decode_hex_pairs(&pict_hex);
                         if !bytes.is_empty() {
                             let media_type = match pict_format {
                                 "jpeg" => "image/jpeg",
@@ -318,9 +314,9 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
             RtfToken::Text(text) => {
                 if in_pict {
                     // Collect hex digits, skipping whitespace
-                    for ch in text.chars() {
-                        if ch.is_ascii_hexdigit() {
-                            pict_hex.push(ch);
+                    for &b in text.as_bytes() {
+                        if b.is_ascii_hexdigit() {
+                            pict_hex.push(b as char);
                         }
                     }
                     continue; // don't add to HTML
@@ -334,10 +330,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                         in_paragraph = true;
                     }
                     // Escape for HTML.
-                    let escaped = text
-                        .replace('&', "&amp;")
-                        .replace('<', "&lt;")
-                        .replace('>', "&gt;");
+                    let escaped = crate::formats::common::text_utils::escape_html(text);
                     state.html_content.push_str(&escaped);
                 }
             }
@@ -436,37 +429,7 @@ fn i32_to_char(code: i32) -> Option<char> {
 
 /// Converts a CP-1252 byte to a Unicode character.
 fn cp1252_to_char(byte: u8) -> char {
-    // The 0x80-0x9F range differs from Latin-1.
-    match byte {
-        0x80 => '\u{20AC}', // Euro sign
-        0x82 => '\u{201A}', // Single low-9 quotation mark
-        0x83 => '\u{0192}', // Latin small letter f with hook
-        0x84 => '\u{201E}', // Double low-9 quotation mark
-        0x85 => '\u{2026}', // Horizontal ellipsis
-        0x86 => '\u{2020}', // Dagger
-        0x87 => '\u{2021}', // Double dagger
-        0x88 => '\u{02C6}', // Modifier letter circumflex accent
-        0x89 => '\u{2030}', // Per mille sign
-        0x8A => '\u{0160}', // Latin capital letter S with caron
-        0x8B => '\u{2039}', // Single left-pointing angle quotation mark
-        0x8C => '\u{0152}', // Latin capital ligature OE
-        0x8E => '\u{017D}', // Latin capital letter Z with caron
-        0x91 => '\u{2018}', // Left single quotation mark
-        0x92 => '\u{2019}', // Right single quotation mark
-        0x93 => '\u{201C}', // Left double quotation mark
-        0x94 => '\u{201D}', // Right double quotation mark
-        0x95 => '\u{2022}', // Bullet
-        0x96 => '\u{2013}', // En dash
-        0x97 => '\u{2014}', // Em dash
-        0x98 => '\u{02DC}', // Small tilde
-        0x99 => '\u{2122}', // Trade mark sign
-        0x9A => '\u{0161}', // Latin small letter s with caron
-        0x9B => '\u{203A}', // Single right-pointing angle quotation mark
-        0x9C => '\u{0153}', // Latin small ligature oe
-        0x9E => '\u{017E}', // Latin small letter z with caron
-        0x9F => '\u{0178}', // Latin capital letter Y with diaeresis
-        b => b as char,     // All other bytes map directly
-    }
+    crate::formats::common::text_utils::cp1252_byte_to_char(byte)
 }
 
 #[cfg(test)]

@@ -302,15 +302,21 @@ pub fn pml_to_html(pml: &str) -> String {
                     html.push_str(&format!("<div id=\"fn-{}\"><p>", escape_html(&fn_id)));
                     // Content until closing \FN.
                     let content_start = pos;
-                    while pos < len {
-                        if bytes[pos] == b'\\'
-                            && pos + 2 < len
-                            && bytes[pos + 1] == b'F'
-                            && bytes[pos + 2] == b'N'
-                        {
-                            break;
+                    loop {
+                        match memchr::memchr(b'\\', &bytes[pos..len]) {
+                            Some(offset) => {
+                                let abs = pos + offset;
+                                if abs + 2 < len && bytes[abs + 1] == b'F' && bytes[abs + 2] == b'N' {
+                                    pos = abs;
+                                    break;
+                                }
+                                pos = abs + 1;
+                            }
+                            None => {
+                                pos = len;
+                                break;
+                            }
                         }
-                        pos += 1;
                     }
                     html.push_str(&escape_html(&pml[content_start..pos]));
                     html.push_str("</p></div>\n");
@@ -328,15 +334,21 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     html.push_str(&format!("<div id=\"sb-{}\"><p>", escape_html(&sb_id)));
                     let content_start = pos;
-                    while pos < len {
-                        if bytes[pos] == b'\\'
-                            && pos + 2 < len
-                            && bytes[pos + 1] == b'S'
-                            && bytes[pos + 2] == b'B'
-                        {
-                            break;
+                    loop {
+                        match memchr::memchr(b'\\', &bytes[pos..len]) {
+                            Some(offset) => {
+                                let abs = pos + offset;
+                                if abs + 2 < len && bytes[abs + 1] == b'S' && bytes[abs + 2] == b'B' {
+                                    pos = abs;
+                                    break;
+                                }
+                                pos = abs + 1;
+                            }
+                            None => {
+                                pos = len;
+                                break;
+                            }
                         }
-                        pos += 1;
                     }
                     html.push_str(&escape_html(&pml[content_start..pos]));
                     html.push_str("</p></div>\n");
@@ -430,9 +442,10 @@ pub fn pml_to_html(pml: &str) -> String {
             // Regular text.
             ensure_paragraph(&mut html, &mut in_paragraph);
             let start = pos;
-            while pos < len && bytes[pos] != b'\\' && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
-                pos += 1;
-            }
+            let remaining = &bytes[pos..len];
+            let skip = memchr::memchr3(b'\\', b'\n', b'\r', remaining)
+                .unwrap_or(remaining.len());
+            pos += skip;
             html.push_str(&escape_html(&pml[start..pos]));
         }
     }
@@ -679,9 +692,7 @@ fn ensure_paragraph(html: &mut String, in_paragraph: &mut bool) {
 
 /// Escapes text for HTML output.
 fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    crate::formats::common::text_utils::escape_html(text)
 }
 
 #[cfg(test)]

@@ -27,7 +27,7 @@ pub fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
 
     while pos < stream.len() {
         // Find the next 0xF5 marker.
-        let marker_pos = stream[pos..].iter().position(|&b| b == 0xF5);
+        let marker_pos = memchr::memchr(0xF5, &stream[pos..]);
 
         match marker_pos {
             Some(0) => {
@@ -230,9 +230,7 @@ fn decode_lrf_color(val: u32) -> (u8, u8, u8) {
 
 /// Escapes HTML special characters.
 fn html_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    crate::formats::common::text_utils::escape_html(text)
 }
 
 #[cfg(test)]

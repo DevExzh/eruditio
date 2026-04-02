@@ -337,10 +337,7 @@ fn book_to_mobi_html(book: &Book) -> String {
 
 /// Basic HTML entity escaping.
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    crate::formats::common::text_utils::escape_html(s)
 }
 
 /// Truncates a title to fit the 31-character PDB name field.

@@ -852,30 +852,13 @@ fn snb_bz2_compress(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Simple HTML tag stripping for SNBC content.
 fn strip_html_simple(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(ch),
-            _ => {}
-        }
-    }
-    result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&nbsp;", " ")
+    let stripped = crate::formats::common::text_utils::strip_tags(html);
+    crate::formats::common::text_utils::unescape_basic_entities(&stripped)
 }
 
 /// Escapes special XML characters.
 fn xml_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    crate::formats::common::text_utils::escape_xml(text)
 }
 
 // -- Helpers --
@@ -926,9 +909,7 @@ fn read_cstring(data: &[u8], offset: usize) -> String {
 }
 
 fn html_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    crate::formats::common::text_utils::escape_html(text)
 }
 
 #[cfg(test)]
