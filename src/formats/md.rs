@@ -4,7 +4,7 @@
 //! then wraps the result as a single-chapter Book.
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
-use crate::error::{EruditioError, Result};
+use crate::error::Result;
 use std::io::{Read, Write};
 
 /// Markdown format reader.
@@ -20,9 +20,7 @@ impl MdReader {
 impl FormatReader for MdReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut input = String::new();
-        reader
-            .read_to_string(&mut input)
-            .map_err(EruditioError::Io)?;
+        reader.read_to_string(&mut input)?;
 
         let opts = pulldown_cmark::Options::ENABLE_TABLES
             | pulldown_cmark::Options::ENABLE_FOOTNOTES
@@ -78,7 +76,7 @@ impl FormatWriter for MdWriter {
             }
             html_to_markdown(&chapter.content, &mut md);
         }
-        writer.write_all(md.as_bytes()).map_err(EruditioError::Io)?;
+        writer.write_all(md.as_bytes())?;
         Ok(())
     }
 }

@@ -17,7 +17,7 @@ impl Cb7Reader {
 impl FormatReader for Cb7Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
         let mut archive_reader = ArchiveReader::new(cursor, Password::empty())

@@ -19,9 +19,7 @@ impl Fb2Reader {
 impl FormatReader for Fb2Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader
-            .read_to_string(&mut contents)
-            .map_err(EruditioError::Io)?;
+        reader.read_to_string(&mut contents)?;
 
         let mut xml_reader = XmlReader::from_str(&contents);
         xml_reader.config_mut().trim_text(true);
@@ -160,7 +158,8 @@ impl Fb2Writer {
 impl FormatWriter for Fb2Writer {
     fn write_book(&self, book: &Book, writer: &mut dyn Write) -> Result<()> {
         let xml = generate_fb2(book);
-        writer.write_all(xml.as_bytes()).map_err(EruditioError::Io)
+        writer.write_all(xml.as_bytes())?;
+        Ok(())
     }
 }
 

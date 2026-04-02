@@ -17,29 +17,25 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     // 1. mimetype — must be first, uncompressed.
     zip.start_file("mimetype", stored)
         .map_err(|e| EruditioError::Format(format!("Failed to write mimetype: {}", e)))?;
-    zip.write_all(b"application/epub+zip")
-        .map_err(EruditioError::Io)?;
+    zip.write_all(b"application/epub+zip")?;
 
     // 2. META-INF/container.xml
     zip.start_file("META-INF/container.xml", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
-    zip.write_all(generate_container_xml().as_bytes())
-        .map_err(EruditioError::Io)?;
+    zip.write_all(generate_container_xml().as_bytes())?;
 
     // 3. OPF
     let opf_path = "OEBPS/content.opf";
     let opf_xml = generate_opf(book);
     zip.start_file(opf_path, deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
-    zip.write_all(opf_xml.as_bytes())
-        .map_err(EruditioError::Io)?;
+    zip.write_all(opf_xml.as_bytes())?;
 
     // 4. NCX (for EPUB2 compatibility)
     let ncx_xml = generate_ncx(book);
     zip.start_file("OEBPS/toc.ncx", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
-    zip.write_all(ncx_xml.as_bytes())
-        .map_err(EruditioError::Io)?;
+    zip.write_all(ncx_xml.as_bytes())?;
 
     // 5. Write all manifest items (content + resources).
     // Skip structural files that are already written above.
@@ -53,10 +49,10 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
         match &item.data {
             crate::domain::ManifestData::Text(text) => {
-                zip.write_all(text.as_bytes()).map_err(EruditioError::Io)?;
+                zip.write_all(text.as_bytes())?;
             },
             crate::domain::ManifestData::Inline(bytes) => {
-                zip.write_all(bytes).map_err(EruditioError::Io)?;
+                zip.write_all(bytes)?;
             },
             crate::domain::ManifestData::Empty => {},
         }

@@ -1,5 +1,5 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
-use crate::error::{EruditioError, Result};
+use crate::error::Result;
 use crate::formats::common::html_utils::strip_tags;
 use std::io::{Read, Write};
 
@@ -16,9 +16,7 @@ impl TxtReader {
 impl FormatReader for TxtReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader
-            .read_to_string(&mut contents)
-            .map_err(EruditioError::Io)?;
+        reader.read_to_string(&mut contents)?;
 
         let mut book = Book::new();
 
@@ -73,7 +71,8 @@ impl TxtWriter {
 impl FormatWriter for TxtWriter {
     fn write_book(&self, book: &Book, writer: &mut dyn Write) -> Result<()> {
         let text = book_to_plain_text(book);
-        writer.write_all(text.as_bytes()).map_err(EruditioError::Io)
+        writer.write_all(text.as_bytes())?;
+        Ok(())
     }
 }
 

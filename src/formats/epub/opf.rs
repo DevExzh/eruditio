@@ -25,9 +25,7 @@ pub fn parse_opf<R: Read + Seek>(archive: &mut ZipArchive<R>, opf_path: &str) ->
         .map_err(|_| EruditioError::Format(format!("OPF file {} not found", opf_path)))?;
 
     let mut contents = String::new();
-    opf_file
-        .read_to_string(&mut contents)
-        .map_err(EruditioError::Io)?;
+    opf_file.read_to_string(&mut contents)?;
 
     parse_opf_xml(&contents)
 }

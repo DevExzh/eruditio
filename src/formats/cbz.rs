@@ -20,7 +20,7 @@ impl CbzReader {
 impl FormatReader for CbzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
         let cursor = std::io::Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)
@@ -51,7 +51,7 @@ impl FormatReader for CbzReader {
                 .by_name(name)
                 .map_err(|_| EruditioError::Format(format!("Missing file: {}", name)))?;
             let mut data = Vec::new();
-            file.read_to_end(&mut data).map_err(EruditioError::Io)?;
+            file.read_to_end(&mut data)?;
 
             let media_type = from_path(name)
                 .first()
@@ -185,9 +185,8 @@ impl FormatWriter for CbzWriter {
         // ZIP creation requires Seek, so buffer into a Cursor first.
         let mut cursor = std::io::Cursor::new(Vec::new());
         write_cbz(book, &mut cursor)?;
-        writer
-            .write_all(cursor.get_ref())
-            .map_err(EruditioError::Io)
+        writer.write_all(cursor.get_ref())?;
+        Ok(())
     }
 }
 
@@ -216,7 +215,7 @@ fn write_cbz<W: Write + std::io::Seek>(book: &Book, writer: W) -> Result<()> {
     for (href, data) in &images {
         zip.start_file(href.as_str(), options)
             .map_err(|e| EruditioError::Format(format!("Failed to write ZIP entry: {}", e)))?;
-        zip.write_all(data).map_err(EruditioError::Io)?;
+        zip.write_all(data)?;
     }
 
     zip.finish()

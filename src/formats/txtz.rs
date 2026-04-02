@@ -18,7 +18,7 @@ impl TxtzReader {
 impl FormatReader for TxtzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)
@@ -33,9 +33,7 @@ impl FormatReader for TxtzReader {
             .map_err(|_| EruditioError::Format(format!("Failed to read {}", txt_name)))?;
 
         let mut contents = Vec::new();
-        txt_file
-            .read_to_end(&mut contents)
-            .map_err(EruditioError::Io)?;
+        txt_file.read_to_end(&mut contents)?;
 
         let mut cursor = Cursor::new(contents);
         TxtReader::new().read_book(&mut cursor)
@@ -62,9 +60,8 @@ impl FormatWriter for TxtzWriter {
         let mut zip_buf = Cursor::new(Vec::new());
         write_single_file_zip(&mut zip_buf, "content.txt", &txt_buf)?;
 
-        output
-            .write_all(zip_buf.get_ref())
-            .map_err(EruditioError::Io)
+        output.write_all(zip_buf.get_ref())?;
+        Ok(())
     }
 }
 
@@ -96,7 +93,7 @@ fn write_single_file_zip<W: Write + Seek>(
 
     zip.start_file(filename, options)
         .map_err(|e| EruditioError::Format(format!("Failed to create {}: {}", filename, e)))?;
-    zip.write_all(data).map_err(EruditioError::Io)?;
+    zip.write_all(data)?;
     zip.finish()
         .map_err(|e| EruditioError::Format(format!("Failed to finalize ZIP: {}", e)))?;
 

@@ -25,7 +25,7 @@ impl CbcReader {
 impl FormatReader for CbcReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)
@@ -51,9 +51,7 @@ impl FormatReader for CbcReader {
                         filename, e
                     ))
                 })?;
-                entry
-                    .read_to_end(&mut entry_data)
-                    .map_err(EruditioError::Io)?;
+                entry.read_to_end(&mut entry_data)?;
             }
 
             let inner_book = read_inner_comic(&entry_data, filename)?;
@@ -108,9 +106,7 @@ fn read_manifest(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> Result<Vec<(Strin
         let mut manifest_file = archive
             .by_name("comics.txt")
             .map_err(|_| EruditioError::Format("CBC archive missing comics.txt manifest".into()))?;
-        manifest_file
-            .read_to_end(&mut manifest_data)
-            .map_err(EruditioError::Io)?;
+        manifest_file.read_to_end(&mut manifest_data)?;
     }
 
     // Handle UTF-16 BOM or UTF-8

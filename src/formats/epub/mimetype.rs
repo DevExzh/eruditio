@@ -10,9 +10,7 @@ pub(crate) fn verify_mimetype<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Re
         .map_err(|_| EruditioError::Format("Missing mimetype file".to_string()))?;
 
     let mut contents = String::new();
-    mimetype_file
-        .read_to_string(&mut contents)
-        .map_err(EruditioError::Io)?;
+    mimetype_file.read_to_string(&mut contents)?;
 
     if contents.trim() != "application/epub+zip" {
         return Err(EruditioError::Format("Invalid EPUB mimetype".to_string()));

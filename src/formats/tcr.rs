@@ -17,7 +17,7 @@ impl TcrReader {
 impl FormatReader for TcrReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
 
         if buffer.len() < 9 || &buffer[0..9] != b"!!8-Bit!!" {
             return Err(EruditioError::Format("Invalid TCR header".into()));
@@ -80,19 +80,17 @@ impl FormatWriter for TcrWriter {
         let (dictionary, encoded) = tcr_compress(data);
 
         // Write header.
-        writer.write_all(b"!!8-Bit!!").map_err(EruditioError::Io)?;
+        writer.write_all(b"!!8-Bit!!")?;
 
         // Write 256 dictionary entries.
         for entry in &dictionary {
             let len = entry.len().min(255) as u8;
-            writer.write_all(&[len]).map_err(EruditioError::Io)?;
-            writer
-                .write_all(&entry[..len as usize])
-                .map_err(EruditioError::Io)?;
+            writer.write_all(&[len])?;
+            writer.write_all(&entry[..len as usize])?;
         }
 
         // Write compressed data.
-        writer.write_all(&encoded).map_err(EruditioError::Io)?;
+        writer.write_all(&encoded)?;
 
         Ok(())
     }

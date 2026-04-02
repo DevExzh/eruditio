@@ -52,7 +52,7 @@ impl MobiReader {
 impl FormatReader for MobiReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
 
         let pdb = PdbFile::parse(buffer)?;
 
@@ -152,7 +152,8 @@ impl MobiWriter {
 impl FormatWriter for MobiWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         let data = writer::write_mobi(book)?;
-        output.write_all(&data).map_err(EruditioError::Io)
+        output.write_all(&data)?;
+        Ok(())
     }
 }
 
@@ -206,10 +207,9 @@ fn decompress_text(
                 if huff_reader.is_none() {
                     huff_reader = Some(build_huffcdic_reader(pdb, mobi_header)?);
                 }
-                let reader = huff_reader.as_mut()
-                    .ok_or_else(|| EruditioError::Compression(
-                        "HUFF/CDIC reader not initialized".into(),
-                    ))?;
+                let reader = huff_reader.as_mut().ok_or_else(|| {
+                    EruditioError::Compression("HUFF/CDIC reader not initialized".into())
+                })?;
                 let decompressed = reader.unpack(record_data).map_err(|e| {
                     EruditioError::Compression(format!("HUFF/CDIC decompression failed: {}", e))
                 })?;

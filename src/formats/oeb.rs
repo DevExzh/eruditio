@@ -26,7 +26,7 @@ impl OebReader {
 impl FormatReader for OebReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
         let cursor = Cursor::new(data);
 
         let mut archive = ZipArchive::new(cursor)
@@ -203,7 +203,7 @@ impl FormatWriter for OebWriter {
 
                 zip.start_file(&filename, options)
                     .map_err(|e| EruditioError::Format(format!("ZIP write error: {}", e)))?;
-                zip.write_all(xhtml.as_bytes()).map_err(EruditioError::Io)?;
+                zip.write_all(xhtml.as_bytes())?;
 
                 content_items.push((id, filename));
             }
@@ -219,7 +219,7 @@ impl FormatWriter for OebWriter {
 
                 zip.start_file(&filename, options)
                     .map_err(|e| EruditioError::Format(format!("ZIP write error: {}", e)))?;
-                zip.write_all(resource.data).map_err(EruditioError::Io)?;
+                zip.write_all(resource.data)?;
 
                 resource_items.push((id, filename, resource.media_type));
             }
@@ -228,15 +228,14 @@ impl FormatWriter for OebWriter {
             let opf = build_opf(book, &content_items, &resource_items);
             zip.start_file("content.opf", options)
                 .map_err(|e| EruditioError::Format(format!("ZIP write error: {}", e)))?;
-            zip.write_all(opf.as_bytes()).map_err(EruditioError::Io)?;
+            zip.write_all(opf.as_bytes())?;
 
             zip.finish()
                 .map_err(|e| EruditioError::Format(format!("ZIP finalize error: {}", e)))?;
         }
 
-        output
-            .write_all(zip_buf.get_ref())
-            .map_err(EruditioError::Io)
+        output.write_all(zip_buf.get_ref())?;
+        Ok(())
     }
 }
 
@@ -553,7 +552,7 @@ fn read_zip_entry<R: Read + std::io::Seek>(
         .by_name(name)
         .map_err(|_| EruditioError::Format(format!("Missing ZIP entry: {}", name)))?;
     let mut data = Vec::new();
-    file.read_to_end(&mut data).map_err(EruditioError::Io)?;
+    file.read_to_end(&mut data)?;
     Ok(data)
 }
 

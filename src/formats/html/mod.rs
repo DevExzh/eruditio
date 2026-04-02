@@ -8,7 +8,7 @@ pub mod parser;
 use base64::Engine;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
-use crate::error::{EruditioError, Result};
+use crate::error::Result;
 use crate::formats::common::html_utils::escape_html;
 use std::io::{Read, Write};
 
@@ -28,9 +28,7 @@ impl HtmlReader {
 impl FormatReader for HtmlReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader
-            .read_to_string(&mut contents)
-            .map_err(EruditioError::Io)?;
+        reader.read_to_string(&mut contents)?;
 
         let mut book = Book::new();
 
@@ -86,7 +84,8 @@ impl HtmlWriter {
 impl FormatWriter for HtmlWriter {
     fn write_book(&self, book: &Book, writer: &mut dyn Write) -> Result<()> {
         let html = book_to_html(book);
-        writer.write_all(html.as_bytes()).map_err(EruditioError::Io)
+        writer.write_all(html.as_bytes())?;
+        Ok(())
     }
 }
 

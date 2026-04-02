@@ -12,9 +12,7 @@ pub fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) ->
         .map_err(|_| EruditioError::Format(format!("File not found in archive: {}", name)))?;
 
     let mut contents = String::new();
-    file.take(MAX_ZIP_ENTRY)
-        .read_to_string(&mut contents)
-        .map_err(EruditioError::Io)?;
+    file.take(MAX_ZIP_ENTRY).read_to_string(&mut contents)?;
 
     Ok(contents)
 }
@@ -26,9 +24,7 @@ pub fn read_zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -
         .map_err(|_| EruditioError::Format(format!("File not found in archive: {}", name)))?;
 
     let mut data = Vec::new();
-    file.take(MAX_ZIP_ENTRY)
-        .read_to_end(&mut data)
-        .map_err(EruditioError::Io)?;
+    file.take(MAX_ZIP_ENTRY).read_to_end(&mut data)?;
 
     Ok(data)
 }

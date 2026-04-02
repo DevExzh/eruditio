@@ -67,10 +67,7 @@ impl FormatReader for SnbReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         const MAX_SNB_FILE: u64 = 256 * 1024 * 1024; // 256 MB
         let mut data = Vec::new();
-        reader
-            .take(MAX_SNB_FILE)
-            .read_to_end(&mut data)
-            .map_err(EruditioError::Io)?;
+        reader.take(MAX_SNB_FILE).read_to_end(&mut data)?;
 
         if data.len() < HEADER_SIZE + 16 {
             return Err(EruditioError::Format("SNB file too short".into()));
@@ -842,7 +839,7 @@ impl FormatWriter for SnbWriter {
             .copy_from_slice(&(tail_offset as i32).to_be_bytes());
         file[footer_start + 8..footer_start + 16].copy_from_slice(SNB_MAGIC);
 
-        output.write_all(&file).map_err(EruditioError::Io)?;
+        output.write_all(&file)?;
         Ok(())
     }
 }

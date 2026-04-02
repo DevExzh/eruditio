@@ -549,8 +549,7 @@ fn html_to_pml(html: &str, pml: &mut String) {
                 pml.push('\n');
             } else if tag_eq("<br>") || tag_eq("<br/>") || tag_eq("<br />") {
                 pml.push_str("\\n");
-            } else if tag_eq("<b>") || tag_eq("</b>") || tag_eq("<strong>") || tag_eq("</strong>")
-            {
+            } else if tag_eq("<b>") || tag_eq("</b>") || tag_eq("<strong>") || tag_eq("</strong>") {
                 pml.push_str("\\b");
             } else if tag_eq("<i>") || tag_eq("</i>") || tag_eq("<em>") || tag_eq("</em>") {
                 pml.push_str("\\i");

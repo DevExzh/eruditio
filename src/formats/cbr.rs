@@ -17,7 +17,7 @@ impl CbrReader {
 impl FormatReader for CbrReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
 
         // unrar requires a file path — write to a temp file
         let temp_path =

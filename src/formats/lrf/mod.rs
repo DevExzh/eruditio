@@ -12,7 +12,7 @@ pub mod text;
 pub mod writer;
 
 use crate::domain::{Book, Chapter, FormatReader};
-use crate::error::{EruditioError, Result};
+use crate::error::Result;
 use std::io::Read;
 
 pub use writer::LrfWriter;
@@ -44,7 +44,7 @@ impl LrfReader {
 impl FormatReader for LrfReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         let header = LrfHeader::parse(&data)?;
         let meta = parse_metadata(&data, &header)?;

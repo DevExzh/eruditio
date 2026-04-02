@@ -25,7 +25,7 @@ impl Azw4Reader {
 impl FormatReader for Azw4Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         // Extract the PDF from the PDB container.
         let pdf_bytes = extract_pdf(&data)?;

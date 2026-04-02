@@ -1114,7 +1114,7 @@ impl LitWriter {
 impl FormatWriter for LitWriter {
     fn write_book(&self, book: &Book, writer: &mut dyn Write) -> Result<()> {
         let data = write_lit(book)?;
-        writer.write_all(&data).map_err(EruditioError::Io)?;
+        writer.write_all(&data)?;
         Ok(())
     }
 }

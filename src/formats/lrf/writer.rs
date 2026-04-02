@@ -548,7 +548,8 @@ impl LrfWriter {
 impl crate::domain::FormatWriter for LrfWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         let data = write_lrf(book)?;
-        output.write_all(&data).map_err(EruditioError::Io)
+        output.write_all(&data)?;
+        Ok(())
     }
 }
 

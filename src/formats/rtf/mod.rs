@@ -28,7 +28,7 @@ impl RtfReader {
 impl FormatReader for RtfReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         // Verify RTF magic.
         if !data.starts_with(b"{\\rtf") {
@@ -97,7 +97,8 @@ impl RtfWriter {
 impl FormatWriter for RtfWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         let rtf = writer::book_to_rtf(book);
-        output.write_all(rtf.as_bytes()).map_err(EruditioError::Io)
+        output.write_all(rtf.as_bytes())?;
+        Ok(())
     }
 }
 

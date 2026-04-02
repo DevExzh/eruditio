@@ -20,7 +20,7 @@ impl PmlzReader {
 impl FormatReader for PmlzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         let cursor = Cursor::new(&data);
         let mut archive =
@@ -44,8 +44,7 @@ impl FormatReader for PmlzReader {
         archive
             .by_name(&pml_name)
             .map_err(|e| EruditioError::Format(e.to_string()))?
-            .read_to_end(&mut pml_data)
-            .map_err(EruditioError::Io)?;
+            .read_to_end(&mut pml_data)?;
 
         let mut cursor = Cursor::new(pml_data);
         PmlReader::new().read_book(&mut cursor)
@@ -76,14 +75,13 @@ impl FormatWriter for PmlzWriter {
                 .compression_method(zip::CompressionMethod::Deflated);
             zip.start_file("content.pml", options)
                 .map_err(|e| EruditioError::Format(e.to_string()))?;
-            zip.write_all(&pml_buf).map_err(EruditioError::Io)?;
+            zip.write_all(&pml_buf)?;
             zip.finish()
                 .map_err(|e| EruditioError::Format(e.to_string()))?;
         }
 
-        output
-            .write_all(&cursor.into_inner())
-            .map_err(EruditioError::Io)
+        output.write_all(&cursor.into_inner())?;
+        Ok(())
     }
 }
 

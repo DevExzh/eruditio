@@ -39,7 +39,8 @@ impl DjvuChunk {
         ]) as usize;
 
         let mut pos = start + 8;
-        let data_end = start.checked_add(8)
+        let data_end = start
+            .checked_add(8)
             .and_then(|v| v.checked_add(size))
             .unwrap_or(end)
             .min(end);
@@ -139,7 +140,7 @@ impl DjvuReader {
 impl FormatReader for DjvuReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
 
         // Validate AT&T magic
         if buffer.len() < 12 || &buffer[0..4] != b"AT&T" {

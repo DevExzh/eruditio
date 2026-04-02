@@ -7,7 +7,7 @@
 pub mod parser;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
-use crate::error::{EruditioError, Result};
+use crate::error::Result;
 use std::io::{Read, Write};
 
 /// PML format reader.
@@ -23,7 +23,7 @@ impl PmlReader {
 impl FormatReader for PmlReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         let text = String::from_utf8_lossy(&data);
         let html = parser::pml_to_html(&text);
@@ -65,7 +65,8 @@ impl PmlWriter {
 impl FormatWriter for PmlWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         let pml = parser::book_to_pml(book);
-        output.write_all(pml.as_bytes()).map_err(EruditioError::Io)
+        output.write_all(pml.as_bytes())?;
+        Ok(())
     }
 }
 

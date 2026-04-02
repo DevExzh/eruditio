@@ -24,7 +24,7 @@ impl EpubReader {
 impl FormatReader for EpubReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
         let cursor = std::io::Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)
@@ -104,8 +104,7 @@ impl FormatWriter for EpubWriter {
         // ZIP creation requires Seek, so buffer into a Cursor first.
         let mut cursor = std::io::Cursor::new(Vec::new());
         writer::write_epub(book, &mut cursor)?;
-        output
-            .write_all(cursor.get_ref())
-            .map_err(EruditioError::Io)
+        output.write_all(cursor.get_ref())?;
+        Ok(())
     }
 }

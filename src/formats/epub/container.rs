@@ -11,9 +11,7 @@ pub(crate) fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Resu
         .map_err(|_| EruditioError::Format("Missing META-INF/container.xml".to_string()))?;
 
     let mut contents = String::new();
-    container_file
-        .read_to_string(&mut contents)
-        .map_err(EruditioError::Io)?;
+    container_file.read_to_string(&mut contents)?;
 
     let mut xml_reader = XmlReader::from_str(&contents);
     xml_reader.config_mut().trim_text(true);

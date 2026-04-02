@@ -94,10 +94,10 @@ impl FormatWriter for PdbWriter {
         let name = book.metadata.title.as_deref().unwrap_or("Untitled");
         let pdb = build_pdb_header(name, b"TEXt", b"REAd", total_records as u16, &offsets);
 
-        output.write_all(&pdb).map_err(EruditioError::Io)?;
-        output.write_all(&header_rec).map_err(EruditioError::Io)?;
+        output.write_all(&pdb)?;
+        output.write_all(&header_rec)?;
         for rec in &records {
-            output.write_all(rec).map_err(EruditioError::Io)?;
+            output.write_all(rec)?;
         }
 
         Ok(())
@@ -167,10 +167,10 @@ impl FormatWriter for PdbZtxtWriter {
         let name = book.metadata.title.as_deref().unwrap_or("Untitled");
         let pdb = build_pdb_header(name, b"zTXT", b"GPlm", total_records as u16, &offsets);
 
-        output.write_all(&pdb).map_err(EruditioError::Io)?;
-        output.write_all(&header_rec).map_err(EruditioError::Io)?;
+        output.write_all(&pdb)?;
+        output.write_all(&header_rec)?;
         for rec in &records {
-            output.write_all(rec).map_err(EruditioError::Io)?;
+            output.write_all(rec)?;
         }
 
         Ok(())
@@ -244,12 +244,12 @@ impl FormatWriter for PdbEreaderWriter {
         let name = book.metadata.title.as_deref().unwrap_or("Untitled");
         let pdb = build_pdb_header(name, b"PNRd", b"PPrs", total_records as u16, &offsets);
 
-        output.write_all(&pdb).map_err(EruditioError::Io)?;
-        output.write_all(&header_rec).map_err(EruditioError::Io)?;
+        output.write_all(&pdb)?;
+        output.write_all(&header_rec)?;
         for rec in &text_records {
-            output.write_all(rec).map_err(EruditioError::Io)?;
+            output.write_all(rec)?;
         }
-        output.write_all(&placeholder).map_err(EruditioError::Io)?;
+        output.write_all(&placeholder)?;
 
         Ok(())
     }
@@ -269,7 +269,7 @@ const COMPRESSION_PALMDOC: u16 = 2;
 impl FormatReader for PdbReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         let pdb = PdbFile::parse(data)?;
         let identity = pdb.header.identity();
@@ -839,7 +839,9 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
 
     // Combine all text into chapters (one per text section, or single if only one).
     if ordered_html.len() == 1 {
-        let content = ordered_html.into_iter().next()
+        let content = ordered_html
+            .into_iter()
+            .next()
             .ok_or_else(|| EruditioError::Format("Plucker: expected HTML content".into()))?;
         book.add_chapter(&Chapter {
             title: Some(pdb.header.name.clone()),

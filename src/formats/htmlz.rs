@@ -23,7 +23,7 @@ impl HtmlzReader {
 impl FormatReader for HtmlzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)
@@ -38,9 +38,7 @@ impl FormatReader for HtmlzReader {
             .map_err(|_| EruditioError::Format(format!("Failed to read {}", html_name)))?;
 
         let mut contents = Vec::new();
-        html_file
-            .read_to_end(&mut contents)
-            .map_err(EruditioError::Io)?;
+        html_file.read_to_end(&mut contents)?;
 
         let mut cursor = Cursor::new(contents);
         HtmlReader::new().read_book(&mut cursor)
@@ -67,9 +65,8 @@ impl FormatWriter for HtmlzWriter {
         let mut zip_buf = Cursor::new(Vec::new());
         write_single_file_zip(&mut zip_buf, "index.html", &html_buf)?;
 
-        output
-            .write_all(zip_buf.get_ref())
-            .map_err(EruditioError::Io)
+        output.write_all(zip_buf.get_ref())?;
+        Ok(())
     }
 }
 
@@ -98,7 +95,7 @@ fn write_single_file_zip<W: Write + Seek>(
 
     zip.start_file(filename, options)
         .map_err(|e| EruditioError::Format(format!("Failed to create {}: {}", filename, e)))?;
-    zip.write_all(data).map_err(EruditioError::Io)?;
+    zip.write_all(data)?;
     zip.finish()
         .map_err(|e| EruditioError::Format(format!("Failed to finalize ZIP: {}", e)))?;
 

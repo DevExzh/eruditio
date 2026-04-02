@@ -106,11 +106,11 @@ fn read_from_archive<R: Read + Seek>(
 
     if as_text {
         let mut text = String::new();
-        file.read_to_string(&mut text).map_err(EruditioError::Io)?;
+        file.read_to_string(&mut text)?;
         Ok(ManifestData::Text(text))
     } else {
         let mut data = Vec::new();
-        file.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        file.read_to_end(&mut data)?;
         Ok(ManifestData::Inline(data))
     }
 }

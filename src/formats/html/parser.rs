@@ -256,9 +256,7 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
 /// Strips outer HTML structure tags (html, head, body) leaving content.
 fn strip_outer_tags(html: &str) -> String {
     // Find </head> case-insensitively — skip everything up to and including it.
-    let start = find_ascii_ci(html, "</head>")
-        .map(|p| p + 7)
-        .unwrap_or(0);
+    let start = find_ascii_ci(html, "</head>").map(|p| p + 7).unwrap_or(0);
     let working = &html[start..];
 
     // Find the earliest of </html> or </body> and truncate there.

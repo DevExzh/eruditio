@@ -176,7 +176,7 @@ impl Format {
     /// Reads up to 16 bytes; the stream position advances.
     pub fn detect<R: Read>(reader: &mut R) -> Result<Self> {
         let mut buf = [0u8; 16];
-        let n = reader.read(&mut buf).map_err(EruditioError::Io)?;
+        let n = reader.read(&mut buf)?;
         let bytes = &buf[..n];
 
         Self::from_magic_bytes(bytes)

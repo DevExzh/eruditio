@@ -46,7 +46,7 @@ struct TocEntry {
 impl FormatReader for RbReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut data)?;
 
         if data.len() < HEADER_SIZE {
             return Err(EruditioError::Format("RB file too short for header".into()));
@@ -262,7 +262,7 @@ impl FormatWriter for RbWriter {
             file[off..off + entry.data.len()].copy_from_slice(&entry.data);
         }
 
-        output.write_all(&file).map_err(EruditioError::Io)?;
+        output.write_all(&file)?;
         Ok(())
     }
 }
@@ -360,7 +360,8 @@ fn parse_toc(data: &[u8], offset: usize) -> Result<Vec<TocEntry>> {
     let page_count = read_u32_le(data, offset) as usize;
     let entries_start = offset + 4;
 
-    let entries_end = page_count.checked_mul(TOC_ENTRY_SIZE)
+    let entries_end = page_count
+        .checked_mul(TOC_ENTRY_SIZE)
         .and_then(|s| entries_start.checked_add(s))
         .ok_or_else(|| EruditioError::Format("RB TOC entries size overflow".into()))?;
     if entries_end > data.len() {
@@ -417,10 +418,12 @@ fn decompress_entry(data: &[u8], entry: &TocEntry) -> Result<Vec<u8>> {
     let offset = entry.data_offset as usize;
     let length = entry.data_length as usize;
 
-    let end = offset.checked_add(length)
-        .ok_or_else(|| EruditioError::Format(format!(
-            "RB entry '{}' data offset+length overflow", entry.name
-        )))?;
+    let end = offset.checked_add(length).ok_or_else(|| {
+        EruditioError::Format(format!(
+            "RB entry '{}' data offset+length overflow",
+            entry.name
+        ))
+    })?;
     if end > data.len() {
         return Err(EruditioError::Format(format!(
             "RB entry '{}' data extends past end of file",
@@ -459,11 +462,12 @@ fn decompress_chunked(data: &[u8], name: &str) -> Result<Vec<u8>> {
     let uncompressed_size = read_u32_le(data, 4) as usize;
 
     let sizes_start: usize = 8;
-    let sizes_end = chunk_count.checked_mul(4)
+    let sizes_end = chunk_count
+        .checked_mul(4)
         .and_then(|s| sizes_start.checked_add(s))
-        .ok_or_else(|| EruditioError::Format(format!(
-            "RB deflated entry '{}' chunk sizes overflow", name
-        )))?;
+        .ok_or_else(|| {
+            EruditioError::Format(format!("RB deflated entry '{}' chunk sizes overflow", name))
+        })?;
     if sizes_end > data.len() {
         return Err(EruditioError::Format(format!(
             "RB deflated entry '{}' chunk sizes extend past data",

@@ -808,7 +808,7 @@ impl LitReader {
 impl FormatReader for LitReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
+        reader.read_to_end(&mut buffer)?;
 
         let mut container = LitContainer::parse(buffer)?;
         let mut book = Book::new();
