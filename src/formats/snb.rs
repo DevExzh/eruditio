@@ -65,8 +65,12 @@ struct TocChapter {
 
 impl FormatReader for SnbReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
+        const MAX_SNB_FILE: u64 = 256 * 1024 * 1024; // 256 MB
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map_err(EruditioError::Io)?;
+        reader
+            .take(MAX_SNB_FILE)
+            .read_to_end(&mut data)
+            .map_err(EruditioError::Io)?;
 
         if data.len() < HEADER_SIZE + 16 {
             return Err(EruditioError::Format("SNB file too short".into()));
@@ -220,8 +224,9 @@ fn parse_vfat(data: &[u8], header: &SnbHeader) -> Result<Vec<VfatEntry>> {
         ));
     }
 
-    // Parse entries.
-    let mut entries = Vec::with_capacity(header.file_count);
+    // Parse entries. Cap allocation by available data to prevent DoS.
+    let max_entries = vfat_bytes.len() / entry_size;
+    let mut entries = Vec::with_capacity(header.file_count.min(max_entries));
     for i in 0..header.file_count {
         let base = i * entry_size;
         let attr = read_u32_be(&vfat_bytes, base);
@@ -458,10 +463,10 @@ fn parse_book_metadata(xml: &str, book: &mut Book) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                current_tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
             },
             Ok(Event::Text(ref e)) => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -492,18 +497,17 @@ fn parse_toc(xml: &str) -> Vec<TocChapter> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                if name == "chapter" {
+                if e.name().as_ref() == b"chapter" {
                     in_chapter = true;
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"src" {
-                            current_src = String::from_utf8_lossy(&attr.value).to_string();
+                            current_src = String::from_utf8_lossy(&attr.value).into_owned();
                         }
                     }
                 }
             },
             Ok(Event::Text(ref e)) if in_chapter => {
-                let title = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let title = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 if !title.trim().is_empty() {
                     chapters.push(TocChapter {
                         src: current_src.clone(),
@@ -547,14 +551,13 @@ fn snbc_to_html(xml: &str) -> String {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                if name == "body" {
+                if e.name().as_ref() == b"body" {
                     in_body = true;
                 }
-                current_tag = name;
+                current_tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
             },
             Ok(Event::Text(ref e)) if in_body => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 if text.trim().is_empty() {
                     continue;
                 }

@@ -206,7 +206,10 @@ fn decompress_text(
                 if huff_reader.is_none() {
                     huff_reader = Some(build_huffcdic_reader(pdb, mobi_header)?);
                 }
-                let reader = huff_reader.as_mut().unwrap();
+                let reader = huff_reader.as_mut()
+                    .ok_or_else(|| EruditioError::Compression(
+                        "HUFF/CDIC reader not initialized".into(),
+                    ))?;
                 let decompressed = reader.unpack(record_data).map_err(|e| {
                     EruditioError::Compression(format!("HUFF/CDIC decompression failed: {}", e))
                 })?;

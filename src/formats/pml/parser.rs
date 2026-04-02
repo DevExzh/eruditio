@@ -535,57 +535,64 @@ fn html_to_pml(html: &str, pml: &mut String) {
                 Some(e) => pos + e + 1,
                 None => break,
             };
-            let tag = &html[pos..tag_end].to_lowercase();
+            let tag = &html[pos..tag_end];
+            let tag_eq = |s: &str| tag.eq_ignore_ascii_case(s);
+            let tag_starts = |prefix: &str| {
+                tag.as_bytes()
+                    .get(..prefix.len())
+                    .is_some_and(|b| b.eq_ignore_ascii_case(prefix.as_bytes()))
+            };
 
-            if tag == "<p>" || tag.starts_with("<p ") {
+            if tag_eq("<p>") || tag_starts("<p ") {
                 // Paragraph — start a new line.
-            } else if tag == "</p>" {
+            } else if tag_eq("</p>") {
                 pml.push('\n');
-            } else if tag == "<br>" || tag == "<br/>" || tag == "<br />" {
+            } else if tag_eq("<br>") || tag_eq("<br/>") || tag_eq("<br />") {
                 pml.push_str("\\n");
-            } else if tag == "<b>" || tag == "</b>" || tag == "<strong>" || tag == "</strong>" {
+            } else if tag_eq("<b>") || tag_eq("</b>") || tag_eq("<strong>") || tag_eq("</strong>")
+            {
                 pml.push_str("\\b");
-            } else if tag == "<i>" || tag == "</i>" || tag == "<em>" || tag == "</em>" {
+            } else if tag_eq("<i>") || tag_eq("</i>") || tag_eq("<em>") || tag_eq("</em>") {
                 pml.push_str("\\i");
-            } else if tag == "<u>" || tag == "</u>" {
+            } else if tag_eq("<u>") || tag_eq("</u>") {
                 pml.push_str("\\u");
-            } else if tag == "<s>"
-                || tag == "</s>"
-                || tag == "<strike>"
-                || tag == "</strike>"
-                || tag == "<del>"
-                || tag == "</del>"
+            } else if tag_eq("<s>")
+                || tag_eq("</s>")
+                || tag_eq("<strike>")
+                || tag_eq("</strike>")
+                || tag_eq("<del>")
+                || tag_eq("</del>")
             {
                 pml.push_str("\\o");
-            } else if tag == "<sup>" || tag == "</sup>" {
+            } else if tag_eq("<sup>") || tag_eq("</sup>") {
                 pml.push_str("\\Sp");
-            } else if tag == "<sub>" || tag == "</sub>" {
+            } else if tag_eq("<sub>") || tag_eq("</sub>") {
                 pml.push_str("\\Sb");
-            } else if tag.starts_with("<h1") {
+            } else if tag_starts("<h1") {
                 pml.push_str("\\x ");
-            } else if tag == "</h1>" {
+            } else if tag_eq("</h1>") {
                 pml.push('\n');
-            } else if tag.starts_with("<h2") {
+            } else if tag_starts("<h2") {
                 pml.push_str("\\X0 ");
-            } else if tag == "</h2>" {
+            } else if tag_eq("</h2>") {
                 pml.push('\n');
-            } else if tag.starts_with("<h3") {
+            } else if tag_starts("<h3") {
                 pml.push_str("\\X1 ");
-            } else if tag == "</h3>" {
+            } else if tag_eq("</h3>") {
                 pml.push('\n');
-            } else if tag.starts_with("<h4") {
+            } else if tag_starts("<h4") {
                 pml.push_str("\\X2 ");
-            } else if tag == "</h4>" {
+            } else if tag_eq("</h4>") {
                 pml.push('\n');
-            } else if tag.starts_with("<h5") {
+            } else if tag_starts("<h5") {
                 pml.push_str("\\X3 ");
-            } else if tag == "</h5>" {
+            } else if tag_eq("</h5>") {
                 pml.push('\n');
-            } else if tag.starts_with("<h6") {
+            } else if tag_starts("<h6") {
                 pml.push_str("\\X4 ");
-            } else if tag == "</h6>" {
+            } else if tag_eq("</h6>") {
                 pml.push('\n');
-            } else if tag == "<hr>" || tag == "<hr/>" || tag == "<hr />" {
+            } else if tag_eq("<hr>") || tag_eq("<hr/>") || tag_eq("<hr />") {
                 pml.push_str("\\w\n");
             }
             // Other tags silently skipped.

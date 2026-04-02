@@ -839,9 +839,11 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
 
     // Combine all text into chapters (one per text section, or single if only one).
     if ordered_html.len() == 1 {
+        let content = ordered_html.into_iter().next()
+            .ok_or_else(|| EruditioError::Format("Plucker: expected HTML content".into()))?;
         book.add_chapter(&Chapter {
             title: Some(pdb.header.name.clone()),
-            content: ordered_html.into_iter().next().unwrap(),
+            content,
             id: Some("main".into()),
         });
     } else {

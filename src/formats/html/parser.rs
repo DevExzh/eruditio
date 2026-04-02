@@ -244,30 +244,39 @@ fn strip_html_tags(html: &str) -> String {
     crate::formats::common::text_utils::strip_tags(html)
 }
 
+/// Case-insensitive byte search for an ASCII needle in a haystack.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let nb = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .windows(nb.len())
+        .position(|w| w.eq_ignore_ascii_case(nb))
+}
+
 /// Strips outer HTML structure tags (html, head, body) leaving content.
 fn strip_outer_tags(html: &str) -> String {
-    let mut result = html.to_string();
-    let lower = result.to_lowercase();
+    // Find </head> case-insensitively — skip everything up to and including it.
+    let start = find_ascii_ci(html, "</head>")
+        .map(|p| p + 7)
+        .unwrap_or(0);
+    let working = &html[start..];
 
-    // Remove everything up to and including </head> if present.
-    if let Some(pos) = lower.find("</head>") {
-        result = result[pos + 7..].to_string();
-    }
-
-    // Remove <html...> and </html>.
-    let replacements = ["</html>", "</body>"];
-    for tag in &replacements {
-        if let Some(pos) = result.to_lowercase().find(tag) {
-            result = result[..pos].to_string();
-        }
-    }
+    // Find the earliest of </html> or </body> and truncate there.
+    let end = [
+        find_ascii_ci(working, "</html>"),
+        find_ascii_ci(working, "</body>"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(working.len());
+    let result = &working[..end];
 
     // Strip opening <body...> if present.
-    let lower = result.to_lowercase();
-    if let Some(pos) = lower.find("<body")
+    if let Some(pos) = find_ascii_ci(result, "<body")
         && let Some(gt) = result[pos..].find('>')
     {
-        result = result[pos + gt + 1..].to_string();
+        return result[pos + gt + 1..].trim().to_string();
     }
 
     result.trim().to_string()

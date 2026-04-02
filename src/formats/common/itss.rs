@@ -339,6 +339,7 @@ pub fn lzx_decompress_section(
     // The actual output grows as blocks are decompressed, so a smaller initial
     // capacity just means a few extra reallocations for legitimate large files.
     const MAX_PREALLOC: usize = 64 * 1024 * 1024; // 64 MB
+    const MAX_TOTAL_OUTPUT: usize = 256 * 1024 * 1024; // 256 MB
     let mut result = Vec::with_capacity((uncompressed_len as usize).min(MAX_PREALLOC));
     let mut decoder: Option<Lzxd> = None;
 
@@ -381,6 +382,11 @@ pub fn lzx_decompress_section(
         match lzx.decompress_next(compressed_block, output_size) {
             Ok(decompressed) => {
                 result.extend_from_slice(decompressed);
+                if result.len() > MAX_TOTAL_OUTPUT {
+                    return Err(EruditioError::Compression(
+                        "LZX decompressed output exceeds size limit".into(),
+                    ));
+                }
             },
             Err(e) => {
                 // Log warning but try to continue with partial data

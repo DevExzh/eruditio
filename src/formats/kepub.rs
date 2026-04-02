@@ -118,10 +118,9 @@ fn insert_kobo_spans(html: &str) -> String {
             };
 
             let tag_content = &html[tag_start..tag_end];
-            let tag_lower = tag_content.to_lowercase();
 
             // Check for block-level open/close tags.
-            if is_block_open_tag(&tag_lower) {
+            if is_block_open_tag(tag_content) {
                 in_block = true;
                 para_idx += 1;
                 seg_idx = 0;
@@ -129,7 +128,7 @@ fn insert_kobo_spans(html: &str) -> String {
                 pos = tag_end;
 
                 // Now wrap text segments until the closing block tag.
-                let close_tag = closing_tag_for(&tag_lower);
+                let close_tag = closing_tag_for(tag_content);
                 loop {
                     if pos >= len {
                         break;
@@ -141,9 +140,8 @@ fn insert_kobo_spans(html: &str) -> String {
                             None => len,
                         };
                         let inner_tag = &html[pos..inner_end];
-                        let inner_lower = inner_tag.to_lowercase();
 
-                        if inner_lower.starts_with(&close_tag) {
+                        if ascii_starts_with_ci(inner_tag, &close_tag) {
                             // Closing block tag — stop wrapping.
                             out.push_str(inner_tag);
                             pos = inner_end;
@@ -164,10 +162,11 @@ fn insert_kobo_spans(html: &str) -> String {
                         let text = &html[text_start..pos];
                         if !text.trim().is_empty() {
                             seg_idx += 1;
-                            out.push_str(&format!(
-                                "<span class=\"koboSpan\" id=\"kobo.{}.{}\">",
-                                para_idx, seg_idx
-                            ));
+                            out.push_str("<span class=\"koboSpan\" id=\"kobo.");
+                            out.push_str(&para_idx.to_string());
+                            out.push('.');
+                            out.push_str(&seg_idx.to_string());
+                            out.push_str("\">");
                             out.push_str(text);
                             out.push_str("</span>");
                         } else {
@@ -199,32 +198,45 @@ fn insert_kobo_spans(html: &str) -> String {
     out
 }
 
-/// Returns `true` if the tag opens a block-level element where Kobo spans
-/// should be inserted.
-fn is_block_open_tag(tag_lower: &str) -> bool {
-    tag_lower.starts_with("<p")
-        && (tag_lower.len() < 3
-            || tag_lower.as_bytes()[2] == b'>'
-            || tag_lower.as_bytes()[2] == b' ')
-        || tag_lower.starts_with("<h1")
-        || tag_lower.starts_with("<h2")
-        || tag_lower.starts_with("<h3")
-        || tag_lower.starts_with("<h4")
-        || tag_lower.starts_with("<h5")
-        || tag_lower.starts_with("<h6")
-        || tag_lower.starts_with("<li")
-        || tag_lower.starts_with("<blockquote")
+/// Case-insensitive ASCII prefix check.
+fn ascii_starts_with_ci(s: &str, prefix: &str) -> bool {
+    s.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|b| b.eq_ignore_ascii_case(prefix.as_bytes()))
 }
 
-/// Returns the lowercase closing tag string for a given opening tag.
-fn closing_tag_for(tag_lower: &str) -> String {
-    // Extract the tag name from something like "<p class='x'>"
-    let name_end = tag_lower[1..]
+/// Returns `true` if the tag opens a block-level element where Kobo spans
+/// should be inserted.
+fn is_block_open_tag(tag: &str) -> bool {
+    let b = tag.as_bytes();
+    let ci =
+        |prefix: &[u8]| b.len() >= prefix.len() && b[..prefix.len()].eq_ignore_ascii_case(prefix);
+    (ci(b"<p") && (b.len() < 3 || b[2] == b'>' || b[2] == b' '))
+        || ci(b"<h1")
+        || ci(b"<h2")
+        || ci(b"<h3")
+        || ci(b"<h4")
+        || ci(b"<h5")
+        || ci(b"<h6")
+        || ci(b"<li")
+        || ci(b"<blockquote")
+}
+
+/// Returns the lowercase closing tag prefix for a given opening tag.
+fn closing_tag_for(tag: &str) -> String {
+    // Extract the tag name from something like "<P class='x'>"
+    let name_end = tag[1..]
         .find(['>', ' ', '/'])
         .map(|i| i + 1)
-        .unwrap_or(tag_lower.len());
-    let name = &tag_lower[1..name_end];
-    format!("</{}", name)
+        .unwrap_or(tag.len());
+    let name = &tag[1..name_end];
+    // Lowercase only the short tag name, not the full tag content.
+    let mut close = String::with_capacity(2 + name.len());
+    close.push_str("</");
+    for &b in name.as_bytes() {
+        close.push(b.to_ascii_lowercase() as char);
+    }
+    close
 }
 
 #[cfg(test)]

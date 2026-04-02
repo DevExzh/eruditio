@@ -542,7 +542,7 @@ impl LitContainer {
         }
         let mut tags = HashMap::new();
         let mut pos = 0;
-        let ntags = itss::u32_le(&raw[pos..]) as usize;
+        let ntags = (itss::u32_le(&raw[pos..]) as usize).min(raw.len());
         pos += 4;
         for i in 1..=ntags {
             if pos >= raw.len() {

@@ -360,7 +360,10 @@ fn parse_toc(data: &[u8], offset: usize) -> Result<Vec<TocEntry>> {
     let page_count = read_u32_le(data, offset) as usize;
     let entries_start = offset + 4;
 
-    if entries_start + page_count * TOC_ENTRY_SIZE > data.len() {
+    let entries_end = page_count.checked_mul(TOC_ENTRY_SIZE)
+        .and_then(|s| entries_start.checked_add(s))
+        .ok_or_else(|| EruditioError::Format("RB TOC entries size overflow".into()))?;
+    if entries_end > data.len() {
         return Err(EruditioError::Format(
             "TOC entries extend past end of file".into(),
         ));
@@ -414,7 +417,11 @@ fn decompress_entry(data: &[u8], entry: &TocEntry) -> Result<Vec<u8>> {
     let offset = entry.data_offset as usize;
     let length = entry.data_length as usize;
 
-    if offset + length > data.len() {
+    let end = offset.checked_add(length)
+        .ok_or_else(|| EruditioError::Format(format!(
+            "RB entry '{}' data offset+length overflow", entry.name
+        )))?;
+    if end > data.len() {
         return Err(EruditioError::Format(format!(
             "RB entry '{}' data extends past end of file",
             entry.name
@@ -451,8 +458,12 @@ fn decompress_chunked(data: &[u8], name: &str) -> Result<Vec<u8>> {
     let chunk_count = read_u32_le(data, 0) as usize;
     let uncompressed_size = read_u32_le(data, 4) as usize;
 
-    let sizes_start = 8;
-    let sizes_end = sizes_start + chunk_count * 4;
+    let sizes_start: usize = 8;
+    let sizes_end = chunk_count.checked_mul(4)
+        .and_then(|s| sizes_start.checked_add(s))
+        .ok_or_else(|| EruditioError::Format(format!(
+            "RB deflated entry '{}' chunk sizes overflow", name
+        )))?;
     if sizes_end > data.len() {
         return Err(EruditioError::Format(format!(
             "RB deflated entry '{}' chunk sizes extend past data",

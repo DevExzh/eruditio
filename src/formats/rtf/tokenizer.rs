@@ -126,7 +126,7 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                 let nl_end =
                     memchr::memchr2(b'\n', b'\r', &remaining[..struct_end]).unwrap_or(struct_end);
                 pos += struct_end.min(nl_end);
-                let text = String::from_utf8_lossy(&input[start..pos]).to_string();
+                let text = String::from_utf8_lossy(&input[start..pos]).into_owned();
                 if !text.is_empty() {
                     tokens.push(RtfToken::Text(text));
                 }
@@ -147,7 +147,7 @@ fn read_control_word(input: &[u8], mut pos: usize) -> (String, Option<i32>, usiz
     while pos < len && input[pos].is_ascii_alphabetic() {
         pos += 1;
     }
-    let name = String::from_utf8_lossy(&input[start..pos]).to_string();
+    let name = String::from_utf8_lossy(&input[start..pos]).into_owned();
 
     // Read optional numeric parameter (may start with '-').
     let param = if pos < len && (input[pos].is_ascii_digit() || input[pos] == b'-') {

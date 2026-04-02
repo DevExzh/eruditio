@@ -39,7 +39,10 @@ impl DjvuChunk {
         ]) as usize;
 
         let mut pos = start + 8;
-        let data_end = (start + 8 + size).min(end);
+        let data_end = start.checked_add(8)
+            .and_then(|v| v.checked_add(size))
+            .unwrap_or(end)
+            .min(end);
 
         let mut subtype = None;
         if &chunk_type == b"FORM" {
@@ -62,7 +65,7 @@ impl DjvuChunk {
                 let child = DjvuChunk::parse(buf, pos, data_end)?;
                 // The original chunk size = data_end - start - 8 (the header).
                 // Align to 2-byte boundary based on the original size field.
-                let child_size = child.data_end - child_start - 8;
+                let child_size = child.data_end.saturating_sub(child_start).saturating_sub(8);
                 let padding = if !child_size.is_multiple_of(2) { 1 } else { 0 };
                 pos = child.data_end + padding;
                 sub_chunks.push(child);
