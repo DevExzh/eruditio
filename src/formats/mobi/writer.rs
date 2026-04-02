@@ -9,11 +9,11 @@ use crate::formats::common::compression::palmdoc;
 use crate::formats::common::html_utils::strip_tags;
 use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be};
 
-use super::exth::{self, EXTH_AUTHOR, EXTH_DESCRIPTION, EXTH_ISBN, EXTH_PUBLISHER, EXTH_SUBJECT,
-    EXTH_UPDATED_TITLE, EXTH_LANGUAGE, EXTH_COVER_OFFSET, EXTH_CDE_TYPE};
-use super::header::{
-    COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX,
+use super::exth::{
+    self, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_DESCRIPTION, EXTH_ISBN,
+    EXTH_LANGUAGE, EXTH_PUBLISHER, EXTH_SUBJECT, EXTH_UPDATED_TITLE,
 };
+use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 
 /// Maximum uncompressed text record size.
 const RECORD_SIZE: usize = 4096;
@@ -23,10 +23,8 @@ const MOBI_HEADER_LEN: u32 = 228;
 
 /// FLIS record constant data.
 const FLIS_RECORD: &[u8] = &[
-    b'F', b'L', b'I', b'S', 0x00, 0x00, 0x00, 0x08,
-    0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x03,
-    0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01,
+    b'F', b'L', b'I', b'S', 0x00, 0x00, 0x00, 0x08, 0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01,
     0xFF, 0xFF, 0xFF, 0xFF,
 ];
 
@@ -190,7 +188,11 @@ fn build_record0(
     write_u32_be(&mut data, 104, 6);
 
     // First image index.
-    let img_idx = if has_images { first_image_index } else { NULL_INDEX };
+    let img_idx = if has_images {
+        first_image_index
+    } else {
+        NULL_INDEX
+    };
     write_u32_be(&mut data, 108, img_idx);
 
     // Huffman offsets (not used — PalmDoc compression).
@@ -359,9 +361,9 @@ fn truncate_pdb_name(title: &str) -> String {
 mod tests {
     use super::*;
     use crate::domain::Chapter;
+    use crate::domain::FormatReader;
     use crate::formats::common::palm_db::PdbFile;
     use crate::formats::mobi::MobiReader;
-    use crate::domain::FormatReader;
 
     #[test]
     fn write_mobi_produces_valid_pdb() {
@@ -440,10 +442,7 @@ mod tests {
     #[test]
     fn truncate_pdb_name_works() {
         assert_eq!(truncate_pdb_name("Short"), "Short");
-        assert_eq!(
-            truncate_pdb_name(&"A".repeat(50)).len(),
-            31
-        );
+        assert_eq!(truncate_pdb_name(&"A".repeat(50)).len(), 31);
         assert_eq!(truncate_pdb_name(""), "Untitled");
     }
 

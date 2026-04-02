@@ -75,9 +75,8 @@ mod tests {
     fn count_includes_children() {
         let item = TocItem::new("Part 1", "part1.xhtml").with_children(vec![
             TocItem::new("Chapter 1", "ch1.xhtml"),
-            TocItem::new("Chapter 2", "ch2.xhtml").with_children(vec![
-                TocItem::new("Section 2.1", "ch2.xhtml#s1"),
-            ]),
+            TocItem::new("Chapter 2", "ch2.xhtml")
+                .with_children(vec![TocItem::new("Section 2.1", "ch2.xhtml#s1")]),
         ]);
         assert_eq!(item.count(), 4);
     }
@@ -86,9 +85,7 @@ mod tests {
     fn flatten_produces_depth_first_order() {
         let root = TocItem::new("Root", "root.xhtml").with_children(vec![
             TocItem::new("A", "a.xhtml"),
-            TocItem::new("B", "b.xhtml").with_children(vec![
-                TocItem::new("B1", "b1.xhtml"),
-            ]),
+            TocItem::new("B", "b.xhtml").with_children(vec![TocItem::new("B1", "b1.xhtml")]),
         ]);
         let flat = root.flatten();
         assert_eq!(flat.len(), 4);

@@ -1,7 +1,7 @@
 //! Conversion pipeline: reads a book in one format, applies transforms, writes in another.
 
-use crate::domain::format::Format;
 use crate::domain::Book;
+use crate::domain::format::Format;
 use crate::error::{EruditioError, Result};
 use crate::transforms::{
     CoverHandler, HtmlNormalizer, ManifestTrimmer, MetadataMerger, StructureDetector, TocGenerator,
@@ -49,8 +49,8 @@ impl Pipeline {
 
         let book = reader.read_book(input)?;
 
-        // Transform.
-        let book = self.apply_transforms(&book, options)?;
+        // Transform (takes ownership, avoids cloning).
+        let book = self.apply_transforms(book, options)?;
 
         // Write.
         let writer = self.registry.writer(&output_format).ok_or_else(|| {
@@ -75,16 +75,11 @@ impl Pipeline {
             .ok_or_else(|| EruditioError::Unsupported(format!("No reader for {}", format)))?;
 
         let book = reader.read_book(input)?;
-        self.apply_transforms(&book, options)
+        self.apply_transforms(book, options)
     }
 
     /// Writes a book without reading (useful when you already have a Book).
-    pub fn write(
-        &self,
-        format: Format,
-        book: &Book,
-        output: &mut dyn Write,
-    ) -> Result<()> {
+    pub fn write(&self, format: Format, book: &Book, output: &mut dyn Write) -> Result<()> {
         let writer = self
             .registry
             .writer(&format)
@@ -98,13 +93,13 @@ impl Pipeline {
         &self.registry
     }
 
-    /// Applies the configured transforms to a book.
-    fn apply_transforms(&self, book: &Book, options: &ConversionOptions) -> Result<Book> {
+    /// Applies the configured transforms to a book (takes ownership to avoid cloning).
+    fn apply_transforms(&self, book: Book, options: &ConversionOptions) -> Result<Book> {
         let transforms = self.build_transform_chain(options);
 
-        let mut current = book.clone();
+        let mut current = book;
         for transform in &transforms {
-            current = transform.apply(&current)?;
+            current = transform.apply(current)?;
         }
 
         Ok(current)
@@ -169,9 +164,7 @@ mod tests {
 
         // Write as EPUB.
         let mut epub_buf = Vec::new();
-        pipeline
-            .write(Format::Epub, &book, &mut epub_buf)
-            .unwrap();
+        pipeline.write(Format::Epub, &book, &mut epub_buf).unwrap();
 
         // Read back as EPUB with no transforms.
         let mut cursor = std::io::Cursor::new(epub_buf);
@@ -197,9 +190,7 @@ mod tests {
 
         // Write as FB2.
         let mut fb2_buf = Vec::new();
-        pipeline
-            .write(Format::Fb2, &book, &mut fb2_buf)
-            .unwrap();
+        pipeline.write(Format::Fb2, &book, &mut fb2_buf).unwrap();
 
         // Convert FB2 -> EPUB.
         let mut fb2_cursor = std::io::Cursor::new(fb2_buf);
@@ -243,9 +234,7 @@ mod tests {
 
         // Write as TXT.
         let mut txt_buf = Vec::new();
-        pipeline
-            .write(Format::Txt, &book, &mut txt_buf)
-            .unwrap();
+        pipeline.write(Format::Txt, &book, &mut txt_buf).unwrap();
 
         // Read and transform.
         let mut cursor = std::io::Cursor::new(txt_buf);

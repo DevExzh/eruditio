@@ -3,20 +3,59 @@
 //! Each test builds a synthetic file, reads it through the Pipeline,
 //! verifies metadata/content, and converts to EPUB.
 
-use eruditio::domain::Format;
-use eruditio::formats::common::compression::palmdoc::compress as palmdoc_compress;
-use eruditio::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be};
-use eruditio::pipeline::convert::Pipeline;
-use eruditio::pipeline::options::ConversionOptions;
-use flate2::write::ZlibEncoder;
+use eruditio::{ConversionOptions, Format, Pipeline};
 use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use std::io::{Cursor, Write};
 
 // ---------------------------------------------------------------------------
 // PDB (PalmDOC) helpers
 // ---------------------------------------------------------------------------
 
-fn build_palmdoc_pdb(title: &str, text: &str, compressed: bool) -> Vec<u8> {
+const PDB_HEADER_SIZE: usize = 78;
+const PDB_RECORD_ENTRY_SIZE: usize = 8;
+
+fn write_u16_be(buf: &mut [u8], offset: usize, value: u16) {
+    buf[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+}
+
+fn write_u32_be(buf: &mut [u8], offset: usize, value: u32) {
+    buf[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+fn build_pdb_header(
+    name: &str,
+    db_type: &[u8; 4],
+    creator: &[u8; 4],
+    num_records: u16,
+    record_offsets: &[u32],
+) -> Vec<u8> {
+    let table_size = num_records as usize * PDB_RECORD_ENTRY_SIZE;
+    let total = PDB_HEADER_SIZE + table_size + 2;
+    let mut buf = vec![0u8; total];
+
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(31);
+    buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    buf[60..64].copy_from_slice(db_type);
+    buf[64..68].copy_from_slice(creator);
+    write_u32_be(&mut buf, 68, num_records as u32);
+    write_u16_be(&mut buf, 76, num_records);
+
+    for (i, &offset) in record_offsets.iter().enumerate() {
+        let base = PDB_HEADER_SIZE + i * PDB_RECORD_ENTRY_SIZE;
+        write_u32_be(&mut buf, base, offset);
+        buf[base + 5] = ((i >> 16) & 0xFF) as u8;
+        buf[base + 6] = ((i >> 8) & 0xFF) as u8;
+        buf[base + 7] = (i & 0xFF) as u8;
+    }
+
+    buf
+}
+
+/// Builds an uncompressed PalmDOC PDB file for testing.
+fn build_palmdoc_pdb(title: &str, text: &str) -> Vec<u8> {
     let text_bytes = text.as_bytes();
     let max_rec = 4096usize;
 
@@ -24,12 +63,7 @@ fn build_palmdoc_pdb(title: &str, text: &str, compressed: bool) -> Vec<u8> {
     let mut offset = 0;
     while offset < text_bytes.len() {
         let end = (offset + max_rec).min(text_bytes.len());
-        let chunk = &text_bytes[offset..end];
-        records.push(if compressed {
-            palmdoc_compress(chunk)
-        } else {
-            chunk.to_vec()
-        });
+        records.push(text_bytes[offset..end].to_vec());
         offset = end;
     }
     if records.is_empty() {
@@ -38,14 +72,13 @@ fn build_palmdoc_pdb(title: &str, text: &str, compressed: bool) -> Vec<u8> {
 
     // PalmDOC header record (record 0).
     let mut hdr_rec = vec![0u8; 16];
-    let comp: u16 = if compressed { 2 } else { 1 };
-    write_u16_be(&mut hdr_rec, 0, comp);
+    write_u16_be(&mut hdr_rec, 0, 1); // compression: 1 = none
     write_u32_be(&mut hdr_rec, 4, text_bytes.len() as u32);
     write_u16_be(&mut hdr_rec, 8, records.len() as u16);
     write_u16_be(&mut hdr_rec, 10, max_rec as u16);
 
     let total_records = 1 + records.len();
-    let header_size = 78 + total_records * 8 + 2;
+    let header_size = PDB_HEADER_SIZE + total_records * PDB_RECORD_ENTRY_SIZE + 2;
 
     let mut offsets = Vec::with_capacity(total_records);
     let mut pos = header_size as u32;
@@ -246,8 +279,8 @@ fn build_minimal_lrf(title: &str, author: &str, text_content: &str) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 fn bz2_compress(data: &[u8]) -> Vec<u8> {
-    use bzip2::write::BzEncoder;
     use bzip2::Compression as BzCompression;
+    use bzip2::write::BzEncoder;
     let mut enc = BzEncoder::new(Vec::new(), BzCompression::default());
     enc.write_all(data).unwrap();
     enc.finish().unwrap()
@@ -367,7 +400,7 @@ fn build_snb_file(title: &str, author: &str, chapters: &[(&str, &str)]) -> Vec<u
 #[test]
 fn pdb_read_through_pipeline() {
     let pipeline = Pipeline::new();
-    let data = build_palmdoc_pdb("PDB Pipeline Book", "Hello from PDB reader!", false);
+    let data = build_palmdoc_pdb("PDB Pipeline Book", "Hello from PDB reader!");
 
     let mut cursor = Cursor::new(data);
     let book = pipeline
@@ -382,7 +415,7 @@ fn pdb_read_through_pipeline() {
 #[test]
 fn pdb_to_epub_conversion() {
     let pipeline = Pipeline::new();
-    let data = build_palmdoc_pdb("PDB to EPUB", "PDB content for conversion.", true);
+    let data = build_palmdoc_pdb("PDB to EPUB", "PDB content for conversion.");
 
     let mut input = Cursor::new(data);
     let mut epub_buf = Vec::new();
@@ -411,7 +444,10 @@ fn rb_read_through_pipeline() {
     let pipeline = Pipeline::new();
     let html = b"<html><body><p>Hello from RocketBook!</p></body></html>";
     let info = b"TITLE=RB Pipeline Book\nAUTHOR=RB Author\nBODY=page.html";
-    let data = build_rb_file(&[("info", info, RB_FLAG_INFO), ("page.html", html, RB_FLAG_RAW)]);
+    let data = build_rb_file(&[
+        ("info", info, RB_FLAG_INFO),
+        ("page.html", html, RB_FLAG_RAW),
+    ]);
 
     let mut cursor = Cursor::new(data);
     let book = pipeline

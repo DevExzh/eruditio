@@ -2,8 +2,8 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::html_utils::{escape_html, strip_tags};
 use base64::Engine;
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 use std::io::{Read, Write};
 
 /// FB2 format reader.
@@ -19,7 +19,9 @@ impl Fb2Reader {
 impl FormatReader for Fb2Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader.read_to_string(&mut contents).map_err(EruditioError::Io)?;
+        reader
+            .read_to_string(&mut contents)
+            .map_err(EruditioError::Io)?;
 
         let mut xml_reader = XmlReader::from_str(&contents);
         xml_reader.config_mut().trim_text(true);
@@ -57,10 +59,10 @@ impl FormatReader for Fb2Reader {
                     }
                     current_path.push(name);
                     current_text.clear();
-                }
+                },
                 Ok(Event::Text(ref e)) => {
                     current_text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
-                }
+                },
                 Ok(Event::End(ref e)) => {
                     let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                     let path_str = current_path.join("/");
@@ -127,13 +129,13 @@ impl FormatReader for Fb2Reader {
 
                     current_path.pop();
                     current_text.clear();
-                }
+                },
                 Ok(Event::Empty(ref e)) => {
                     let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                     if in_body && name == "empty-line" {
                         current_section_content.push_str("<br/>\n");
                     }
-                }
+                },
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(EruditioError::Parse(format!("XML error: {}", e))),
                 _ => (),

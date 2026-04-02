@@ -61,7 +61,9 @@ impl FormatReader for RbReader {
 
         let toc_offset = read_u32_le(&data, 0x18) as usize;
         if toc_offset + 4 > data.len() {
-            return Err(EruditioError::Format("RB TOC offset past end of file".into()));
+            return Err(EruditioError::Format(
+                "RB TOC offset past end of file".into(),
+            ));
         }
 
         // Parse TOC.
@@ -87,7 +89,9 @@ impl FormatReader for RbReader {
         // Collect HTML pages in TOC order; put the body page first.
         let mut html_entries: Vec<&TocEntry> = entries
             .iter()
-            .filter(|e| e.flags == FLAG_DEFLATED || (e.flags == FLAG_RAW && e.name.ends_with(".html")))
+            .filter(|e| {
+                e.flags == FLAG_DEFLATED || (e.flags == FLAG_RAW && e.name.ends_with(".html"))
+            })
             .collect();
 
         // Sort: body page first, then remaining in original order.
@@ -113,7 +117,9 @@ impl FormatReader for RbReader {
         }
 
         if book.chapters().is_empty() {
-            return Err(EruditioError::Format("RB file contains no readable content".into()));
+            return Err(EruditioError::Format(
+                "RB file contains no readable content".into(),
+            ));
         }
 
         Ok(book)
@@ -303,21 +309,18 @@ fn compress_chunked(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Compresses data with raw deflate (wbits=13, no zlib/gzip wrapper).
 fn deflate_wbits13(data: &[u8]) -> Result<Vec<u8>> {
-    let mut compress =
-        Compress::new_with_window_bits(flate2::Compression::default(), false, 13);
+    let mut compress = Compress::new_with_window_bits(flate2::Compression::default(), false, 13);
     let mut output = vec![0u8; data.len() + 256];
 
     let status = compress
         .compress(data, &mut output, flate2::FlushCompress::Finish)
-        .map_err(|e| {
-            EruditioError::Compression(format!("RB zlib compression error: {}", e))
-        })?;
+        .map_err(|e| EruditioError::Compression(format!("RB zlib compression error: {}", e)))?;
 
     match status {
         flate2::Status::StreamEnd => {
             output.truncate(compress.total_out() as usize);
             Ok(output)
-        }
+        },
         _ => {
             // Need more space — retry with larger buffer.
             let mut output2 = vec![0u8; data.len() * 2 + 512];
@@ -330,7 +333,7 @@ fn deflate_wbits13(data: &[u8]) -> Result<Vec<u8>> {
                 })?;
             output2.truncate(compress2.total_out() as usize);
             Ok(output2)
-        }
+        },
     }
 }
 
@@ -352,7 +355,9 @@ fn parse_toc(data: &[u8], offset: usize) -> Result<Vec<TocEntry>> {
     let entries_start = offset + 4;
 
     if entries_start + page_count * TOC_ENTRY_SIZE > data.len() {
-        return Err(EruditioError::Format("TOC entries extend past end of file".into()));
+        return Err(EruditioError::Format(
+            "TOC entries extend past end of file".into(),
+        ));
     }
 
     let mut entries = Vec::with_capacity(page_count);
@@ -490,14 +495,16 @@ fn zlib_decompress_wbits(data: &[u8], wbits: u8) -> Result<Vec<u8>> {
                 &mut output[out_before..],
                 flate2::FlushDecompress::Finish,
             )
-            .map_err(|e| EruditioError::Compression(format!("RB zlib decompression error: {}", e)))?;
+            .map_err(|e| {
+                EruditioError::Compression(format!("RB zlib decompression error: {}", e))
+            })?;
 
         match status {
             flate2::Status::StreamEnd => break,
             flate2::Status::Ok | flate2::Status::BufError => {
                 // Need more output space.
                 output.resize(output.len() * 2, 0);
-            }
+            },
         }
     }
 
@@ -531,8 +538,7 @@ mod tests {
 
     /// Compress data with raw deflate (wbits=13, no zlib header).
     fn deflate_wbits13(data: &[u8]) -> Vec<u8> {
-        let mut compress =
-            Compress::new_with_window_bits(flate2::Compression::best(), false, 13);
+        let mut compress = Compress::new_with_window_bits(flate2::Compression::best(), false, 13);
         let mut output = vec![0u8; data.len() + 256];
         let status = compress
             .compress(data, &mut output, flate2::FlushCompress::Finish)
@@ -562,8 +568,7 @@ mod tests {
                 write_u32_le(&mut chunk_data, 0, chunk_count);
                 write_u32_le(&mut chunk_data, 4, content.len() as u32);
                 write_u32_le(&mut chunk_data, 8, compressed_chunk.len() as u32);
-                chunk_data[12..12 + compressed_chunk.len()]
-                    .copy_from_slice(&compressed_chunk);
+                chunk_data[12..12 + compressed_chunk.len()].copy_from_slice(&compressed_chunk);
                 chunk_data.truncate(12 + compressed_chunk.len());
                 entry_data.push(chunk_data);
             } else {
@@ -596,8 +601,7 @@ mod tests {
             let entry_base = toc_base + 4 + i * TOC_ENTRY_SIZE;
             let name_bytes = name.as_bytes();
             let copy_len = name_bytes.len().min(32);
-            file[entry_base..entry_base + copy_len]
-                .copy_from_slice(&name_bytes[..copy_len]);
+            file[entry_base..entry_base + copy_len].copy_from_slice(&name_bytes[..copy_len]);
             write_u32_le(&mut file, entry_base + 32, entry_data[i].len() as u32);
             write_u32_le(&mut file, entry_base + 36, offsets[i]);
             write_u32_le(&mut file, entry_base + 40, flags);
@@ -617,10 +621,7 @@ mod tests {
         let html = b"<html><body><p>Hello, RocketBook!</p></body></html>";
         let info = b"TITLE=Test Book\nAUTHOR=Test Author\nBODY=page1.html";
 
-        let data = build_rb_file(&[
-            ("info", info, FLAG_INFO),
-            ("page1.html", html, FLAG_RAW),
-        ]);
+        let data = build_rb_file(&[("info", info, FLAG_INFO), ("page1.html", html, FLAG_RAW)]);
 
         let mut cursor = Cursor::new(data);
         let book = RbReader::new().read_book(&mut cursor).unwrap();
@@ -674,10 +675,7 @@ mod tests {
         let html = b"<html><body><p>Content</p></body></html>";
         let info = b"TITLE=Book\nAUTHOR=Author\nPUBLISHER=MyPress\nBODY=p.html";
 
-        let data = build_rb_file(&[
-            ("info", info, FLAG_INFO),
-            ("p.html", html, FLAG_RAW),
-        ]);
+        let data = build_rb_file(&[("info", info, FLAG_INFO), ("p.html", html, FLAG_RAW)]);
 
         let mut cursor = Cursor::new(data);
         let book = RbReader::new().read_book(&mut cursor).unwrap();

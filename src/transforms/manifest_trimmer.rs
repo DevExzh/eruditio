@@ -16,10 +16,10 @@ impl Transform for ManifestTrimmer {
         "manifest_trimmer"
     }
 
-    fn apply(&self, book: &Book) -> Result<Book> {
-        let referenced = collect_referenced_ids(book);
+    fn apply(&self, book: Book) -> Result<Book> {
+        let referenced = collect_referenced_ids(&book);
 
-        let mut result = book.clone();
+        let mut result = book;
         let all_ids: Vec<String> = result.manifest.iter().map(|item| item.id.clone()).collect();
 
         for id in &all_ids {
@@ -70,11 +70,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
 }
 
 /// Recursively collects manifest IDs referenced by TOC entries.
-fn collect_toc_refs(
-    items: &[crate::domain::toc::TocItem],
-    book: &Book,
-    ids: &mut HashSet<String>,
-) {
+fn collect_toc_refs(items: &[crate::domain::toc::TocItem], book: &Book, ids: &mut HashSet<String>) {
     for toc_item in items {
         // Strip fragment from href for matching.
         let href = toc_item.href.split('#').next().unwrap_or(&toc_item.href);
@@ -97,9 +93,11 @@ fn collect_href_references(text: &str, book: &Book, ids: &mut HashSet<String>) {
                 // Strip fragment.
                 let path = value.split('#').next().unwrap_or(value);
                 // Match against manifest hrefs.
-                if let Some(item) = book.manifest.iter().find(|i| {
-                    i.href == path || i.href.ends_with(path)
-                }) {
+                if let Some(item) = book
+                    .manifest
+                    .iter()
+                    .find(|i| i.href == path || i.href.ends_with(path))
+                {
                     ids.insert(item.id.clone());
                 }
                 search_from = value_start + end;
@@ -125,7 +123,7 @@ mod tests {
         });
 
         let trimmer = ManifestTrimmer;
-        let result = trimmer.apply(&book).unwrap();
+        let result = trimmer.apply(book).unwrap();
 
         assert!(result.manifest.get("ch1").is_some());
     }
@@ -141,7 +139,7 @@ mod tests {
         book.add_resource("orphan", "orphan.css", b"body{}".to_vec(), "text/css");
 
         let trimmer = ManifestTrimmer;
-        let result = trimmer.apply(&book).unwrap();
+        let result = trimmer.apply(book).unwrap();
 
         assert!(result.manifest.get("ch1").is_some());
         assert!(result.manifest.get("orphan").is_none());
@@ -159,7 +157,7 @@ mod tests {
         book.metadata.cover_image_id = Some("cover".into());
 
         let trimmer = ManifestTrimmer;
-        let result = trimmer.apply(&book).unwrap();
+        let result = trimmer.apply(book).unwrap();
 
         assert!(result.manifest.get("cover").is_some());
     }
@@ -175,7 +173,7 @@ mod tests {
         book.add_resource("photo", "photo.jpg", vec![0xFF, 0xD8], "image/jpeg");
 
         let trimmer = ManifestTrimmer;
-        let result = trimmer.apply(&book).unwrap();
+        let result = trimmer.apply(book).unwrap();
 
         assert!(result.manifest.get("photo").is_some());
     }
@@ -191,7 +189,7 @@ mod tests {
         book.add_resource("orphan", "orphan.css", b"body{}".to_vec(), "text/css");
 
         let trimmer = ManifestTrimmer;
-        let _result = trimmer.apply(&book).unwrap();
+        let _result = trimmer.apply(book.clone()).unwrap();
 
         // Original still has the orphan.
         assert!(book.manifest.get("orphan").is_some());

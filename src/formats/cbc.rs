@@ -103,9 +103,9 @@ impl FormatReader for CbcReader {
 fn read_manifest(archive: &mut ZipArchive<Cursor<Vec<u8>>>) -> Result<Vec<(String, String)>> {
     let mut manifest_data = Vec::new();
     {
-        let mut manifest_file = archive.by_name("comics.txt").map_err(|_| {
-            EruditioError::Format("CBC archive missing comics.txt manifest".into())
-        })?;
+        let mut manifest_file = archive
+            .by_name("comics.txt")
+            .map_err(|_| EruditioError::Format("CBC archive missing comics.txt manifest".into()))?;
         manifest_file
             .read_to_end(&mut manifest_data)
             .map_err(EruditioError::Io)?;
@@ -155,11 +155,7 @@ fn decode_manifest_text(data: &[u8]) -> String {
 }
 
 fn read_inner_comic(data: &[u8], filename: &str) -> Result<Book> {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
     let mut cursor = Cursor::new(data.to_vec());
 
@@ -184,7 +180,7 @@ fn read_inner_comic(data: &[u8], filename: &str) -> Result<Book> {
                 "Unknown inner comic format: {}",
                 filename
             )))
-        }
+        },
     }
 }
 

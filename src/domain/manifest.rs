@@ -49,7 +49,11 @@ pub struct ManifestItem {
 }
 
 impl ManifestItem {
-    pub fn new(id: impl Into<String>, href: impl Into<String>, media_type: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        href: impl Into<String>,
+        media_type: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             href: href.into(),
@@ -165,8 +169,7 @@ mod tests {
     fn retrieve_by_href() {
         let mut manifest = Manifest::new();
         manifest.insert(
-            ManifestItem::new("img1", "images/cover.jpg", "image/jpeg")
-                .with_data(vec![0xFF, 0xD8]),
+            ManifestItem::new("img1", "images/cover.jpg", "image/jpeg").with_data(vec![0xFF, 0xD8]),
         );
 
         let item = manifest.get_by_href("images/cover.jpg").unwrap();

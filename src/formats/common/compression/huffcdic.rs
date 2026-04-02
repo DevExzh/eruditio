@@ -94,8 +94,8 @@ impl HuffCdicReader {
             return Err(EruditioError::Format("HUFF dict2 out of bounds".into()));
         }
         let mut dict2 = [0u32; 64];
-        for i in 0..64 {
-            dict2[i] = read_u32_be(huff, off2 + i * 4);
+        for (i, entry) in dict2.iter_mut().enumerate() {
+            *entry = read_u32_be(huff, off2 + i * 4);
         }
 
         // Build mincode/maxcode lookup indexed by code length (0..=32).
@@ -132,7 +132,10 @@ impl HuffCdicReader {
 
         let phrases = read_u32_be(cdic, 8) as usize;
         let bits = read_u32_be(cdic, 12) as usize;
-        let n = std::cmp::min(1usize << bits, phrases.saturating_sub(self.dictionary.len()));
+        let n = std::cmp::min(
+            1usize << bits,
+            phrases.saturating_sub(self.dictionary.len()),
+        );
 
         if 16 + n * 2 > cdic.len() {
             return Err(EruditioError::Format(
@@ -237,7 +240,7 @@ impl HuffCdicReader {
             match &self.dictionary[r] {
                 DictEntry::Decompressed(slice) => {
                     result.extend_from_slice(slice);
-                }
+                },
                 DictEntry::Compressed(_) => {
                     // Take the compressed data out, decompress it, and cache the result.
                     let compressed = match std::mem::replace(
@@ -250,7 +253,7 @@ impl HuffCdicReader {
                     let decompressed = self.unpack_inner(&compressed, depth + 1)?;
                     self.dictionary[r] = DictEntry::Decompressed(decompressed.clone());
                     result.extend_from_slice(&decompressed);
-                }
+                },
             }
         }
 

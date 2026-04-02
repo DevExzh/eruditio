@@ -49,7 +49,6 @@ impl std::str::FromStr for GuideType {
 }
 
 impl GuideType {
-
     /// Returns the canonical string representation.
     pub fn as_str(&self) -> &str {
         match self {
@@ -114,9 +113,7 @@ mod tests {
 
     #[test]
     fn guide_type_round_trip() {
-        let types = [
-            "cover", "title-page", "toc", "index", "glossary", "text",
-        ];
+        let types = ["cover", "title-page", "toc", "index", "glossary", "text"];
         for t in types {
             let parsed: GuideType = t.parse().unwrap();
             assert_eq!(parsed.as_str(), t);

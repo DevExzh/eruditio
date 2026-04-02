@@ -7,6 +7,7 @@
 
 use crate::domain::Book;
 use crate::error::{EruditioError, Result};
+use crate::formats::common::text_utils::escape_xml;
 use flate2::write::ZlibEncoder;
 use std::io::Write;
 
@@ -88,7 +89,7 @@ impl LrfWriteObject {
     }
 
     /// Serializes the object to its on-disk representation.
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::with_capacity(128);
 
         // ObjectStart tag: 0x00 0xF5 + u32 id + u16 type
@@ -103,8 +104,8 @@ impl LrfWriteObject {
         // Stream (if present).
         if let Some(ref raw_stream) = self.stream {
             if self.compress_stream {
-                let compressed = zlib_compress(raw_stream);
-                // StreamFlags: compressed.
+                let compressed = zlib_compress(raw_stream)?;
+                // StreamFlags: compressed (zlib).
                 write_tag_u16(&mut buf, 0x54, STREAM_FLAG_COMPRESSED);
                 // Prepend 4-byte uncompressed size before compressed data.
                 let mut payload = Vec::with_capacity(4 + compressed.len());
@@ -135,7 +136,7 @@ impl LrfWriteObject {
         buf.push(0x01);
         buf.push(0xF5);
 
-        buf
+        Ok(buf)
     }
 }
 
@@ -208,10 +209,7 @@ fn emit_text_string(stream: &mut Vec<u8>, text: &str) {
     if text.is_empty() {
         return;
     }
-    let utf16: Vec<u8> = text
-        .encode_utf16()
-        .flat_map(|c| c.to_le_bytes())
-        .collect();
+    let utf16: Vec<u8> = text.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
     stream.push(0xCC);
     stream.push(0xF5);
     stream.extend_from_slice(&(utf16.len() as u16).to_le_bytes());
@@ -300,28 +298,28 @@ fn html_to_text_stream(
                     }
                     emit_p_start(&mut stream);
                     in_para = true;
-                }
+                },
                 "/p" | "/div" => {
                     if in_para {
                         emit_p_end(&mut stream);
                         in_para = false;
                     }
-                }
+                },
                 "br" | "br/" | "br /" => {
                     emit_cr(&mut stream);
-                }
+                },
                 "b" | "strong" => {
                     emit_font_weight(&mut stream, 700);
-                }
+                },
                 "/b" | "/strong" => {
                     emit_font_weight(&mut stream, 400);
-                }
+                },
                 "i" | "em" => {
                     emit_italic_start(&mut stream);
-                }
+                },
                 "/i" | "/em" => {
                     emit_italic_end(&mut stream);
-                }
+                },
                 t if t.starts_with('h') && t.len() == 2 && t.as_bytes()[1].is_ascii_digit() => {
                     let level = (t.as_bytes()[1] - b'1') as usize;
                     let size = if level < HEADING_SIZES.len() {
@@ -336,18 +334,15 @@ fn html_to_text_stream(
                     }
                     emit_p_start(&mut stream);
                     in_para = true;
-                }
-                t if t.starts_with("/h")
-                    && t.len() == 3
-                    && t.as_bytes()[2].is_ascii_digit() =>
-                {
+                },
+                t if t.starts_with("/h") && t.len() == 3 && t.as_bytes()[2].is_ascii_digit() => {
                     if in_para {
                         emit_p_end(&mut stream);
                         in_para = false;
                     }
                     emit_font_weight(&mut stream, 400);
                     emit_font_size(&mut stream, default_size);
-                }
+                },
                 t if t.starts_with("img") => {
                     // Extract src attribute.
                     if let Some(src) = extract_attr(tag_content, "src") {
@@ -360,10 +355,10 @@ fn html_to_text_stream(
                             emit_plot(&mut stream, img_id);
                         }
                     }
-                }
+                },
                 _ => {
                     // Unknown tag -- skip.
-                }
+                },
             }
 
             pos = tag_end + 1;
@@ -442,27 +437,15 @@ fn decode_html_entities(text: &str) -> String {
 
 /// Builds the metadata XML string from the Book's metadata.
 fn build_metadata_xml(book: &Book) -> String {
-    let title = book
-        .metadata
-        .title
-        .as_deref()
-        .unwrap_or("Untitled");
+    let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     let author = book
         .metadata
         .authors
         .first()
         .map(|s| s.as_str())
         .unwrap_or("Unknown");
-    let language = book
-        .metadata
-        .language
-        .as_deref()
-        .unwrap_or("en");
-    let publisher = book
-        .metadata
-        .publisher
-        .as_deref()
-        .unwrap_or("");
+    let language = book.metadata.language.as_deref().unwrap_or("en");
+    let publisher = book.metadata.publisher.as_deref().unwrap_or("");
 
     let mut xml = String::with_capacity(512);
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -477,10 +460,7 @@ fn build_metadata_xml(book: &Book) -> String {
         ));
     }
     if let Some(ref desc) = book.metadata.description {
-        xml.push_str(&format!(
-            "    <FreeText>{}</FreeText>\n",
-            escape_xml(desc)
-        ));
+        xml.push_str(&format!("    <FreeText>{}</FreeText>\n", escape_xml(desc)));
     }
     xml.push_str("  </BookInfo>\n");
     xml.push_str("  <DocInfo>\n");
@@ -494,20 +474,19 @@ fn build_metadata_xml(book: &Book) -> String {
     xml
 }
 
-/// Minimal XML entity escaping.
-fn escape_xml(text: &str) -> String {
-    crate::formats::common::text_utils::escape_xml(text)
-}
-
 // ---------------------------------------------------------------------------
 // Compression
 // ---------------------------------------------------------------------------
 
 /// Zlib-compresses data.
-fn zlib_compress(data: &[u8]) -> Vec<u8> {
+fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(data).expect("zlib compression");
-    encoder.finish().expect("zlib finish")
+    encoder
+        .write_all(data)
+        .map_err(|e| EruditioError::Compression(format!("zlib write: {e}")))?;
+    encoder
+        .finish()
+        .map_err(|e| EruditioError::Compression(format!("zlib finish: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +533,7 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // ---------------------------------------------------------------
     let xml = build_metadata_xml(book);
     let xml_bytes = xml.as_bytes();
-    let compressed_xml = zlib_compress(xml_bytes);
+    let compressed_xml = zlib_compress(xml_bytes)?;
 
     // ---------------------------------------------------------------
     // 2. Allocate object IDs
@@ -732,7 +711,11 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // BlockAttr.
     let mut block_attr = LrfWriteObject::new(block_attr_id, OBJ_TYPE_BLOCK_ATTR);
     write_tag_u16(&mut block_attr.tags, TAG_ID_BLOCK_WIDTH, DEFAULT_WIDTH - 40); // margins
-    write_tag_u16(&mut block_attr.tags, TAG_ID_BLOCK_HEIGHT, DEFAULT_HEIGHT - 80);
+    write_tag_u16(
+        &mut block_attr.tags,
+        TAG_ID_BLOCK_HEIGHT,
+        DEFAULT_HEIGHT - 80,
+    );
     write_tag_u16(&mut block_attr.tags, TAG_ID_TOP_SKIP, 10);
     write_tag_u16(&mut block_attr.tags, TAG_ID_SIDE_MARGIN, 20);
 
@@ -746,11 +729,7 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // ---------------------------------------------------------------
     // 8. Collect all objects in the order they'll be written.
     // ---------------------------------------------------------------
-    let mut all_objects: Vec<LrfWriteObject> = Vec::new();
-    all_objects.push(book_attr);
-    all_objects.push(text_attr);
-    all_objects.push(block_attr);
-    all_objects.push(page_attr);
+    let mut all_objects: Vec<LrfWriteObject> = vec![book_attr, text_attr, block_attr, page_attr];
     all_objects.extend(chapter_objects);
     all_objects.extend(page_objects);
     all_objects.push(page_tree_obj);
@@ -780,7 +759,7 @@ pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
             // Tags field holds the complete raw object bytes.
             obj.tags.clone()
         } else {
-            obj.serialize()
+            obj.serialize()?
         };
 
         object_entries.push(ObjectEntry {
@@ -883,14 +862,8 @@ mod tests {
             DEFAULT_VERSION
         );
         // Check dimensions.
-        assert_eq!(
-            u16::from_le_bytes([data[0x2A], data[0x2B]]),
-            DEFAULT_WIDTH
-        );
-        assert_eq!(
-            u16::from_le_bytes([data[0x2C], data[0x2D]]),
-            DEFAULT_HEIGHT
-        );
+        assert_eq!(u16::from_le_bytes([data[0x2A], data[0x2B]]), DEFAULT_WIDTH);
+        assert_eq!(u16::from_le_bytes([data[0x2C], data[0x2D]]), DEFAULT_HEIGHT);
     }
 
     #[test]

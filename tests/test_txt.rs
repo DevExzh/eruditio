@@ -16,7 +16,10 @@ fn test_txt_parsing() {
     let mut cursor = Cursor::new(TXT_DATA);
     let book = EruditioParser::parse(&mut cursor, Some("txt")).expect("Failed to parse TXT");
 
-    assert_eq!(book.metadata.title, Some("Unknown TXT Document".to_string()));
+    assert_eq!(
+        book.metadata.title,
+        Some("Unknown TXT Document".to_string())
+    );
 
     let chapters = book.chapters();
     assert_eq!(chapters.len(), 1);
@@ -24,6 +27,9 @@ fn test_txt_parsing() {
     let ch = &chapters[0];
     assert_eq!(ch.title, Some("Main Content".to_string()));
     assert!(ch.content.contains("<p>First line.</p>"));
-    assert!(ch.content.contains("<p>Second paragraph after blank line.</p>"));
+    assert!(
+        ch.content
+            .contains("<p>Second paragraph after blank line.</p>")
+    );
     assert!(ch.content.contains("<p>Line inside third paragraph.</p>"));
 }

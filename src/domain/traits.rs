@@ -13,15 +13,16 @@ pub trait FormatWriter: Send + Sync {
     fn write_book(&self, book: &Book, writer: &mut dyn Write) -> Result<()>;
 }
 
-/// A transform that takes a `Book` and returns a new, modified `Book`.
+/// A transform that takes a `Book` by value and returns a (possibly modified) `Book`.
 ///
 /// Transforms are applied as a pipeline between reading and writing.
-/// Each transform receives an immutable reference and produces a new `Book`,
-/// preserving the immutability principle.
+/// Taking ownership avoids cloning the entire book (including binary
+/// resources) at every pipeline step — transforms that need no changes
+/// simply return the input unchanged at zero cost.
 pub trait Transform: Send + Sync {
     /// A human-readable name for this transform (for logging/debugging).
     fn name(&self) -> &str;
 
-    /// Applies this transform to a book, returning a new book.
-    fn apply(&self, book: &Book) -> Result<Book>;
+    /// Applies this transform to a book, returning the (possibly modified) book.
+    fn apply(&self, book: Book) -> Result<Book>;
 }

@@ -49,7 +49,11 @@ impl FormatReader for RtfReader {
 
         // Add extracted images as resources.
         for (id, data, media_type) in &state.images {
-            let ext = if media_type == "image/jpeg" { "jpg" } else { "png" };
+            let ext = if media_type == "image/jpeg" {
+                "jpg"
+            } else {
+                "png"
+            };
             let href = format!("images/{}.{}", id, ext);
             book.add_resource(id, &href, data.clone(), media_type);
         }
@@ -140,9 +144,20 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
 
     // Known destination keywords to skip.
     let skip_destinations = [
-        "fonttbl", "colortbl", "stylesheet", "header", "footer", "footnote",
-        "field", "fldinst", "fldrslt", "datafield", "listtable", "listoverridetable",
-        "revtbl", "rsidtbl",
+        "fonttbl",
+        "colortbl",
+        "stylesheet",
+        "header",
+        "footer",
+        "footnote",
+        "field",
+        "fldinst",
+        "fldrslt",
+        "datafield",
+        "listtable",
+        "listoverridetable",
+        "revtbl",
+        "rsidtbl",
     ];
 
     for token in tokens {
@@ -151,15 +166,15 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
             match token {
                 RtfToken::GroupStart => {
                     skip_depth = Some(sd + 1);
-                }
+                },
                 RtfToken::GroupEnd => {
                     if sd <= 1 {
                         skip_depth = None;
                     } else {
                         skip_depth = Some(sd - 1);
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
             continue;
         }
@@ -171,7 +186,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     info_depth += 1;
                 }
                 saw_star = false;
-            }
+            },
             RtfToken::GroupEnd => {
                 // Finalize image if closing a pict group.
                 if in_pict && group_depth <= pict_depth {
@@ -202,14 +217,13 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                 }
 
                 // Flush info field if we're closing one.
-                if in_info && current_info_field.is_some() {
-                    let field = current_info_field.take().unwrap();
+                if in_info && let Some(field) = current_info_field.take() {
                     let text = info_text.trim().to_string();
                     match field.as_str() {
                         "title" => state.title = Some(text),
                         "author" => state.author = Some(text),
                         "subject" => state.subject = Some(text),
-                        _ => {}
+                        _ => {},
                     }
                     info_text.clear();
                 }
@@ -233,13 +247,14 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
 
                 group_depth -= 1;
                 saw_star = false;
-            }
+            },
             RtfToken::ControlSymbol('*') => {
                 saw_star = true;
-            }
+            },
             RtfToken::ControlWord { name, param } => {
                 // Check if this starts a known skip destination.
-                if (saw_star || skip_destinations.contains(&name.as_str())) && group_depth > 0
+                if (saw_star || skip_destinations.contains(&name.as_str()))
+                    && group_depth > 0
                     && skip_destinations.contains(&name.as_str())
                 {
                     skip_depth = Some(1);
@@ -252,28 +267,28 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     "info" => {
                         in_info = true;
                         info_depth = 1;
-                    }
+                    },
                     "title" | "author" | "subject" | "keywords" if in_info => {
                         current_info_field = Some(name.clone());
                         info_text.clear();
-                    }
+                    },
                     "par" | "pard" if !in_info => {
                         if in_paragraph {
                             state.html_content.push_str("</p>\n");
                         }
                         state.html_content.push_str("<p>");
                         in_paragraph = true;
-                    }
+                    },
                     "line" if !in_info => {
                         state.html_content.push_str("<br />");
-                    }
+                    },
                     "page" if !in_info => {
                         if in_paragraph {
                             state.html_content.push_str("</p>\n");
                             in_paragraph = false;
                         }
                         state.html_content.push_str("<!-- pagebreak -->\n");
-                    }
+                    },
                     "b" if !in_info => {
                         let on = param.unwrap_or(1) != 0;
                         if on && !bold {
@@ -283,7 +298,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                             state.html_content.push_str("</b>");
                             bold = false;
                         }
-                    }
+                    },
                     "i" if !in_info => {
                         let on = param.unwrap_or(1) != 0;
                         if on && !italic {
@@ -293,24 +308,30 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                             state.html_content.push_str("</i>");
                             italic = false;
                         }
-                    }
+                    },
                     "tab" if !in_info => {
                         state.html_content.push('\t');
-                    }
+                    },
                     "pict" if !in_info => {
                         in_pict = true;
                         pict_depth = group_depth;
                         pict_format = "png";
                         pict_hex.clear();
-                    }
-                    "pngblip" if in_pict => { pict_format = "png"; }
-                    "jpegblip" if in_pict => { pict_format = "jpeg"; }
-                    "emfblip" | "wmetafile" if in_pict => { pict_format = ""; } // unsupported
+                    },
+                    "pngblip" if in_pict => {
+                        pict_format = "png";
+                    },
+                    "jpegblip" if in_pict => {
+                        pict_format = "jpeg";
+                    },
+                    "emfblip" | "wmetafile" if in_pict => {
+                        pict_format = "";
+                    }, // unsupported
                     _ => {
                         // Ignore other control words.
-                    }
+                    },
                 }
-            }
+            },
             RtfToken::Text(text) => {
                 if in_pict {
                     // Collect hex digits, skipping whitespace
@@ -333,7 +354,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     let escaped = crate::formats::common::text_utils::escape_html(text);
                     state.html_content.push_str(&escaped);
                 }
-            }
+            },
             RtfToken::Unicode(code) => {
                 if in_info && current_info_field.is_some() {
                     if let Some(ch) = i32_to_char(*code) {
@@ -348,7 +369,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                         state.html_content.push(ch);
                     }
                 }
-            }
+            },
             RtfToken::HexByte(byte) => {
                 if in_pict {
                     pict_hex.push_str(&format!("{:02x}", byte));
@@ -365,7 +386,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     }
                     state.html_content.push(ch);
                 }
-            }
+            },
             RtfToken::ControlSymbol(sym) => {
                 let ch = match sym {
                     '~' => '\u{00A0}', // non-breaking space
@@ -382,7 +403,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     }
                     state.html_content.push(ch);
                 }
-            }
+            },
         }
     }
 
@@ -439,7 +460,8 @@ mod tests {
 
     #[test]
     fn rtf_reader_extracts_text() {
-        let rtf = b"{\\rtf1\\ansi\\deff0 {\\fonttbl{\\f0 Times;}}\\f0\\fs24 Hello World\\par Goodbye}";
+        let rtf =
+            b"{\\rtf1\\ansi\\deff0 {\\fonttbl{\\f0 Times;}}\\f0\\fs24 Hello World\\par Goodbye}";
         let mut cursor = Cursor::new(rtf.as_slice());
         let book = RtfReader::new().read_book(&mut cursor).unwrap();
 
@@ -508,7 +530,11 @@ mod tests {
 
         assert_eq!(decoded.metadata.title.as_deref(), Some("RTF Test"));
         assert_eq!(decoded.metadata.authors, vec!["Author"]);
-        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
         assert!(content.contains("Hello world"));
     }
 
@@ -518,7 +544,7 @@ mod tests {
         assert_eq!(cp1252_to_char(0x93), '\u{201C}'); // Left double quote
         assert_eq!(cp1252_to_char(0x94), '\u{201D}'); // Right double quote
         assert_eq!(cp1252_to_char(0x97), '\u{2014}'); // Em dash
-        assert_eq!(cp1252_to_char(0x41), 'A');         // Regular ASCII
+        assert_eq!(cp1252_to_char(0x41), 'A'); // Regular ASCII
     }
 
     #[test]

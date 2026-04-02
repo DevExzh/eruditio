@@ -3,8 +3,8 @@
 //! Every piece of data inside an LRF object is encoded as a 2-byte tag
 //! header (`tag_id`, `0xF5`) followed by a type-specific payload.
 
-use crate::error::{EruditioError, Result};
 use super::header::read_u16_le;
+use crate::error::{EruditioError, Result};
 
 /// A parsed LRF tag.
 #[derive(Debug, Clone)]
@@ -16,7 +16,11 @@ pub struct Tag {
 impl Tag {
     /// Reads the tag payload as a u8.
     pub fn as_u8(&self) -> u8 {
-        if self.contents.is_empty() { 0 } else { self.contents[0] }
+        if self.contents.is_empty() {
+            0
+        } else {
+            self.contents[0]
+        }
     }
 
     /// Reads the tag payload as a u16 (little-endian).
@@ -129,57 +133,57 @@ fn tag_payload_size(tag_id: u16) -> Option<usize> {
     let id = (tag_id & 0xFF) as u8;
     match id {
         // Structural tags
-        0x00 => Some(6),  // ObjectStart: u32 obj_id + u16 obj_type
-        0x01 => Some(0),  // ObjectEnd
-        0x02 => Some(4),  // ObjectInfoLink
-        0x03 => Some(4),  // Link (u32)
-        0x04 => Some(4),  // StreamSize (u32)
-        0x05 => Some(0),  // StreamStart
-        0x06 => Some(0),  // StreamEnd
-        0x0B => None,     // ContainedObjectsList (variable: type_one)
-        0x54 => Some(2),  // StreamFlags (u16)
-        0x7C => Some(4),  // ParentPageTree (u32)
+        0x00 => Some(6), // ObjectStart: u32 obj_id + u16 obj_type
+        0x01 => Some(0), // ObjectEnd
+        0x02 => Some(4), // ObjectInfoLink
+        0x03 => Some(4), // Link (u32)
+        0x04 => Some(4), // StreamSize (u32)
+        0x05 => Some(0), // StreamStart
+        0x06 => Some(0), // StreamEnd
+        0x0B => None,    // ContainedObjectsList (variable: type_one)
+        0x54 => Some(2), // StreamFlags (u16)
+        0x7C => Some(4), // ParentPageTree (u32)
 
         // Style attributes (fixed-size)
-        0x11 => Some(2),  // FontSize (i16)
-        0x12 => Some(2),  // FontWidth
-        0x13 => Some(4),  // FontEscapement
-        0x14 => Some(4),  // FontOrientation
-        0x15 => Some(2),  // FontWeight (u16)
-        0x16 => None,     // FontFaceName (string)
-        0x17 => Some(4),  // TextColor (u32)
-        0x18 => Some(4),  // TextBgColor (u32)
-        0x19 => Some(2),  // WordSpace
-        0x1A => Some(2),  // LetterSpace
-        0x1B => Some(4),  // BaseLineSkip
-        0x1C => Some(2),  // LineSpace (i16)
-        0x1D => Some(2),  // ParIndent (i16)
-        0x1E => Some(2),  // ParSkip
+        0x11 => Some(2), // FontSize (i16)
+        0x12 => Some(2), // FontWidth
+        0x13 => Some(4), // FontEscapement
+        0x14 => Some(4), // FontOrientation
+        0x15 => Some(2), // FontWeight (u16)
+        0x16 => None,    // FontFaceName (string)
+        0x17 => Some(4), // TextColor (u32)
+        0x18 => Some(4), // TextBgColor (u32)
+        0x19 => Some(2), // WordSpace
+        0x1A => Some(2), // LetterSpace
+        0x1B => Some(4), // BaseLineSkip
+        0x1C => Some(2), // LineSpace (i16)
+        0x1D => Some(2), // ParIndent (i16)
+        0x1E => Some(2), // ParSkip
 
         // Block attributes
-        0x41 => Some(2),  // BlockWidth
-        0x42 => Some(2),  // BlockHeight
-        0x43 => Some(2),  // BlockRule
-        0x44 => Some(4),  // BgColor
-        0x45 => Some(2),  // Layout (columns)
-        0x46 => Some(2),  // FrameWidth
-        0x47 => Some(4),  // FrameColor
-        0x48 => Some(2),  // FrameMode
-        0x49 => Some(2),  // TopSkip
-        0x4A => Some(2),  // SideMargin
-        0x4B => Some(2),  // FootSkip
-        0x4C => Some(4),  // RefStream (u32 ImageStream object ID)
+        0x41 => Some(2), // BlockWidth
+        0x42 => Some(2), // BlockHeight
+        0x43 => Some(2), // BlockRule
+        0x44 => Some(4), // BgColor
+        0x45 => Some(2), // Layout (columns)
+        0x46 => Some(2), // FrameWidth
+        0x47 => Some(4), // FrameColor
+        0x48 => Some(2), // FrameMode
+        0x49 => Some(2), // TopSkip
+        0x4A => Some(2), // SideMargin
+        0x4B => Some(2), // FootSkip
+        0x4C => Some(4), // RefStream (u32 ImageStream object ID)
 
         // Page attributes
-        0x31 => Some(2),  // OddSideMargin
-        0x32 => Some(2),  // PageHeight
-        0x33 => Some(2),  // PageWidth
-        0x34 => Some(4),  // Unknown/Header
-        0x35 => Some(4),  // Unknown/Footer
-        0x36 => Some(2),  // EvenSideMargin
+        0x31 => Some(2), // OddSideMargin
+        0x32 => Some(2), // PageHeight
+        0x33 => Some(2), // PageWidth
+        0x34 => Some(4), // Unknown/Header
+        0x35 => Some(4), // Unknown/Footer
+        0x36 => Some(2), // EvenSideMargin
 
         // Alignment
-        0x3C => Some(2),  // Align
+        0x3C => Some(2), // Align
 
         // Text content tags
         0xA1 => Some(6),  // P start (style + size)
@@ -208,17 +212,17 @@ fn tag_payload_size(tag_id: u16) -> Option<usize> {
         0xD2 => Some(0),  // CR
 
         // Other common tags
-        0x21 => Some(2),  // RuledLine type
-        0x22 => Some(2),  // RuledLine width
-        0x29 => Some(4),  // EmpDotsPosition
-        0x2A => Some(4),  // EmpDotsCode
-        0x2B => Some(4),  // EmpLinePosition
-        0x2C => Some(4),  // EmpLineCode
+        0x21 => Some(2), // RuledLine type
+        0x22 => Some(2), // RuledLine width
+        0x29 => Some(4), // EmpDotsPosition
+        0x2A => Some(4), // EmpDotsCode
+        0x2B => Some(4), // EmpLinePosition
+        0x2C => Some(4), // EmpLineCode
 
         // Jump target tags (Button)
-        0x56 => Some(8),  // JumpTo (u32 page + u32 block)
-        0x57 => Some(0),  // Unknown/None
-        0x58 => Some(0),  // Unknown/None
+        0x56 => Some(8), // JumpTo (u32 page + u32 block)
+        0x57 => Some(0), // Unknown/None
+        0x58 => Some(0), // Unknown/None
 
         // Default: skip 2 bytes (best guess for unknown fixed tags)
         _ => Some(0),
@@ -229,7 +233,9 @@ fn tag_payload_size(tag_id: u16) -> Option<usize> {
 /// Returns the parsed tag and the new offset after the tag.
 pub fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
     if offset + 2 > data.len() {
-        return Err(EruditioError::Format("LRF tag: unexpected end of data".into()));
+        return Err(EruditioError::Format(
+            "LRF tag: unexpected end of data".into(),
+        ));
     }
 
     let tag_id_low = data[offset];
@@ -256,7 +262,7 @@ pub fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
             let c = data[pos..pos + size].to_vec();
             pos += size;
             c
-        }
+        },
         None => {
             // Variable-length: string or object list.
             let low = tag_id & 0xFF;
@@ -295,10 +301,16 @@ pub fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
                 pos += total;
                 c
             }
-        }
+        },
     };
 
-    Ok((Tag { id: tag_id, contents }, pos))
+    Ok((
+        Tag {
+            id: tag_id,
+            contents,
+        },
+        pos,
+    ))
 }
 
 /// Parses all tags from a byte slice until exhausted or ObjectEnd is hit.

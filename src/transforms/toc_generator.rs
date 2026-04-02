@@ -1,8 +1,8 @@
 //! Generates or rebuilds the table of contents from spine content.
 
 use crate::domain::Book;
-use crate::domain::traits::Transform;
 use crate::domain::toc::TocItem;
+use crate::domain::traits::Transform;
 use crate::error::Result;
 
 /// Generates a table of contents from the book's spine documents.
@@ -17,8 +17,8 @@ impl Transform for TocGenerator {
         "toc_generator"
     }
 
-    fn apply(&self, book: &Book) -> Result<Book> {
-        let mut result = book.clone();
+    fn apply(&self, book: Book) -> Result<Book> {
+        let mut result = book;
 
         // Collect hrefs already in the TOC.
         let existing_hrefs: Vec<String> = collect_toc_hrefs(&result.toc);
@@ -75,7 +75,7 @@ fn strip_inner_tags(html: &str) -> String {
             '<' => in_tag = true,
             '>' => in_tag = false,
             _ if !in_tag => result.push(ch),
-            _ => {}
+            _ => {},
         }
     }
     result
@@ -126,7 +126,7 @@ mod tests {
         book.toc.clear();
 
         let toc_gen = TocGenerator;
-        let result = toc_gen.apply(&book).unwrap();
+        let result = toc_gen.apply(book).unwrap();
 
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].title, "Intro");
@@ -142,7 +142,7 @@ mod tests {
         });
 
         let toc_gen = TocGenerator;
-        let result = toc_gen.apply(&book).unwrap();
+        let result = toc_gen.apply(book).unwrap();
 
         // Entry already existed, so nothing new should be added.
         assert_eq!(result.toc.len(), 1);
@@ -160,7 +160,7 @@ mod tests {
         book.toc.clear();
 
         let toc_gen = TocGenerator;
-        let result = toc_gen.apply(&book).unwrap();
+        let result = toc_gen.apply(book).unwrap();
 
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].title, "Chapter 1");

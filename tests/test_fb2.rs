@@ -34,7 +34,10 @@ fn test_fb2_parsing() {
 
     assert_eq!(book.metadata.title, Some("Sherlock Holmes".to_string()));
     assert_eq!(book.metadata.language, Some("en".to_string()));
-    assert_eq!(book.metadata.authors, vec!["Arthur Conan Doyle".to_string()]);
+    assert_eq!(
+        book.metadata.authors,
+        vec!["Arthur Conan Doyle".to_string()]
+    );
 
     let chapters = book.chapters();
     assert_eq!(chapters.len(), 1);

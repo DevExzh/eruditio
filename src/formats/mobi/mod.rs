@@ -15,16 +15,26 @@ use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::PdbFile;
 use std::io::{Read, Write};
 
-use self::exth::{ExthHeader, EXTH_AUTHOR, EXTH_DESCRIPTION, EXTH_ISBN, EXTH_PUBLISHER,
-    EXTH_SUBJECT, EXTH_UPDATED_TITLE, EXTH_LANGUAGE};
+use self::exth::{
+    EXTH_AUTHOR, EXTH_DESCRIPTION, EXTH_ISBN, EXTH_LANGUAGE, EXTH_PUBLISHER, EXTH_SUBJECT,
+    EXTH_UPDATED_TITLE, ExthHeader,
+};
 use self::header::{
-    MobiHeader, PalmDocHeader, COMPRESSION_HUFFCDIC, COMPRESSION_NONE, COMPRESSION_PALMDOC,
-    NULL_INDEX,
+    COMPRESSION_HUFFCDIC, COMPRESSION_NONE, COMPRESSION_PALMDOC, MobiHeader, NULL_INDEX,
+    PalmDocHeader,
 };
 
 /// Non-text record signatures that should be skipped when extracting images.
 const NON_IMAGE_SIGS: &[&[u8]] = &[
-    b"FLIS", b"FCIS", b"SRCS", b"RESC", b"BOUN", b"FDST", b"DATP", b"AUDI", b"VIDE",
+    b"FLIS",
+    b"FCIS",
+    b"SRCS",
+    b"RESC",
+    b"BOUN",
+    b"FDST",
+    b"DATP",
+    b"AUDI",
+    b"VIDE",
     b"\xe9\x8e\r\n",
     b"BOUNDARY",
 ];
@@ -178,11 +188,11 @@ fn decompress_text(
         match palmdoc.compression {
             COMPRESSION_NONE => {
                 text.extend_from_slice(record_data);
-            }
+            },
             COMPRESSION_PALMDOC => {
                 let decompressed = palmdoc::decompress(record_data)?;
                 text.extend_from_slice(&decompressed);
-            }
+            },
             COMPRESSION_HUFFCDIC => {
                 // HUFF/CDIC: lazily initialize the decompressor on first use.
                 if huff_reader.is_none() {
@@ -193,13 +203,13 @@ fn decompress_text(
                     EruditioError::Compression(format!("HUFF/CDIC decompression failed: {}", e))
                 })?;
                 text.extend_from_slice(&decompressed);
-            }
+            },
             other => {
                 return Err(EruditioError::Format(format!(
                     "Unknown MOBI compression type: {}",
                     other
                 )));
-            }
+            },
         }
     }
 
@@ -580,7 +590,11 @@ mod tests {
 
     #[test]
     fn mobi_reader_parses_title_and_content() {
-        let mobi_data = build_test_mobi("Test Book", "<html><body><p>Hello MOBI</p></body></html>", &["Test Author"]);
+        let mobi_data = build_test_mobi(
+            "Test Book",
+            "<html><body><p>Hello MOBI</p></body></html>",
+            &["Test Author"],
+        );
 
         let mut cursor = std::io::Cursor::new(mobi_data);
         let book = MobiReader::new().read_book(&mut cursor).unwrap();

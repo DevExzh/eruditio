@@ -1,6 +1,6 @@
 use eruditio::domain::{Book, Chapter};
-use eruditio::formats::{MobiReader, MobiWriter};
 use eruditio::domain::{FormatReader, FormatWriter};
+use eruditio::formats::{MobiReader, MobiWriter};
 use std::io::Cursor;
 
 #[test]
@@ -33,7 +33,10 @@ fn mobi_round_trip_preserves_metadata() {
         .read_book(&mut cursor)
         .expect("Failed to read MOBI");
 
-    assert_eq!(decoded.metadata.title.as_deref(), Some("MOBI Integration Test"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("MOBI Integration Test")
+    );
     assert!(decoded.metadata.authors.iter().any(|a| a == "Test Author"));
 
     let chapters = decoded.chapters();

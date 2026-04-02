@@ -3,10 +3,7 @@ use std::io::{Read, Seek};
 use zip::ZipArchive;
 
 /// Reads a file from a ZIP archive by name, returning its contents as a `String`.
-pub fn read_zip_text<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-    name: &str,
-) -> Result<String> {
+pub fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<String> {
     let mut file = archive
         .by_name(name)
         .map_err(|_| EruditioError::Format(format!("File not found in archive: {}", name)))?;
@@ -19,10 +16,7 @@ pub fn read_zip_text<R: Read + Seek>(
 }
 
 /// Reads a file from a ZIP archive by name, returning its contents as raw bytes.
-pub fn read_zip_bytes<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-    name: &str,
-) -> Result<Vec<u8>> {
+pub fn read_zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<Vec<u8>> {
     let mut file = archive
         .by_name(name)
         .map_err(|_| EruditioError::Format(format!("File not found in archive: {}", name)))?;
@@ -34,9 +28,7 @@ pub fn read_zip_bytes<R: Read + Seek>(
 }
 
 /// Lists all file names in a ZIP archive.
-pub fn list_zip_entries<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-) -> Vec<String> {
+pub fn list_zip_entries<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Vec<String> {
     (0..archive.len())
         .filter_map(|i| {
             archive.by_index(i).ok().and_then(|f| {
@@ -54,8 +46,8 @@ pub fn list_zip_entries<R: Read + Seek>(
 mod tests {
     use super::*;
     use std::io::Cursor;
-    use zip::write::FileOptions;
     use zip::ZipWriter;
+    use zip::write::FileOptions;
 
     fn create_test_zip() -> Vec<u8> {
         let mut buf = Vec::new();

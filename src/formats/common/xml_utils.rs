@@ -33,11 +33,7 @@ pub fn local_name(tag: &str) -> &str {
 
 /// Escapes special XML characters in text content.
 pub fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    super::text_utils::escape_xml(text)
 }
 
 #[cfg(test)]
@@ -53,7 +49,10 @@ mod tests {
 
     #[test]
     fn escape_xml_handles_all_chars() {
-        assert_eq!(escape_xml("a&b<c>d\"e'f"), "a&amp;b&lt;c&gt;d&quot;e&apos;f");
+        assert_eq!(
+            escape_xml("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
     }
 
     #[test]

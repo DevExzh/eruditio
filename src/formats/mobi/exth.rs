@@ -246,10 +246,7 @@ mod tests {
 
         assert_eq!(parsed.records.len(), 2);
         assert_eq!(parsed.get_string(EXTH_AUTHOR).unwrap(), "Author");
-        assert_eq!(
-            parsed.get_string(EXTH_DESCRIPTION).unwrap(),
-            "A great book"
-        );
+        assert_eq!(parsed.get_string(EXTH_DESCRIPTION).unwrap(), "A great book");
     }
 
     #[test]

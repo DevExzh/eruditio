@@ -39,5 +39,10 @@ fn bench_compress_random(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_compress, bench_decompress, bench_compress_random);
+criterion_group!(
+    benches,
+    bench_compress,
+    bench_decompress,
+    bench_compress_random
+);
 criterion_main!(benches);

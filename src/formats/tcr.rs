@@ -28,13 +28,17 @@ impl FormatReader for TcrReader {
 
         for _ in 0..256 {
             if pos >= buffer.len() {
-                return Err(EruditioError::Format("Unexpected EOF reading TCR dictionary".into()));
+                return Err(EruditioError::Format(
+                    "Unexpected EOF reading TCR dictionary".into(),
+                ));
             }
             let entry_len = buffer[pos] as usize;
             pos += 1;
 
             if pos + entry_len > buffer.len() {
-                return Err(EruditioError::Format("Unexpected EOF reading TCR dictionary entry".into()));
+                return Err(EruditioError::Format(
+                    "Unexpected EOF reading TCR dictionary entry".into(),
+                ));
             }
 
             let entry = &buffer[pos..pos + entry_len];
@@ -82,7 +86,9 @@ impl FormatWriter for TcrWriter {
         for entry in &dictionary {
             let len = entry.len().min(255) as u8;
             writer.write_all(&[len]).map_err(EruditioError::Io)?;
-            writer.write_all(&entry[..len as usize]).map_err(EruditioError::Io)?;
+            writer
+                .write_all(&entry[..len as usize])
+                .map_err(EruditioError::Io)?;
         }
 
         // Write compressed data.

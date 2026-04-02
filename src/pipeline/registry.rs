@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use crate::domain::format::Format;
 use crate::domain::traits::{FormatReader, FormatWriter};
 use crate::formats::{
-    cbz::{CbzReader, CbzWriter},
+    azw4::Azw4Reader,
     cb7::Cb7Reader,
-    cbr::CbrReader,
     cbc::CbcReader,
+    cbr::CbrReader,
+    cbz::{CbzReader, CbzWriter},
     chm::ChmReader,
     djvu::DjvuReader,
     epub::{EpubReader, EpubWriter},
@@ -19,6 +20,7 @@ use crate::formats::{
     lrf::{LrfReader, LrfWriter},
     md::{MdReader, MdWriter},
     mobi::{MobiReader, MobiWriter},
+    oeb::{OebReader, OebWriter},
     pdb::{PdbReader, PdbWriter},
     pdf::{PdfReader, PdfWriter},
     pml::{PmlReader, PmlWriter},
@@ -88,8 +90,14 @@ impl FormatRegistry {
         registry.register_reader(Format::Mobi, Box::new(MobiReader::new()));
         registry.register_writer(Format::Mobi, Box::new(MobiWriter::new()));
         registry.register_reader(Format::Azw, Box::new(MobiReader::new()));
+        registry.register_writer(Format::Azw, Box::new(MobiWriter::new()));
         registry.register_reader(Format::Azw3, Box::new(MobiReader::new()));
+        registry.register_writer(Format::Azw3, Box::new(MobiWriter::new()));
         registry.register_reader(Format::Prc, Box::new(MobiReader::new()));
+        registry.register_writer(Format::Prc, Box::new(MobiWriter::new()));
+
+        // AZW4 (Amazon Print Replica — PDF in PDB container, read-only)
+        registry.register_reader(Format::Azw4, Box::new(Azw4Reader::new()));
 
         // PDF
         registry.register_reader(Format::Pdf, Box::new(PdfReader::new()));
@@ -146,6 +154,10 @@ impl FormatRegistry {
         // Markdown
         registry.register_reader(Format::Md, Box::new(MdReader::new()));
         registry.register_writer(Format::Md, Box::new(MdWriter::new()));
+
+        // OEB (Open eBook)
+        registry.register_reader(Format::Oeb, Box::new(OebReader::new()));
+        registry.register_writer(Format::Oeb, Box::new(OebWriter::new()));
 
         registry
     }

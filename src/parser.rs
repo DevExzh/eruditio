@@ -1,12 +1,12 @@
 use crate::domain::{Book, FormatReader};
 use crate::error::{EruditioError, Result};
 use crate::formats::{
-    cbz::CbzReader, cb7::Cb7Reader, cbr::CbrReader, cbc::CbcReader,
+    azw4::Azw4Reader, cb7::Cb7Reader, cbc::CbcReader, cbr::CbrReader, cbz::CbzReader,
     chm::ChmReader, djvu::DjvuReader, epub::EpubReader, fb2::Fb2Reader, fbz::FbzReader,
     html::HtmlReader, htmlz::HtmlzReader, kepub::KepubReader, lit::LitReader, lrf::LrfReader,
-    md::MdReader, mobi::MobiReader, pdb::PdbReader, pdf::PdfReader, pml::PmlReader,
-    pmlz::PmlzReader, rb::RbReader, rtf::RtfReader, snb::SnbReader, tcr::TcrReader,
-    txt::TxtReader, txtz::TxtzReader,
+    md::MdReader, mobi::MobiReader, oeb::OebReader, pdb::PdbReader, pdf::PdfReader, pml::PmlReader,
+    pmlz::PmlzReader, rb::RbReader, rtf::RtfReader, snb::SnbReader, tcr::TcrReader, txt::TxtReader,
+    txtz::TxtzReader,
 };
 use std::io::Read;
 use std::path::Path;
@@ -25,7 +25,9 @@ impl EruditioParser {
                 "cbc" => CbcReader::new().read_book(reader),
                 "djvu" | "djv" => DjvuReader::new().read_book(reader),
                 "epub" => EpubReader::new().read_book(reader),
-                "mobi" | "azw" | "azw3" | "prc" | "kf8" | "kfx" | "pobi" => MobiReader::new().read_book(reader),
+                "mobi" | "azw" | "azw3" | "prc" | "kf8" | "kfx" | "pobi" => {
+                    MobiReader::new().read_book(reader)
+                },
                 "pdf" => PdfReader::new().read_book(reader),
                 "fb2" => Fb2Reader::new().read_book(reader),
                 "fbz" | "fb2.zip" => FbzReader::new().read_book(reader),
@@ -45,22 +47,24 @@ impl EruditioParser {
                 "chm" => ChmReader::new().read_book(reader),
                 "lit" => LitReader::new().read_book(reader),
                 "md" | "markdown" => MdReader::new().read_book(reader),
-                _ => Err(EruditioError::Unsupported(format!("Unsupported format: {}", fmt))),
+                "azw4" => Azw4Reader::new().read_book(reader),
+                "oeb" | "opf" => OebReader::new().read_book(reader),
+                _ => Err(EruditioError::Unsupported(format!(
+                    "Unsupported format: {}",
+                    fmt
+                ))),
             },
             None => {
                 // Default to EPUB if no hint provided.
                 EpubReader::new().read_book(reader)
-            }
+            },
         }
     }
 
     /// Convenience method to parse an ebook from a file path.
     pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<Book> {
         let path_ref = path.as_ref();
-        let extension = path_ref
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path_ref.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let mut file = std::fs::File::open(path_ref).map_err(EruditioError::Io)?;
         Self::parse(&mut file, Some(extension))

@@ -2,6 +2,7 @@ use thiserror::Error;
 
 /// Core error type for the `eruditio` crate.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum EruditioError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

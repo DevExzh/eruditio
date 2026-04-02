@@ -15,8 +15,8 @@ impl Transform for HtmlNormalizer {
         "html_normalizer"
     }
 
-    fn apply(&self, book: &Book) -> Result<Book> {
-        let mut result = book.clone();
+    fn apply(&self, book: Book) -> Result<Book> {
+        let mut result = book;
 
         // Walk spine items and normalize their HTML content.
         for spine_item in result.spine.iter() {
@@ -158,7 +158,7 @@ mod tests {
         });
 
         let normalizer = HtmlNormalizer;
-        let result = normalizer.apply(&book).unwrap();
+        let result = normalizer.apply(book).unwrap();
 
         let chapters = result.chapters();
         assert!(chapters[0].content.contains("&amp;"));

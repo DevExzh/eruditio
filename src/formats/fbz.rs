@@ -33,7 +33,9 @@ impl FormatReader for FbzReader {
             .map_err(|_| EruditioError::Format(format!("Failed to read {}", fb2_name)))?;
 
         let mut contents = Vec::new();
-        fb2_file.read_to_end(&mut contents).map_err(EruditioError::Io)?;
+        fb2_file
+            .read_to_end(&mut contents)
+            .map_err(EruditioError::Io)?;
 
         let mut cursor = Cursor::new(contents);
         Fb2Reader::new().read_book(&mut cursor)

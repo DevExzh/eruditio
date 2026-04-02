@@ -1,8 +1,8 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use mime_guess::from_path;
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 use std::io::{Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -83,12 +83,12 @@ impl FormatReader for CbzReader {
             })
             .next();
 
-        if let Some(ref ci_name) = comic_info_name {
-            if let Ok(mut file) = archive.by_name(ci_name) {
-                let mut xml = String::new();
-                if file.read_to_string(&mut xml).is_ok() {
-                    parse_comic_info(&xml, &mut book);
-                }
+        if let Some(ref ci_name) = comic_info_name
+            && let Ok(mut file) = archive.by_name(ci_name)
+        {
+            let mut xml = String::new();
+            if file.read_to_string(&mut xml).is_ok() {
+                parse_comic_info(&xml, &mut book);
             }
         }
 
@@ -111,41 +111,37 @@ fn parse_comic_info(xml: &str, book: &mut Book) {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
                 current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
-            }
+            },
             Ok(Event::Text(ref e)) => {
-                let text =
-                    String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
                 if text.trim().is_empty() {
                     continue;
                 }
                 match current_tag.as_str() {
                     "Title" => {
                         book.metadata.title = Some(text);
-                    }
+                    },
                     "Writer" | "Penciller" => {
                         if book.metadata.authors.is_empty()
                             || !book.metadata.authors.contains(&text)
                         {
                             book.metadata.authors.push(text);
                         }
-                    }
+                    },
                     "Series" => series = text,
                     "Number" => number = text,
                     "Summary" => {
                         book.metadata.description = Some(text);
-                    }
+                    },
                     "Publisher" => {
                         book.metadata.publisher = Some(text);
-                    }
+                    },
                     "LanguageISO" => {
                         book.metadata.language = Some(text);
-                    }
+                    },
                     "Year" => {
-                        book.metadata
-                            .extended
-                            .entry("year".into())
-                            .or_insert(text);
-                    }
+                        book.metadata.extended.entry("year".into()).or_insert(text);
+                    },
                     "Genre" => {
                         for genre in text.split(',') {
                             let g = genre.trim().to_string();
@@ -153,26 +149,24 @@ fn parse_comic_info(xml: &str, book: &mut Book) {
                                 book.metadata.subjects.push(g);
                             }
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
     }
 
     // If we have series info but no explicit title, build one.
-    if !series.is_empty() {
-        if book.metadata.title.is_none() {
-            let title = if number.is_empty() {
-                series
-            } else {
-                format!("{} #{}", series, number)
-            };
-            book.metadata.title = Some(title);
-        }
+    if !series.is_empty() && book.metadata.title.is_none() {
+        let title = if number.is_empty() {
+            series
+        } else {
+            format!("{} #{}", series, number)
+        };
+        book.metadata.title = Some(title);
     }
 }
 

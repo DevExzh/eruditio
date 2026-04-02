@@ -108,7 +108,11 @@ mod tests {
 
         let mut cursor = Cursor::new(output);
         let decoded = PmlzReader::new().read_book(&mut cursor).unwrap();
-        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
         assert!(content.contains("Hello PMLZ world"));
     }
 

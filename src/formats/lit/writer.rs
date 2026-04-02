@@ -11,15 +11,15 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
+
+use crate::formats::common::text_utils::escape_xml;
 
 use crate::domain::{Book, FormatWriter};
 use crate::error::{EruditioError, Result};
 
-use super::maps::{
-    self, HTML_GLOBAL_ATTRS, HTML_TAGS, OPF_ATTRS, OPF_TAGS,
-};
+use super::maps::{self, HTML_GLOBAL_ATTRS, HTML_TAGS, OPF_ATTRS, OPF_TAGS};
 use super::msdes::MsDes;
 use super::mssha1::MsSha1;
 
@@ -32,20 +32,17 @@ const MAGIC: &[u8; 8] = b"ITOLITLS";
 
 /// File GUID: {0A9007C1-4076-11D3-8789-0000F8105754}
 const FILE_GUID: [u8; 16] = [
-    0xC1, 0x07, 0x90, 0x0A, 0x76, 0x40, 0xD3, 0x11,
-    0x87, 0x89, 0x00, 0x00, 0xF8, 0x10, 0x57, 0x54,
+    0xC1, 0x07, 0x90, 0x0A, 0x76, 0x40, 0xD3, 0x11, 0x87, 0x89, 0x00, 0x00, 0xF8, 0x10, 0x57, 0x54,
 ];
 
 /// Piece 3 GUID: {0A9007C3-4076-11D3-8789-0000F8105754}
 const PIECE3_GUID: [u8; 16] = [
-    0xC3, 0x07, 0x90, 0x0A, 0x76, 0x40, 0xD3, 0x11,
-    0x87, 0x89, 0x00, 0x00, 0xF8, 0x10, 0x57, 0x54,
+    0xC3, 0x07, 0x90, 0x0A, 0x76, 0x40, 0xD3, 0x11, 0x87, 0x89, 0x00, 0x00, 0xF8, 0x10, 0x57, 0x54,
 ];
 
 /// Piece 4 GUID: {0A9007C4-4076-11D3-8789-0000F8105754}
 const PIECE4_GUID: [u8; 16] = [
-    0xC4, 0x07, 0x90, 0x0A, 0x76, 0x40, 0xD3, 0x11,
-    0x87, 0x89, 0x00, 0x00, 0xF8, 0x10, 0x57, 0x54,
+    0xC4, 0x07, 0x90, 0x0A, 0x76, 0x40, 0xD3, 0x11, 0x87, 0x89, 0x00, 0x00, 0xF8, 0x10, 0x57, 0x54,
 ];
 
 /// AOLL chunk size (directory chunk). Must match what the reader expects.
@@ -117,16 +114,21 @@ fn build_html_per_tag_attr_reverse() -> HashMap<(usize, &'static str), u16> {
     map
 }
 
+/// Type alias for the per-tag attribute table entries used by the LIT binary encoder.
+type AttrTableEntry = (&'static [usize], &'static [(u16, &'static str)]);
+
 /// Collect per-tag attribute entries from all known static tables.
 fn collect_per_tag_attrs(map: &mut HashMap<(usize, &'static str), u16>) {
     // (tag_indices, table) pairs
-    let tables: &[(&[usize], &[(u16, &str)])] = &[
+    let tables: &[AttrTableEntry] = &[
         (&[3], maps::ATTRS_A),
         (&[5], maps::ATTRS_ADDRESS),
         (&[6], maps::ATTRS_APPLET),
         (&[7], maps::ATTRS_AREA),
         (
-            &[8, 13, 29, 34, 51, 56, 78, 82, 83, 86, 87, 88, 89, 91, 92, 103, 104, 106],
+            &[
+                8, 13, 29, 34, 51, 56, 78, 82, 83, 86, 87, 88, 89, 91, 92, 103, 104, 106,
+            ],
             maps::ATTRS_STYLE_CLASS_ID,
         ),
         (&[9], maps::ATTRS_BASE),
@@ -276,13 +278,13 @@ impl BinaryEncoder {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     self.encode_start_tag(e, false, &mut output)?;
-                }
+                },
                 Ok(Event::Empty(ref e)) => {
                     self.encode_start_tag(e, true, &mut output)?;
-                }
+                },
                 Ok(Event::End(ref e)) => {
                     self.encode_end_tag(e, &mut output);
-                }
+                },
                 Ok(Event::Text(ref e)) => {
                     let bytes = e.clone().into_inner();
                     let text = String::from_utf8_lossy(&bytes);
@@ -298,18 +300,18 @@ impl BinaryEncoder {
                             output.extend_from_slice(s.as_bytes());
                         }
                     }
-                }
+                },
                 Ok(Event::CData(ref e)) => {
                     let text = String::from_utf8_lossy(e.as_ref());
                     output.extend_from_slice(text.as_bytes());
-                }
+                },
                 Ok(Event::Eof) => break,
                 Err(e) => {
                     return Err(EruditioError::Format(format!(
                         "XML parse error during binary encoding: {e}"
                     )));
-                }
-                _ => {} // Skip comments, PI, declarations
+                },
+                _ => {}, // Skip comments, PI, declarations
             }
             buf.clear();
         }
@@ -328,7 +330,9 @@ impl BinaryEncoder {
         let tag_name_lower = tag_name.to_lowercase();
 
         // Look up tag index
-        let tag_index = self.tag_reverse.get(tag_name.as_ref())
+        let tag_index = self
+            .tag_reverse
+            .get(tag_name.as_ref())
             .or_else(|| self.tag_reverse.get(tag_name_lower.as_str()));
 
         // Flags: OPENING, and if empty (self-closing), also CLOSING
@@ -354,8 +358,8 @@ impl BinaryEncoder {
                 let attr_code = self.find_attr_code(idx, &attr_name, &attr_name_lower);
 
                 if let Some(code) = attr_code {
-                    let is_href = self.is_html
-                        && (attr_name_lower == "href" || attr_name_lower == "src");
+                    let is_href =
+                        self.is_html && (attr_name_lower == "href" || attr_name_lower == "src");
 
                     output.extend_from_slice(&encode_utf8_ordinal(u32::from(code)));
 
@@ -369,9 +373,7 @@ impl BinaryEncoder {
                     // length-prefixed string, then value
                     output.extend_from_slice(&encode_utf8_ordinal(0x8000));
                     let name_chars: Vec<char> = attr_name.chars().collect();
-                    output.extend_from_slice(&encode_utf8_ordinal(
-                        name_chars.len() as u32 + 1,
-                    ));
+                    output.extend_from_slice(&encode_utf8_ordinal(name_chars.len() as u32 + 1));
                     for &c in &name_chars {
                         let mut tmp = [0u8; 4];
                         let s = c.encode_utf8(&mut tmp);
@@ -409,9 +411,7 @@ impl BinaryEncoder {
                     // Custom attribute
                     output.extend_from_slice(&encode_utf8_ordinal(0x8000));
                     let name_chars: Vec<char> = attr_name.chars().collect();
-                    output.extend_from_slice(&encode_utf8_ordinal(
-                        name_chars.len() as u32 + 1,
-                    ));
+                    output.extend_from_slice(&encode_utf8_ordinal(name_chars.len() as u32 + 1));
                     for &c in &name_chars {
                         let mut tmp = [0u8; 4];
                         let s = c.encode_utf8(&mut tmp);
@@ -428,11 +428,7 @@ impl BinaryEncoder {
         Ok(())
     }
 
-    fn encode_end_tag(
-        &self,
-        _e: &quick_xml::events::BytesEnd<'_>,
-        output: &mut Vec<u8>,
-    ) {
+    fn encode_end_tag(&self, _e: &quick_xml::events::BytesEnd<'_>, output: &mut Vec<u8>) {
         // Emit closing tag token: 0x00, FLAG_CLOSING, tag_index
         // The tag_index is consumed but not used by the decoder for closing-only
         // tokens. We use 1 as a placeholder (any non-zero value works).
@@ -467,13 +463,14 @@ impl BinaryEncoder {
         //   resolved = item_path(doc, dir, manifest)
         //
         // So we encode: '\x01' prefix + manifest_id (or raw path if no mapping).
-        let (path_part, fragment) = value.split_once('#').map_or(
-            (value, None),
-            |(p, f)| (p, Some(f)),
-        );
+        let (path_part, fragment) = value
+            .split_once('#')
+            .map_or((value, None), |(p, f)| (p, Some(f)));
 
         // Try to resolve path back to manifest internal ID
-        let target_id = self.href_to_id.get(path_part)
+        let target_id = self
+            .href_to_id
+            .get(path_part)
             .map(|s| s.as_str())
             .unwrap_or(path_part);
 
@@ -544,7 +541,7 @@ struct VfsEntry {
 ///       sized_utf8_string(original_path) +
 ///       sized_utf8_string_zpad(mime_type)
 fn build_manifest(
-    spine_items: &[(String, String, String)],    // (internal_id, path, mime_type)
+    spine_items: &[(String, String, String)], // (internal_id, path, mime_type)
     non_spine_items: &[(String, String, String)], // (internal_id, path, mime_type)
 ) -> Vec<u8> {
     let mut out = Vec::new();
@@ -556,12 +553,7 @@ fn build_manifest(
 
     // 4 states: spine, not spine, css, images
     // For simplicity, put all spine items in "spine" and everything else in "not spine"
-    let states: [&[(String, String, String)]; 4] = [
-        spine_items,
-        non_spine_items,
-        &[],
-        &[],
-    ];
+    let states: [&[(String, String, String)]; 4] = [spine_items, non_spine_items, &[], &[]];
 
     let mut offset_counter: u32 = 0;
     for items in &states {
@@ -736,9 +728,7 @@ fn build_aoll_chunks(entries: &[VfsEntry]) -> Vec<Vec<u8>> {
     let mut chunk_index: i32 = 0;
 
     for encoded in &encoded_entries {
-        if !current_chunk_data.is_empty()
-            && current_chunk_data.len() + encoded.len() > data_area
-        {
+        if !current_chunk_data.is_empty() && current_chunk_data.len() + encoded.len() > data_area {
             // Flush current chunk
             chunks.push(make_aoll_chunk(chunk_index, &current_chunk_data));
             current_chunk_data.clear();
@@ -895,11 +885,7 @@ fn build_container(entries: &[VfsEntry]) -> Vec<u8> {
     let content_offset = piece_data_offset as u64;
 
     // Now build the secondary header with the real content_offset
-    let sec_hdr = build_secondary_header(
-        CHUNK_SIZE as u32,
-        0,
-        content_offset,
-    );
+    let sec_hdr = build_secondary_header(CHUNK_SIZE as u32, 0, content_offset);
 
     // Build piece table
     let piece_table = build_piece_table(&[
@@ -964,11 +950,7 @@ fn build_piece_table(pieces: &[(usize, usize)]) -> Vec<u8> {
 }
 
 /// Build the secondary header containing CAOL and ITSF blocks.
-fn build_secondary_header(
-    chunk_size: u32,
-    _unknown: u32,
-    content_offset: u64,
-) -> Vec<u8> {
+fn build_secondary_header(chunk_size: u32, _unknown: u32, content_offset: u64) -> Vec<u8> {
     let mut out = Vec::new();
 
     // The secondary header starts with a size field and offset-to-first-block
@@ -1068,7 +1050,9 @@ fn generate_opf(
             escape_xml(ident)
         ));
     } else {
-        opf.push_str("      <dc:Identifier id=\"bookid\">urn:uuid:eruditio-generated</dc:Identifier>\n");
+        opf.push_str(
+            "      <dc:Identifier id=\"bookid\">urn:uuid:eruditio-generated</dc:Identifier>\n",
+        );
     }
     for subject in &book.metadata.subjects {
         opf.push_str(&format!(
@@ -1101,22 +1085,12 @@ fn generate_opf(
     // Spine
     opf.push_str("  <spine>\n");
     for id in spine_ids {
-        opf.push_str(&format!(
-            "    <itemref idref=\"{}\" />\n",
-            escape_xml(id)
-        ));
+        opf.push_str(&format!("    <itemref idref=\"{}\" />\n", escape_xml(id)));
     }
     opf.push_str("  </spine>\n");
 
     opf.push_str("</package>\n");
     opf
-}
-
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,7 +1152,7 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
             None => continue,
         };
 
-        let internal_id = format!("{}", item.id);
+        let internal_id = item.id.to_string();
         let content = match item.data.as_text() {
             Some(t) => t.to_string(),
             None => continue,
@@ -1317,7 +1291,8 @@ fn ensure_xhtml(content: &str) -> String {
     let trimmed = content.trim();
 
     // If it already has an <html> tag, assume it's complete XHTML
-    if trimmed.starts_with("<?xml") || trimmed.starts_with("<html") || trimmed.starts_with("<HTML") {
+    if trimmed.starts_with("<?xml") || trimmed.starts_with("<html") || trimmed.starts_with("<HTML")
+    {
         return trimmed.to_string();
     }
 
@@ -1336,9 +1311,9 @@ fn ensure_xhtml(content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::LitReader;
     use super::*;
     use crate::domain::{Book, Chapter, FormatReader};
-    use super::super::LitReader;
 
     #[test]
     fn encode_decint_zero() {
@@ -1441,31 +1416,56 @@ mod tests {
         // Check ITOLITLS header
         assert_eq!(&data[0..8], b"ITOLITLS");
         // Version = 1
-        assert_eq!(u32::from_le_bytes([data[8], data[9], data[10], data[11]]), 1);
+        assert_eq!(
+            u32::from_le_bytes([data[8], data[9], data[10], data[11]]),
+            1
+        );
 
         // Verify the reader can locate the secondary header
         let hdr_len = i32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
         let num_pieces = i32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
         let sec_hdr_len = i32::from_le_bytes([data[20], data[21], data[22], data[23]]) as usize;
 
-        assert_eq!(hdr_len, 40, "hdr_len should be 40 (absolute offset to piece table)");
+        assert_eq!(
+            hdr_len, 40,
+            "hdr_len should be 40 (absolute offset to piece table)"
+        );
         assert_eq!(num_pieces, 5, "should have 5 pieces");
 
         let sec_hdr_offset = hdr_len + num_pieces * 16;
-        assert!(sec_hdr_offset + sec_hdr_len <= data.len(),
+        assert!(
+            sec_hdr_offset + sec_hdr_len <= data.len(),
             "secondary header ({sec_hdr_offset}..{}) should fit in file (len={})",
-            sec_hdr_offset + sec_hdr_len, data.len());
+            sec_hdr_offset + sec_hdr_len,
+            data.len()
+        );
 
         let sec_hdr = &data[sec_hdr_offset..sec_hdr_offset + sec_hdr_len];
         assert!(sec_hdr.len() >= 8, "secondary header too short");
         let off = i32::from_le_bytes([sec_hdr[4], sec_hdr[5], sec_hdr[6], sec_hdr[7]]) as usize;
-        assert!(off + 4 <= sec_hdr.len(), "CAOL offset out of bounds: off={off}, len={}", sec_hdr.len());
-        assert_eq!(&sec_hdr[off..off+4], b"CAOL", "CAOL not at expected offset {off}");
+        assert!(
+            off + 4 <= sec_hdr.len(),
+            "CAOL offset out of bounds: off={off}, len={}",
+            sec_hdr.len()
+        );
+        assert_eq!(
+            &sec_hdr[off..off + 4],
+            b"CAOL",
+            "CAOL not at expected offset {off}"
+        );
 
         // After CAOL (48 bytes), ITSF should follow
         let itsf_off = off + 48;
-        assert!(itsf_off + 4 <= sec_hdr.len(), "ITSF offset out of bounds: off={itsf_off}, len={}", sec_hdr.len());
-        assert_eq!(&sec_hdr[itsf_off..itsf_off+4], b"ITSF", "ITSF not at expected offset {itsf_off}");
+        assert!(
+            itsf_off + 4 <= sec_hdr.len(),
+            "ITSF offset out of bounds: off={itsf_off}, len={}",
+            sec_hdr.len()
+        );
+        assert_eq!(
+            &sec_hdr[itsf_off..itsf_off + 4],
+            b"ITSF",
+            "ITSF not at expected offset {itsf_off}"
+        );
     }
 
     #[test]
@@ -1496,10 +1496,7 @@ mod tests {
         let read_book = reader.read_book(&mut cursor).unwrap();
 
         // Verify metadata
-        assert_eq!(
-            read_book.metadata.title.as_deref(),
-            Some("Round Trip Test")
-        );
+        assert_eq!(read_book.metadata.title.as_deref(), Some("Round Trip Test"));
         assert_eq!(read_book.metadata.authors, vec!["Test Author"]);
         assert_eq!(read_book.metadata.language.as_deref(), Some("en"));
 
@@ -1543,10 +1540,7 @@ mod tests {
         let mut cursor = std::io::Cursor::new(data);
         let read_book = reader.read_book(&mut cursor).unwrap();
 
-        assert_eq!(
-            read_book.metadata.title.as_deref(),
-            Some("Resource Test")
-        );
+        assert_eq!(read_book.metadata.title.as_deref(), Some("Resource Test"));
         let chapters = read_book.chapters();
         assert_eq!(chapters.len(), 1);
     }

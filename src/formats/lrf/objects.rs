@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use std::io::Read as IoRead;
 
 use super::header::{read_u16_le, read_u32_le};
-use super::tags::{self, Tag, TAG_CONTAINED_OBJECTS, TAG_LINK, TAG_OBJECT_START, TAG_STREAM_END,
-    TAG_STREAM_FLAGS, TAG_STREAM_SIZE, TAG_STREAM_START};
+use super::tags::{
+    self, TAG_CONTAINED_OBJECTS, TAG_LINK, TAG_OBJECT_START, TAG_STREAM_END, TAG_STREAM_FLAGS,
+    TAG_STREAM_SIZE, TAG_STREAM_START, Tag,
+};
 
 /// Stream flag bits.
 const STREAM_COMPRESSED: u16 = 0x100;
@@ -105,7 +107,8 @@ impl LrfObject {
 
     /// Returns the linked object ID (from Link tag), if present.
     pub fn link_id(&self) -> Option<u32> {
-        self.tags.iter()
+        self.tags
+            .iter()
             .find(|t| t.id == TAG_LINK)
             .map(|t| t.as_u32())
     }
@@ -143,7 +146,7 @@ pub fn parse_objects(
         match parse_single_object(data, obj_offset, obj_size, xor_key) {
             Ok(obj) => {
                 objects.insert(obj_id, obj);
-            }
+            },
             Err(_) => continue, // Skip unparseable objects.
         }
     }
@@ -152,12 +155,7 @@ pub fn parse_objects(
 }
 
 /// Parses a single object from its byte range.
-fn parse_single_object(
-    data: &[u8],
-    offset: usize,
-    size: usize,
-    xor_key: u16,
-) -> Result<LrfObject> {
+fn parse_single_object(data: &[u8], offset: usize, size: usize, xor_key: u16) -> Result<LrfObject> {
     let obj_data = &data[offset..offset + size];
 
     // Parse tags from the object data.
@@ -207,8 +205,8 @@ fn parse_single_object(
                 while i < all_tags.len() && all_tags[i].id != TAG_STREAM_END {
                     i += 1;
                 }
-            }
-            TAG_STREAM_END => {}
+            },
+            TAG_STREAM_END => {},
             _ => non_stream_tags.push(tag.clone()),
         }
         i += 1;
@@ -240,12 +238,7 @@ fn extract_stream_bytes(obj_data: &[u8], size: usize) -> Option<Vec<u8>> {
 }
 
 /// Descrambles and decompresses a stream according to its flags.
-fn process_stream(
-    raw: &[u8],
-    flags: u16,
-    xor_key: u16,
-    is_media: bool,
-) -> Result<Vec<u8>> {
+fn process_stream(raw: &[u8], flags: u16, xor_key: u16, is_media: bool) -> Result<Vec<u8>> {
     let mut buf = raw.to_vec();
 
     // Step 1: Descramble if flag 0x200 is set.
@@ -389,10 +382,7 @@ mod tests {
         // Entry: refpage=1, refobj=2, label="Ch1" (UTF-16LE)
         stream.extend_from_slice(&1u32.to_le_bytes());
         stream.extend_from_slice(&2u32.to_le_bytes());
-        let label_utf16: Vec<u8> = "Ch1"
-            .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
-            .collect();
+        let label_utf16: Vec<u8> = "Ch1".encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
         stream.extend_from_slice(&(label_utf16.len() as u16).to_le_bytes());
         stream.extend_from_slice(&label_utf16);
 

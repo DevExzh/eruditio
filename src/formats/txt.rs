@@ -16,7 +16,9 @@ impl TxtReader {
 impl FormatReader for TxtReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader.read_to_string(&mut contents).map_err(EruditioError::Io)?;
+        reader
+            .read_to_string(&mut contents)
+            .map_err(EruditioError::Io)?;
 
         let mut book = Book::new();
 

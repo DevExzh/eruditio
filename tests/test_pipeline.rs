@@ -71,7 +71,10 @@ fn epub_to_epub_with_all_transforms() {
     let decoded = pipeline
         .read(Format::Epub, &mut verify_cursor, &ConversionOptions::none())
         .expect("read back EPUB");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
 }
 
 #[test]
@@ -99,14 +102,22 @@ fn fb2_to_epub_conversion() {
         .expect("convert FB2 → EPUB");
 
     assert_eq!(result.metadata.title.as_deref(), Some("Pipeline Test Book"));
-    assert!(result.metadata.authors.contains(&"Alice Author".to_string()));
+    assert!(
+        result
+            .metadata
+            .authors
+            .contains(&"Alice Author".to_string())
+    );
 
     // Verify EPUB output is readable.
     let mut verify = Cursor::new(epub_buf);
     let decoded = pipeline
         .read(Format::Epub, &mut verify, &ConversionOptions::none())
         .expect("read back EPUB");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
     assert!(!decoded.chapters().is_empty());
 }
 
@@ -183,7 +194,10 @@ fn mobi_to_epub_conversion() {
     let decoded = pipeline
         .read(Format::Epub, &mut verify, &ConversionOptions::none())
         .expect("read back EPUB");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
     assert!(!decoded.chapters().is_empty());
 }
 
@@ -218,7 +232,10 @@ fn epub_to_fb2_conversion() {
     let decoded = pipeline
         .read(Format::Fb2, &mut verify, &ConversionOptions::none())
         .expect("read back FB2");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
 }
 
 #[test]
@@ -366,7 +383,10 @@ fn three_hop_conversion_fb2_epub_mobi() {
     let decoded = pipeline
         .read(Format::Mobi, &mut mobi_verify, &ConversionOptions::none())
         .expect("read back MOBI");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
     assert!(!decoded.chapters().is_empty());
 }
 
@@ -395,14 +415,22 @@ fn rtf_to_epub_conversion() {
         .expect("convert RTF → EPUB");
 
     assert_eq!(result.metadata.title.as_deref(), Some("Pipeline Test Book"));
-    assert!(result.metadata.authors.contains(&"Alice Author".to_string()));
+    assert!(
+        result
+            .metadata
+            .authors
+            .contains(&"Alice Author".to_string())
+    );
 
     // Verify EPUB output is readable.
     let mut verify = Cursor::new(epub_buf);
     let decoded = pipeline
         .read(Format::Epub, &mut verify, &ConversionOptions::none())
         .expect("read back EPUB");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
     assert!(!decoded.chapters().is_empty());
 }
 
@@ -437,7 +465,10 @@ fn epub_to_rtf_conversion() {
     let decoded = pipeline
         .read(Format::Rtf, &mut verify, &ConversionOptions::none())
         .expect("read back RTF");
-    assert_eq!(decoded.metadata.title.as_deref(), Some("Pipeline Test Book"));
+    assert_eq!(
+        decoded.metadata.title.as_deref(),
+        Some("Pipeline Test Book")
+    );
     assert!(!decoded.chapters().is_empty());
 }
 

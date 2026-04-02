@@ -20,14 +20,18 @@ fn main() {
             println!("  Chapters:  {}", book.chapters().len());
             println!("  Resources: {}", book.resources().len());
             for (i, ch) in book.chapters().iter().enumerate().take(3) {
-                let preview: String =
-                    ch.content.chars().filter(|c| !c.is_control()).take(200).collect();
+                let preview: String = ch
+                    .content
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(200)
+                    .collect();
                 println!("  Ch{i}: {preview}...");
             }
-        }
+        },
         Err(e) => {
             eprintln!("ERROR: {e}");
             std::process::exit(1);
-        }
+        },
     }
 }

@@ -1,7 +1,7 @@
 use crate::domain::TocItem;
 use crate::error::{EruditioError, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 
 /// Parses an NCX document's `<navMap>` into a hierarchical list of `TocItem`s.
 pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
@@ -38,8 +38,8 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                                 "id" => id = Some(val.into_owned()),
                                 "playOrder" => {
                                     play_order = val.parse::<u32>().ok();
-                                }
-                                _ => {}
+                                },
+                                _ => {},
                             }
                         }
 
@@ -51,12 +51,12 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                             item = item.with_play_order(order);
                         }
                         stack.push(item);
-                    }
+                    },
                     "navLabel" if in_nav_map => in_nav_label = true,
                     "text" if in_nav_label => {
                         collecting_text = true;
                         current_text.clear();
-                    }
+                    },
                     "content" if in_nav_map && !stack.is_empty() => {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"src" {
@@ -66,10 +66,10 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                                 }
                             }
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Empty(ref e)) => {
                 let tag = local_tag(e.name().as_ref());
                 if tag == "content" && in_nav_map && !stack.is_empty() {
@@ -82,13 +82,12 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                         }
                     }
                 }
-            }
+            },
             Ok(Event::Text(ref e)) => {
                 if collecting_text {
-                    current_text
-                        .push_str(&String::from_utf8_lossy(&e.clone().into_inner()));
+                    current_text.push_str(&String::from_utf8_lossy(&e.clone().into_inner()));
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 let tag = local_tag(e.name().as_ref());
                 match tag.as_str() {
@@ -101,20 +100,20 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                                 roots.push(finished);
                             }
                         }
-                    }
+                    },
                     "navLabel" => in_nav_label = false,
                     "text" if in_nav_label => {
                         collecting_text = false;
                         if let Some(item) = stack.last_mut() {
                             item.title = current_text.clone();
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(EruditioError::Parse(format!("NCX XML error: {}", e))),
-            _ => {}
+            _ => {},
         }
         buf.clear();
     }

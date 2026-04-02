@@ -1,6 +1,6 @@
 use crate::error::{EruditioError, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 use std::io::{Read, Seek};
 use zip::ZipArchive;
 
@@ -9,7 +9,7 @@ pub fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Stri
     let mut container_file = archive
         .by_name("META-INF/container.xml")
         .map_err(|_| EruditioError::Format("Missing META-INF/container.xml".to_string()))?;
-        
+
     let mut contents = String::new();
     container_file
         .read_to_string(&mut contents)
@@ -27,14 +27,12 @@ pub fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<Stri
                 if e.name().as_ref() == b"rootfile" {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"full-path" {
-                            opf_path = Some(
-                                String::from_utf8_lossy(&attr.value).into_owned(),
-                            );
+                            opf_path = Some(String::from_utf8_lossy(&attr.value).into_owned());
                             break;
                         }
                     }
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(EruditioError::Parse(format!("XML error: {}", e))),
             _ => (),

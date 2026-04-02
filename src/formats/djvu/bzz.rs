@@ -227,7 +227,7 @@ impl<'a> BzzDecoder<'a> {
                         ));
                     }
                     0xFF
-                }
+                },
             };
             self.bufint = (self.bufint << 8) | byte;
             self.scount += 8;
@@ -268,8 +268,7 @@ impl<'a> BzzDecoder<'a> {
             // MPS branch
             self.scount -= 1;
             self.a = (z << 1) & 0xFFFF;
-            self.code =
-                ((self.code << 1) | ((self.bufint >> self.scount as u32) & 1)) & 0xFFFF;
+            self.code = ((self.code << 1) | ((self.bufint >> self.scount as u32) & 1)) & 0xFFFF;
             if self.scount < 16 {
                 self.preload()?;
             }
@@ -314,8 +313,7 @@ impl<'a> BzzDecoder<'a> {
             }
             self.scount -= 1;
             self.a = (z << 1) & 0xFFFF;
-            self.code =
-                ((self.code << 1) | ((self.bufint >> self.scount as u32) & 1)) & 0xFFFF;
+            self.code = ((self.code << 1) | ((self.bufint >> self.scount as u32) & 1)) & 0xFFFF;
             if self.scount < 16 {
                 self.preload()?;
             }
@@ -464,7 +462,9 @@ impl<'a> BzzDecoder<'a> {
         })?;
 
         if markerpos < 1 || markerpos >= xsize {
-            return Err(EruditioError::Format("BZZ: corrupt block — invalid marker".into()));
+            return Err(EruditioError::Format(
+                "BZZ: corrupt block — invalid marker".into(),
+            ));
         }
 
         // Build position chain
@@ -502,7 +502,9 @@ impl<'a> BzzDecoder<'a> {
         }
 
         if idx != markerpos {
-            return Err(EruditioError::Format("BZZ: corrupt block — BWT verify failed".into()));
+            return Err(EruditioError::Format(
+                "BZZ: corrupt block — BWT verify failed".into(),
+            ));
         }
 
         Ok(Some(outbuf))

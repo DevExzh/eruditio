@@ -35,11 +35,11 @@ pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
             b'{' => {
                 tokens.push(RtfToken::GroupStart);
                 pos += 1;
-            }
+            },
             b'}' => {
                 tokens.push(RtfToken::GroupEnd);
                 pos += 1;
-            }
+            },
             b'\\' => {
                 pos += 1;
                 if pos >= len {
@@ -57,12 +57,12 @@ pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
                             }
                             pos += 2;
                         }
-                    }
+                    },
                     // Control symbols: \\ \{ \} \~ \- \_
                     c @ (b'\\' | b'{' | b'}' | b'~' | b'-' | b'_' | b'*') => {
                         tokens.push(RtfToken::ControlSymbol(c as char));
                         pos += 1;
-                    }
+                    },
                     // Newline after backslash = \par equivalent
                     b'\n' | b'\r' => {
                         tokens.push(RtfToken::ControlWord {
@@ -74,7 +74,7 @@ pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
                         if pos < len && input[pos] == b'\n' {
                             pos += 1;
                         }
-                    }
+                    },
                     // Control word: letters followed by optional numeric parameter.
                     c if c.is_ascii_alphabetic() => {
                         let (name, param, new_pos) = read_control_word(input, pos);
@@ -94,34 +94,34 @@ pub fn tokenize(input: &[u8]) -> Vec<RtfToken> {
                             tokens.push(RtfToken::ControlWord { name, param });
                             pos = new_pos;
                         }
-                    }
+                    },
                     _ => {
                         // Unknown control symbol — treat as symbol.
                         tokens.push(RtfToken::ControlSymbol(input[pos] as char));
                         pos += 1;
-                    }
+                    },
                 }
-            }
+            },
             b'\n' | b'\r' => {
                 // Bare newlines are ignored in RTF.
                 pos += 1;
-            }
+            },
             _ => {
                 // Plain text — collect until we hit a control character.
                 let start = pos;
                 let remaining = &input[pos..len];
                 // Find next structural delimiter (\ { })
-                let struct_end = memchr::memchr3(b'\\', b'{', b'}', remaining)
-                    .unwrap_or(remaining.len());
+                let struct_end =
+                    memchr::memchr3(b'\\', b'{', b'}', remaining).unwrap_or(remaining.len());
                 // Also check for newlines within that range
-                let nl_end = memchr::memchr2(b'\n', b'\r', &remaining[..struct_end])
-                    .unwrap_or(struct_end);
+                let nl_end =
+                    memchr::memchr2(b'\n', b'\r', &remaining[..struct_end]).unwrap_or(struct_end);
                 pos += struct_end.min(nl_end);
                 let text = String::from_utf8_lossy(&input[start..pos]).to_string();
                 if !text.is_empty() {
                     tokens.push(RtfToken::Text(text));
                 }
-            }
+            },
         }
     }
 
@@ -174,7 +174,11 @@ fn skip_unicode_replacement(input: &[u8], mut pos: usize) -> usize {
     // Skip a hex escape (\'HH = 3 bytes), a control word, or a single byte.
     if pos + 2 < len && input[pos] == b'\\' && input[pos + 1] == b'\'' {
         pos += 4; // \' + HH
-    } else if pos < len && input[pos] == b'\\' && pos + 1 < len && input[pos + 1].is_ascii_alphabetic() {
+    } else if pos < len
+        && input[pos] == b'\\'
+        && pos + 1 < len
+        && input[pos + 1].is_ascii_alphabetic()
+    {
         // Skip control word replacement.
         pos += 1;
         while pos < len && input[pos].is_ascii_alphabetic() {
@@ -294,9 +298,15 @@ mod tests {
             tokens,
             vec![
                 RtfToken::GroupStart,
-                RtfToken::ControlWord { name: "b".into(), param: None },
+                RtfToken::ControlWord {
+                    name: "b".into(),
+                    param: None
+                },
                 RtfToken::Text("Bold".into()),
-                RtfToken::ControlWord { name: "b".into(), param: Some(0) },
+                RtfToken::ControlWord {
+                    name: "b".into(),
+                    param: Some(0)
+                },
                 RtfToken::Text(" text".into()),
                 RtfToken::GroupEnd,
             ]
@@ -306,7 +316,13 @@ mod tests {
     #[test]
     fn skips_bare_newlines() {
         let tokens = tokenize(b"Hello\r\nWorld");
-        assert_eq!(tokens, vec![RtfToken::Text("Hello".into()), RtfToken::Text("World".into())]);
+        assert_eq!(
+            tokens,
+            vec![
+                RtfToken::Text("Hello".into()),
+                RtfToken::Text("World".into())
+            ]
+        );
     }
 
     #[test]
@@ -316,7 +332,10 @@ mod tests {
         assert_eq!(tokens[0], RtfToken::GroupStart);
         assert_eq!(
             tokens[1],
-            RtfToken::ControlWord { name: "rtf".into(), param: Some(1) }
+            RtfToken::ControlWord {
+                name: "rtf".into(),
+                param: Some(1)
+            }
         );
     }
 }

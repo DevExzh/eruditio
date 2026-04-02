@@ -1,7 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use eruditio::domain::FormatWriter;
 use eruditio::domain::{Book, Chapter};
 use eruditio::formats::mobi::MobiWriter;
-use eruditio::domain::FormatWriter;
 use std::io::Cursor;
 
 fn make_book(num_chapters: usize, chapter_size: usize) -> Book {

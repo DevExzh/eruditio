@@ -1,7 +1,7 @@
-use eruditio::domain::{Book, Chapter};
-use eruditio::formats::{EpubReader, EpubWriter};
 use eruditio::domain::FormatReader;
 use eruditio::domain::FormatWriter;
+use eruditio::domain::{Book, Chapter};
+use eruditio::formats::{EpubReader, EpubWriter};
 use std::io::Cursor;
 
 #[test]
@@ -78,9 +78,7 @@ fn epub_round_trip_single_chapter() {
         .expect("write");
 
     let mut cursor = Cursor::new(epub_bytes);
-    let decoded = EpubReader::new()
-        .read_book(&mut cursor)
-        .expect("read");
+    let decoded = EpubReader::new().read_book(&mut cursor).expect("read");
 
     assert_eq!(decoded.metadata.title.as_deref(), Some("Minimal"));
     assert_eq!(decoded.chapters().len(), 1);

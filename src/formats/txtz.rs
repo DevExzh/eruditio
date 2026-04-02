@@ -33,7 +33,9 @@ impl FormatReader for TxtzReader {
             .map_err(|_| EruditioError::Format(format!("Failed to read {}", txt_name)))?;
 
         let mut contents = Vec::new();
-        txt_file.read_to_end(&mut contents).map_err(EruditioError::Io)?;
+        txt_file
+            .read_to_end(&mut contents)
+            .map_err(EruditioError::Io)?;
 
         let mut cursor = Cursor::new(contents);
         TxtReader::new().read_book(&mut cursor)

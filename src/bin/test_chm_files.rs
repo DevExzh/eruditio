@@ -18,11 +18,7 @@ fn main() {
     let mut entries: Vec<_> = fs::read_dir(dir)
         .expect("read dir")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "chm")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "chm"))
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
@@ -46,7 +42,7 @@ fn main() {
                 println!("  ERROR: Could not read file: {}", e);
                 fail += 1;
                 continue;
-            }
+            },
         };
 
         // Check ITSF magic
@@ -77,26 +73,29 @@ fn main() {
 
                 // Preview first chapter
                 if let Some(ch) = book.chapters().first() {
-                    let preview: String = ch.content
+                    let preview: String = ch
+                        .content
                         .chars()
                         .filter(|c| !c.is_control())
                         .take(200)
                         .collect();
                     println!("  Preview:   {}...", preview.trim());
                 }
-            }
+            },
             Err(e) => {
                 let elapsed = start.elapsed();
                 fail += 1;
                 println!("  FAIL ({:.1}ms): {}", elapsed.as_secs_f64() * 1000.0, e);
-            }
+            },
         }
     }
 
     println!("\n{}", "=".repeat(80));
     println!(
         "Results: {} success, {} failed (out of {} files)",
-        success, fail, entries.len()
+        success,
+        fail,
+        entries.len()
     );
     println!("{}", "=".repeat(80));
 }

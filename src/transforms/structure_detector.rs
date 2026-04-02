@@ -1,8 +1,8 @@
 //! Detects chapter structure from heading tags in content.
 
 use crate::domain::Book;
-use crate::domain::traits::Transform;
 use crate::domain::toc::TocItem;
+use crate::domain::traits::Transform;
 use crate::error::Result;
 
 /// Detects chapter structure by scanning content for heading tags (h1-h3).
@@ -16,13 +16,13 @@ impl Transform for StructureDetector {
         "structure_detector"
     }
 
-    fn apply(&self, book: &Book) -> Result<Book> {
+    fn apply(&self, book: Book) -> Result<Book> {
         // Only generate structure if TOC is empty.
         if !book.toc.is_empty() {
-            return Ok(book.clone());
+            return Ok(book);
         }
 
-        let mut result = book.clone();
+        let mut result = book;
         let mut toc_entries = Vec::new();
 
         for spine_item in result.spine.iter() {
@@ -129,7 +129,7 @@ mod tests {
         book.toc.clear();
 
         let detector = StructureDetector;
-        let result = detector.apply(&book).unwrap();
+        let result = detector.apply(book).unwrap();
 
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].title, "Introduction");
@@ -145,7 +145,7 @@ mod tests {
         });
 
         let detector = StructureDetector;
-        let result = detector.apply(&book).unwrap();
+        let result = detector.apply(book).unwrap();
 
         // TOC already had entries from add_chapter, so it should be unchanged.
         assert_eq!(result.toc.len(), 1);

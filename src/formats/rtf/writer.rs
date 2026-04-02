@@ -135,8 +135,10 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
             write_rtf_char(rtf, ch);
             pos += consumed;
         } else {
-            // Regular character.
-            let ch = html[pos..].chars().next().unwrap();
+            // Regular character — decode full UTF-8 codepoint.
+            let Some(ch) = html[pos..].chars().next() else {
+                break;
+            };
             write_rtf_char(rtf, ch);
             pos += ch.len_utf8();
         }
@@ -200,7 +202,7 @@ fn write_rtf_char(rtf: &mut String, ch: char) {
         c if c as u32 > 127 => {
             // Unicode character: \uN followed by ? as replacement.
             rtf.push_str(&format!("\\u{}?", c as i32));
-        }
+        },
         c => rtf.push(c),
     }
 }

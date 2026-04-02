@@ -33,7 +33,7 @@ pub fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
             Some(0) => {
                 // 0xF5 at the very start of remaining data — skip it.
                 pos += 1;
-            }
+            },
             Some(rel_offset) => {
                 let abs_marker = pos + rel_offset;
                 // The tag starts one byte before the 0xF5 marker.
@@ -53,13 +53,13 @@ pub fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
                     Ok((tag, new_pos)) => {
                         tokens.push(TextToken::Tag(tag));
                         pos = new_pos;
-                    }
+                    },
                     Err(_) => {
                         // Not a valid tag — treat the 0xF5 as part of text and skip.
                         pos = abs_marker + 1;
-                    }
+                    },
                 }
-            }
+            },
             None => {
                 // No more tags — rest is text.
                 if pos < stream.len() {
@@ -69,7 +69,7 @@ pub fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
                     }
                 }
                 break;
-            }
+            },
         }
     }
 
@@ -85,7 +85,7 @@ pub fn tokens_to_html(tokens: &[TextToken]) -> String {
         match token {
             TextToken::Text(text) => {
                 html.push_str(&html_escape(text));
-            }
+            },
             TextToken::Tag(tag) => {
                 match tag.id {
                     TAG_TEXT_P_START => {
@@ -94,16 +94,16 @@ pub fn tokens_to_html(tokens: &[TextToken]) -> String {
                         }
                         html.push_str("<p>");
                         in_para = true;
-                    }
+                    },
                     TAG_TEXT_P_END => {
                         if in_para {
                             html.push_str("</p>\n");
                             in_para = false;
                         }
-                    }
+                    },
                     TAG_TEXT_CR => {
                         html.push_str("<br />");
-                    }
+                    },
                     TAG_TEXT_ITALIC_START => html.push_str("<i>"),
                     TAG_TEXT_ITALIC_END => html.push_str("</i>"),
                     TAG_TEXT_SUP_START => html.push_str("<sup>"),
@@ -118,7 +118,7 @@ pub fn tokens_to_html(tokens: &[TextToken]) -> String {
                         // Link: 4-byte refobj ID in payload.
                         let refobj = tag.as_u32();
                         html.push_str(&format!("<a href=\"#obj_{}\">", refobj));
-                    }
+                    },
                     TAG_TEXT_CHAR_BUTTON_END => html.push_str("</a>"),
                     TAG_TEXT_PLOT => {
                         // Inline image: u16 xsize, u16 ysize, u32 refobj, u32 adjustment.
@@ -133,29 +133,28 @@ pub fn tokens_to_html(tokens: &[TextToken]) -> String {
                             ]);
                             html.push_str(&format!("<img src=\"#obj_{}\" />", refobj));
                         }
-                    }
+                    },
                     TAG_TEXT_CR_GRAPH => {
                         // Inline text block: u16 length, then UTF-16LE.
                         let text = tag.as_string();
                         html.push_str(&html_escape(&text));
-                    }
+                    },
                     TAG_TEXT_SPACE => {
                         html.push(' ');
-                    }
+                    },
                     // Style span tags — apply inline styles.
-                    TAG_FONT_SIZE | TAG_FONT_WEIGHT | TAG_FONT_FACE
-                    | TAG_TEXT_COLOR | TAG_TEXT_BG_COLOR | TAG_LINE_SPACE
-                    | TAG_PAR_INDENT | TAG_ALIGN => {
+                    TAG_FONT_SIZE | TAG_FONT_WEIGHT | TAG_FONT_FACE | TAG_TEXT_COLOR
+                    | TAG_TEXT_BG_COLOR | TAG_LINE_SPACE | TAG_PAR_INDENT | TAG_ALIGN => {
                         // Emit a span with the style attribute.
                         if let Some(css) = tag_to_css(tag) {
                             html.push_str(&format!("<span style=\"{}\">", css));
                         }
-                    }
+                    },
                     _ => {
                         // Unknown tag — ignore silently.
-                    }
+                    },
                 }
-            }
+            },
         }
     }
 
@@ -179,7 +178,7 @@ fn tag_to_css(tag: &Tag) -> Option<String> {
             // LRF font sizes are in 1/10 pt.
             let pt = size as f32 / 10.0;
             Some(format!("font-size: {:.1}pt", pt))
-        }
+        },
         TAG_FONT_WEIGHT => {
             let weight = tag.as_u16();
             if weight >= 700 {
@@ -187,19 +186,19 @@ fn tag_to_css(tag: &Tag) -> Option<String> {
             } else {
                 Some("font-weight: normal".into())
             }
-        }
+        },
         TAG_FONT_FACE => {
             let face = tag.as_string();
             Some(format!("font-family: '{}'", face))
-        }
+        },
         TAG_TEXT_COLOR => {
             let (r, g, b) = decode_lrf_color(tag.as_u32());
             Some(format!("color: rgb({},{},{})", r, g, b))
-        }
+        },
         TAG_TEXT_BG_COLOR => {
             let (r, g, b) = decode_lrf_color(tag.as_u32());
             Some(format!("background-color: rgb({},{},{})", r, g, b))
-        }
+        },
         TAG_ALIGN => {
             let align = tag.as_u16();
             let name = match align {
@@ -209,12 +208,12 @@ fn tag_to_css(tag: &Tag) -> Option<String> {
                 _ => "left",
             };
             Some(format!("text-align: {}", name))
-        }
+        },
         TAG_PAR_INDENT => {
             let indent = tag.as_i16();
             let pt = indent as f32 / 10.0;
             Some(format!("text-indent: {:.1}pt", pt))
-        }
+        },
         _ => None,
     }
 }
@@ -285,9 +284,15 @@ mod tests {
     #[test]
     fn tokens_to_html_paragraph() {
         let tokens = vec![
-            TextToken::Tag(Tag { id: TAG_TEXT_P_START, contents: vec![0; 6] }),
+            TextToken::Tag(Tag {
+                id: TAG_TEXT_P_START,
+                contents: vec![0; 6],
+            }),
             TextToken::Text("Hello world".into()),
-            TextToken::Tag(Tag { id: TAG_TEXT_P_END, contents: vec![] }),
+            TextToken::Tag(Tag {
+                id: TAG_TEXT_P_END,
+                contents: vec![],
+            }),
         ];
         let html = tokens_to_html(&tokens);
         assert!(html.contains("<p>Hello world</p>"));
@@ -296,12 +301,24 @@ mod tests {
     #[test]
     fn tokens_to_html_italic() {
         let tokens = vec![
-            TextToken::Tag(Tag { id: TAG_TEXT_P_START, contents: vec![0; 6] }),
+            TextToken::Tag(Tag {
+                id: TAG_TEXT_P_START,
+                contents: vec![0; 6],
+            }),
             TextToken::Text("Normal ".into()),
-            TextToken::Tag(Tag { id: TAG_TEXT_ITALIC_START, contents: vec![] }),
+            TextToken::Tag(Tag {
+                id: TAG_TEXT_ITALIC_START,
+                contents: vec![],
+            }),
             TextToken::Text("italic".into()),
-            TextToken::Tag(Tag { id: TAG_TEXT_ITALIC_END, contents: vec![] }),
-            TextToken::Tag(Tag { id: TAG_TEXT_P_END, contents: vec![] }),
+            TextToken::Tag(Tag {
+                id: TAG_TEXT_ITALIC_END,
+                contents: vec![],
+            }),
+            TextToken::Tag(Tag {
+                id: TAG_TEXT_P_END,
+                contents: vec![],
+            }),
         ];
         let html = tokens_to_html(&tokens);
         assert!(html.contains("Normal <i>italic</i>"));

@@ -37,13 +37,13 @@ impl FormatReader for MdReader {
         let mut book = Book::new();
 
         // Try to extract a title from the first H1 heading.
-        if let Some(start) = html.find("<h1") {
-            if let Some(gt) = html[start..].find('>') {
-                let after = start + gt + 1;
-                if let Some(end) = html[after..].find("</h1>") {
-                    let title = &html[after..after + end];
-                    book.metadata.title = Some(title.to_string());
-                }
+        if let Some(start) = html.find("<h1")
+            && let Some(gt) = html[start..].find('>')
+        {
+            let after = start + gt + 1;
+            if let Some(end) = html[after..].find("</h1>") {
+                let title = &html[after..after + end];
+                book.metadata.title = Some(title.to_string());
             }
         }
 
@@ -124,27 +124,31 @@ fn html_to_markdown(html: &str, md: &mut String) {
             } else if tag.starts_with("</h") && tag.len() >= 5 {
                 md.push_str("\n\n");
                 at_line_start = true;
-            } else if tag == "<strong>" || tag == "<b>"
-                || tag.starts_with("<strong ") || tag.starts_with("<b ")
+            } else if tag == "<strong>"
+                || tag == "<b>"
+                || tag.starts_with("<strong ")
+                || tag.starts_with("<b ")
+                || tag == "</strong>"
+                || tag == "</b>"
             {
                 md.push_str("**");
-            } else if tag == "</strong>" || tag == "</b>" {
-                md.push_str("**");
-            } else if tag == "<em>" || tag == "<i>"
-                || tag.starts_with("<em ") || tag.starts_with("<i ")
+            } else if tag == "<em>"
+                || tag == "<i>"
+                || tag.starts_with("<em ")
+                || tag.starts_with("<i ")
+                || tag == "</em>"
+                || tag == "</i>"
             {
                 md.push('*');
-            } else if tag == "</em>" || tag == "</i>" {
-                md.push('*');
-            } else if tag == "<s>" || tag == "<del>" || tag == "<strike>" {
+            } else if tag == "<s>"
+                || tag == "<del>"
+                || tag == "<strike>"
+                || tag == "</s>"
+                || tag == "</del>"
+                || tag == "</strike>"
+            {
                 md.push_str("~~");
-            } else if tag == "</s>" || tag == "</del>" || tag == "</strike>" {
-                md.push_str("~~");
-            } else if tag == "<code>" {
-                if !in_pre {
-                    md.push('`');
-                }
-            } else if tag == "</code>" {
+            } else if tag == "<code>" || tag == "</code>" {
                 if !in_pre {
                     md.push('`');
                 }
@@ -177,8 +181,7 @@ fn html_to_markdown(html: &str, md: &mut String) {
                     }
                 }
                 at_line_start = true;
-            } else if tag == "<hr>" || tag == "<hr/>" || tag == "<hr />"
-                || tag.starts_with("<hr ")
+            } else if tag == "<hr>" || tag == "<hr/>" || tag == "<hr />" || tag.starts_with("<hr ")
             {
                 ensure_newline(md);
                 md.push_str("\n---\n\n");
@@ -244,7 +247,9 @@ fn html_to_markdown(html: &str, md: &mut String) {
             pos += consumed;
             at_line_start = false;
         } else {
-            let ch = html[pos..].chars().next().unwrap();
+            let Some(ch) = html[pos..].chars().next() else {
+                break;
+            };
             if in_pre {
                 md.push(ch);
             } else if ch.is_whitespace() {
@@ -317,21 +322,18 @@ fn decode_md_entity(html: &str, pos: usize) -> (char, usize) {
         }
     }
     if rest.starts_with("&#x") || rest.starts_with("&#X") {
-        if let Some(semi) = rest[..rest.len().min(12)].find(';') {
-            if let Ok(code) = u32::from_str_radix(&rest[3..semi], 16) {
-                if let Some(ch) = char::from_u32(code) {
-                    return (ch, semi + 1);
-                }
-            }
+        if let Some(semi) = rest[..rest.len().min(12)].find(';')
+            && let Ok(code) = u32::from_str_radix(&rest[3..semi], 16)
+            && let Some(ch) = char::from_u32(code)
+        {
+            return (ch, semi + 1);
         }
-    } else if rest.starts_with("&#") {
-        if let Some(semi) = rest[..rest.len().min(12)].find(';') {
-            if let Ok(code) = rest[2..semi].parse::<u32>() {
-                if let Some(ch) = char::from_u32(code) {
-                    return (ch, semi + 1);
-                }
-            }
-        }
+    } else if rest.starts_with("&#")
+        && let Some(semi) = rest[..rest.len().min(12)].find(';')
+        && let Ok(code) = rest[2..semi].parse::<u32>()
+        && let Some(ch) = char::from_u32(code)
+    {
+        return (ch, semi + 1);
     }
     ('&', 1)
 }

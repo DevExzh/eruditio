@@ -3,8 +3,8 @@ use crate::domain::{
     SpineItem,
 };
 use crate::error::{EruditioError, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 use std::io::{Read, Seek};
 use zip::ZipArchive;
 
@@ -19,10 +19,7 @@ pub struct OpfData {
 }
 
 /// Parses the OPF package document from the EPUB archive.
-pub fn parse_opf<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
-    opf_path: &str,
-) -> Result<OpfData> {
+pub fn parse_opf<R: Read + Seek>(archive: &mut ZipArchive<R>, opf_path: &str) -> Result<OpfData> {
     let mut opf_file = archive
         .by_name(opf_path)
         .map_err(|_| EruditioError::Format(format!("OPF file {} not found", opf_path)))?;
@@ -65,48 +62,47 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                     "spine" => {
                         section = Section::Spine;
                         parse_spine_attrs(e, &mut data);
-                    }
+                    },
                     "guide" => section = Section::Guide,
                     "item" if section == Section::Manifest => {
                         parse_manifest_item(e, &mut data.manifest);
-                    }
+                    },
                     "itemref" if section == Section::Spine => {
                         parse_spine_itemref(e, &mut data.spine);
-                    }
+                    },
                     "reference" if section == Section::Guide => {
                         parse_guide_ref(e, &mut data.guide);
-                    }
+                    },
                     _ if section == Section::Metadata => {
                         current_dc_tag = tag;
                         current_text.clear();
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Empty(ref e)) => {
                 let tag = local_tag_name(e.name().as_ref());
                 match tag.as_str() {
                     "item" if section == Section::Manifest => {
                         parse_manifest_item(e, &mut data.manifest);
-                    }
+                    },
                     "itemref" if section == Section::Spine => {
                         parse_spine_itemref(e, &mut data.spine);
-                    }
+                    },
                     "reference" if section == Section::Guide => {
                         parse_guide_ref(e, &mut data.guide);
-                    }
+                    },
                     "meta" if section == Section::Metadata => {
                         parse_meta_element(e, &mut data.metadata, &mut cover_meta_id);
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Text(ref e)) => {
                 if section == Section::Metadata && !current_dc_tag.is_empty() {
-                    current_text =
-                        String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                    current_text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 let tag = local_tag_name(e.name().as_ref());
                 match tag.as_str() {
@@ -115,13 +111,13 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
                         current_dc_tag.clear();
                         current_text.clear();
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(EruditioError::Parse(format!("OPF XML error: {}", e))),
-            _ => {}
+            _ => {},
         }
         buf.clear();
     }
@@ -176,8 +172,8 @@ fn parse_spine_attrs(e: &quick_xml::events::BytesStart<'_>, data: &mut OpfData) 
                     "ltr" => Some(PageProgression::Ltr),
                     _ => None,
                 };
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -200,8 +196,8 @@ fn parse_manifest_item(e: &quick_xml::events::BytesStart<'_>, manifest: &mut Man
             "fallback" => fallback = Some(val.into_owned()),
             "properties" => {
                 properties = val.split_whitespace().map(String::from).collect();
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -226,7 +222,7 @@ fn parse_spine_itemref(e: &quick_xml::events::BytesStart<'_>, spine: &mut Spine)
         match key.as_ref() {
             "idref" => idref = val.into_owned(),
             "linear" => linear = val.as_ref() != "no",
-            _ => {}
+            _ => {},
         }
     }
 
@@ -253,7 +249,7 @@ fn parse_guide_ref(e: &quick_xml::events::BytesStart<'_>, guide: &mut Guide) {
             "type" => ref_type = val.into_owned(),
             "title" => title = val.into_owned(),
             "href" => href = percent_decode(&val),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -281,7 +277,7 @@ fn parse_meta_element(
         match key.as_ref() {
             "name" => name = val.into_owned(),
             "content" => content = val.into_owned(),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -294,14 +290,14 @@ fn parse_meta_element(
         "calibre:series" => metadata.series = Some(content),
         "calibre:series_index" => {
             metadata.series_index = content.parse::<f64>().ok();
-        }
+        },
         "calibre:title_sort" => metadata.title_sort = Some(content),
         "calibre:author_link_map" | "calibre:timestamp" => {
             metadata.extended.insert(name, content);
-        }
+        },
         _ => {
             metadata.extended.insert(name, content);
-        }
+        },
     }
 }
 
@@ -322,7 +318,7 @@ fn apply_dc_metadata(tag: &str, text: &str, metadata: &mut Metadata) {
             if stripped.len() == 10 || stripped.len() == 13 {
                 metadata.isbn = Some(text.to_string());
             }
-        }
+        },
         "description" => metadata.description = Some(text.to_string()),
         "subject" => metadata.subjects.push(text.to_string()),
         "rights" => metadata.rights = Some(text.to_string()),
@@ -338,8 +334,8 @@ fn apply_dc_metadata(tag: &str, text: &str, metadata: &mut Metadata) {
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                     .and_then(|ndt| ndt.and_local_timezone(chrono::Utc).single());
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -422,11 +418,17 @@ mod tests {
         assert_eq!(data.metadata.authors, vec!["Jane Author"]);
         assert_eq!(data.metadata.language.as_deref(), Some("en"));
         assert_eq!(data.metadata.publisher.as_deref(), Some("Test Press"));
-        assert_eq!(data.metadata.description.as_deref(), Some("A test book for unit tests."));
+        assert_eq!(
+            data.metadata.description.as_deref(),
+            Some("A test book for unit tests.")
+        );
         assert_eq!(data.metadata.subjects, vec!["Testing", "Rust"]);
         assert_eq!(data.metadata.rights.as_deref(), Some("CC BY 4.0"));
         assert!(data.metadata.publication_date.is_some());
-        assert_eq!(data.metadata.isbn.as_deref(), Some("urn:isbn:9780123456789"));
+        assert_eq!(
+            data.metadata.isbn.as_deref(),
+            Some("urn:isbn:9780123456789")
+        );
     }
 
     #[test]

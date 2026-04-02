@@ -65,9 +65,7 @@ impl HashChain {
     /// Computes a fast 12-bit hash of three consecutive bytes.
     #[inline]
     fn hash3(data: &[u8], pos: usize) -> usize {
-        let h = ((data[pos] as u32) << 10)
-            ^ ((data[pos + 1] as u32) << 5)
-            ^ (data[pos + 2] as u32);
+        let h = ((data[pos] as u32) << 10) ^ ((data[pos + 1] as u32) << 5) ^ (data[pos + 2] as u32);
         (h as usize) & (HASH_SIZE - 1)
     }
 
@@ -113,13 +111,7 @@ impl HashChain {
             // `cand + max_len <= cand + remaining <= data.len()` (since
             // `remaining = data.len() - pos` and `cand < pos`, we have room).
             // Similarly, `pos + max_len <= data.len()`.
-            let length = unsafe {
-                match_length_simd(
-                    &data[cand..],
-                    &data[pos..],
-                    max_len,
-                )
-            };
+            let length = unsafe { match_length_simd(&data[cand..], &data[pos..], max_len) };
 
             if length >= MIN_MATCH && length > best_length {
                 best_distance = pos - cand;
@@ -208,7 +200,7 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
             0x00 => {
                 // Literal null.
                 output.push(0x00);
-            }
+            },
             0x01..=0x08 => {
                 // Copy next `c` bytes literally.
                 let count = c as usize;
@@ -219,11 +211,11 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
                 }
                 output.extend_from_slice(&input[i..i + count]);
                 i += count;
-            }
+            },
             0x09..=0x7F => {
                 // Self-representing byte.
                 output.push(c);
-            }
+            },
             0x80..=0xBF => {
                 // LZ77 back-reference: 2-byte encoding.
                 if i >= input.len() {
@@ -269,12 +261,12 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
                         output.push(byte);
                     }
                 }
-            }
+            },
             0xC0..=0xFF => {
                 // Space + character.
                 output.push(b' ');
                 output.push(c ^ 0x80);
-            }
+            },
         }
     }
 

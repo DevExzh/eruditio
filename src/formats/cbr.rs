@@ -20,14 +20,11 @@ impl FormatReader for CbrReader {
         reader.read_to_end(&mut buffer).map_err(EruditioError::Io)?;
 
         // unrar requires a file path — write to a temp file
-        let temp_path = std::env::temp_dir().join(format!(
-            "eruditio_cbr_{}.rar",
-            std::process::id()
-        ));
+        let temp_path =
+            std::env::temp_dir().join(format!("eruditio_cbr_{}.rar", std::process::id()));
 
-        std::fs::write(&temp_path, &buffer).map_err(|e| {
-            EruditioError::Format(format!("Failed to write temp RAR file: {}", e))
-        })?;
+        std::fs::write(&temp_path, &buffer)
+            .map_err(|e| EruditioError::Format(format!("Failed to write temp RAR file: {}", e)))?;
 
         let result = extract_images_from_rar(&temp_path);
 
@@ -67,9 +64,7 @@ impl FormatReader for CbrReader {
     }
 }
 
-fn extract_images_from_rar(
-    path: &std::path::Path,
-) -> Result<Vec<(String, Vec<u8>)>> {
+fn extract_images_from_rar(path: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>> {
     let mut image_entries: Vec<(String, Vec<u8>)> = Vec::new();
 
     let archive = Archive::new(path)
@@ -98,14 +93,14 @@ fn extract_images_from_rar(
                         EruditioError::Format(format!("Failed to skip RAR entry: {}", e))
                     })?;
                 }
-            }
+            },
             Ok(None) => break,
             Err(e) => {
                 return Err(EruditioError::Format(format!(
                     "Failed to read RAR header: {}",
                     e
                 )));
-            }
+            },
         }
     }
 

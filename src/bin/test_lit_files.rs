@@ -19,11 +19,7 @@ fn main() {
     let mut entries: Vec<_> = fs::read_dir(lit_dir)
         .expect("read dir")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "lit")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "lit"))
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
@@ -48,7 +44,7 @@ fn main() {
                 println!("  ERROR: Could not read file: {}", e);
                 fail += 1;
                 continue;
-            }
+            },
         };
 
         let magic = if data.len() >= 8 {
@@ -109,12 +105,12 @@ fn main() {
                 if book.resources().len() > 5 {
                     println!("  ... and {} more resources", book.resources().len() - 5);
                 }
-            }
+            },
             Err(e) => {
                 let elapsed = start.elapsed();
                 fail += 1;
                 println!("  FAIL ({:.1}ms): {}", elapsed.as_secs_f64() * 1000.0, e);
-            }
+            },
         }
     }
 

@@ -44,7 +44,9 @@ impl ChmContainer {
 
         // --- ITSF header ---
         if &data[0..4] != b"ITSF" {
-            return Err(EruditioError::Format("Not a valid CHM file (missing ITSF)".into()));
+            return Err(EruditioError::Format(
+                "Not a valid CHM file (missing ITSF)".into(),
+            ));
         }
         let version = itss::i32_le(&data[4..]);
         if version != 2 && version != 3 {
@@ -62,13 +64,17 @@ impl ChmContainer {
         };
 
         if dir_offset + 0x54 > data.len() {
-            return Err(EruditioError::Format("CHM directory offset out of range".into()));
+            return Err(EruditioError::Format(
+                "CHM directory offset out of range".into(),
+            ));
         }
 
         // --- ITSP header (at dir_offset) ---
         let itsp = &data[dir_offset..];
         if &itsp[0..4] != b"ITSP" {
-            return Err(EruditioError::Format("Missing ITSP directory header".into()));
+            return Err(EruditioError::Format(
+                "Missing ITSP directory header".into(),
+            ));
         }
         let itsp_version = itss::i32_le(&itsp[4..]);
         if itsp_version != 1 {
@@ -137,7 +143,9 @@ impl ChmContainer {
         } else {
             // Compressed: decompress the MSCompressed section, then slice
             self.ensure_decompressed()?;
-            let decompressed = self.decompressed.as_ref().unwrap();
+            let decompressed = self.decompressed.as_ref().ok_or_else(|| {
+                EruditioError::Parse("CHM decompressed data unavailable after decompression".into())
+            })?;
             let start = entry.offset as usize;
             let end = start + entry.size as usize;
             if end > decompressed.len() {
@@ -237,7 +245,7 @@ fn parse_system_file(data: &[u8]) -> ChmSystemInfo {
             SYSTEM_CONTENTS_FILE => info.contents_file = Some(value),
             SYSTEM_DEFAULT_TOPIC => info.default_topic = Some(value),
             SYSTEM_TITLE => info.title = Some(value),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -317,7 +325,7 @@ fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
                 match n.to_lowercase().as_str() {
                     "name" => name = v,
                     "local" => local = v,
-                    _ => {}
+                    _ => {},
                 }
             }
             param_pos = param_end + 1;
@@ -385,7 +393,7 @@ fn decode_html(data: &[u8]) -> String {
                     }
                 })
                 .collect()
-        }
+        },
     }
 }
 

@@ -9,10 +9,12 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::compression::palmdoc;
-use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be, PdbFile, read_u16_be};
+use crate::formats::common::palm_db::{
+    PdbFile, build_pdb_header, read_u16_be, write_u16_be, write_u32_be,
+};
+use flate2::Compression;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
 use std::io::{Read, Write};
 
 /// PDB ebook format reader.
@@ -356,7 +358,7 @@ fn read_palmdoc(pdb: &PdbFile) -> Result<Book> {
                     "Unsupported PalmDOC compression type: {}",
                     other
                 )));
-            }
+            },
         };
         text.push_str(&String::from_utf8_lossy(&decompressed));
     }
@@ -391,9 +393,7 @@ fn read_ztxt(pdb: &PdbFile) -> Result<Book> {
 
     let header_rec = pdb.record_data(0)?;
     if header_rec.len() < 19 {
-        return Err(EruditioError::Format(
-            "zTXT header record too short".into(),
-        ));
+        return Err(EruditioError::Format("zTXT header record too short".into()));
     }
 
     let version = read_u16_be(header_rec, 0);
@@ -537,9 +537,7 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
         };
 
         footnote_html.push_str("<h2>Footnotes</h2>");
-        for (idx, i) in
-            (fn_offset + 1..fn_offset + header.footnote_count as usize).enumerate()
-        {
+        for (idx, i) in (fn_offset + 1..fn_offset + header.footnote_count as usize).enumerate() {
             if i >= pdb.record_count() {
                 break;
             }
@@ -566,9 +564,7 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
         };
 
         sidebar_html.push_str("<h2>Sidebars</h2>");
-        for (idx, i) in
-            (sb_offset + 1..sb_offset + header.sidebar_count as usize).enumerate()
-        {
+        for (idx, i) in (sb_offset + 1..sb_offset + header.sidebar_count as usize).enumerate() {
             if i >= pdb.record_count() {
                 break;
             }
@@ -630,7 +626,12 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
 
             let media_type = detect_image_media_type(img_data);
             let id = format!("ereader_img_{}", i);
-            book.add_resource(&id, &format!("images/{}", name), img_data.to_vec(), media_type);
+            book.add_resource(
+                &id,
+                format!("images/{}", name),
+                img_data.to_vec(),
+                media_type,
+            );
         }
     }
 
@@ -752,24 +753,23 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
                 let phtml_data = &section_data[section_header.paragraphs as usize * 4..];
                 let html = process_phtml(phtml_data, &paragraph_offsets);
                 text_sections.push((section_header.uid, html));
-            }
+            },
             PLUCKER_PHTML_COMPRESSED => {
                 let paragraph_offsets =
                     parse_paragraph_offsets(section_data, section_header.paragraphs);
-                let compressed_data =
-                    &section_data[section_header.paragraphs as usize * 4..];
+                let compressed_data = &section_data[section_header.paragraphs as usize * 4..];
                 let decompressed = plucker_decompress(compressed_data, compression)?;
                 let html = process_phtml(&decompressed, &paragraph_offsets);
                 text_sections.push((section_header.uid, html));
-            }
+            },
             PLUCKER_TBMP => {
                 image_data.push((section_header.uid, section_data.to_vec()));
-            }
+            },
             PLUCKER_TBMP_COMPRESSED => {
                 if let Ok(decompressed) = plucker_decompress(section_data, compression) {
                     image_data.push((section_header.uid, decompressed));
                 }
-            }
+            },
             PLUCKER_METADATA => {
                 // Parse metadata for encoding info.
                 if section_data.len() >= 2 {
@@ -788,10 +788,10 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
                         adv += mlength * 2;
                     }
                 }
-            }
+            },
             _ => {
                 // Skip unknown section types.
-            }
+            },
         }
     }
 
@@ -801,11 +801,11 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
 
     // Order: home page first, then remaining pages.
     let mut ordered_html = Vec::new();
-    if let Some(home) = home_uid {
-        if let Some(pos) = text_sections.iter().position(|(uid, _)| *uid == home) {
-            let (_, html) = text_sections.remove(pos);
-            ordered_html.push(html);
-        }
+    if let Some(home) = home_uid
+        && let Some(pos) = text_sections.iter().position(|(uid, _)| *uid == home)
+    {
+        let (_, html) = text_sections.remove(pos);
+        ordered_html.push(html);
     }
     for (_, html) in text_sections {
         ordered_html.push(html);
@@ -907,11 +907,11 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                         link_open = true;
                         offset += 1;
                     }
-                }
+                },
                 // Targeted page link (3 bytes).
                 0x0b => {
                     offset += 3;
-                }
+                },
                 // Paragraph link (4 bytes: record ID + paragraph number).
                 0x0c => {
                     if offset + 4 < data.len() {
@@ -923,18 +923,18 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                         link_open = true;
                         offset += 1;
                     }
-                }
+                },
                 // Targeted paragraph link (5 bytes).
                 0x0d => {
                     offset += 5;
-                }
+                },
                 // Link ends.
                 0x08 => {
                     if link_open {
                         html.push_str("</a>");
                         link_open = false;
                     }
-                }
+                },
                 // Set font (1 byte: specifier).
                 0x11 => {
                     offset += 1;
@@ -943,21 +943,54 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                         let specifier = data[offset];
                         font_close = match specifier {
                             0 => "",
-                            1 => { html.push_str("<h1>"); "</h1>" }
-                            2 => { html.push_str("<h2>"); "</h2>" }
-                            3 => { html.push_str("<h3>"); "</h3>" }
-                            4 => { html.push_str("<h4>"); "</h4>" }
-                            5 => { html.push_str("<h5>"); "</h5>" }
-                            6 => { html.push_str("<h6>"); "</h6>" }
-                            7 => { html.push_str("<b>"); "</b>" }
-                            8 => { html.push_str("<tt>"); "</tt>" }
-                            9 => { html.push_str("<small>"); "</small>" }
-                            10 => { html.push_str("<sub>"); "</sub>" }
-                            11 => { html.push_str("<sup>"); "</sup>" }
+                            1 => {
+                                html.push_str("<h1>");
+                                "</h1>"
+                            },
+                            2 => {
+                                html.push_str("<h2>");
+                                "</h2>"
+                            },
+                            3 => {
+                                html.push_str("<h3>");
+                                "</h3>"
+                            },
+                            4 => {
+                                html.push_str("<h4>");
+                                "</h4>"
+                            },
+                            5 => {
+                                html.push_str("<h5>");
+                                "</h5>"
+                            },
+                            6 => {
+                                html.push_str("<h6>");
+                                "</h6>"
+                            },
+                            7 => {
+                                html.push_str("<b>");
+                                "</b>"
+                            },
+                            8 => {
+                                html.push_str("<tt>");
+                                "</tt>"
+                            },
+                            9 => {
+                                html.push_str("<small>");
+                                "</small>"
+                            },
+                            10 => {
+                                html.push_str("<sub>");
+                                "</sub>"
+                            },
+                            11 => {
+                                html.push_str("<sup>");
+                                "</sup>"
+                            },
                             _ => "",
                         };
                     }
-                }
+                },
                 // Embedded image (2 bytes: image record UID).
                 0x1a => {
                     if offset + 2 < data.len() {
@@ -966,15 +999,15 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                         html.push_str(&format!("<img src=\"images/{}.jpg\" />", uid));
                         offset += 1;
                     }
-                }
+                },
                 // Set margin (2 bytes).
                 0x22 => {
                     offset += 2;
-                }
+                },
                 // Alignment (1 byte).
                 0x29 => {
                     offset += 1;
-                }
+                },
                 // Horizontal rule (3 bytes).
                 0x33 => {
                     offset += 3;
@@ -983,14 +1016,14 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                         paragraph_open = false;
                     }
                     html.push_str("<hr />");
-                }
+                },
                 // New line.
                 0x38 => {
                     if paragraph_open {
                         html.push_str("</p>\n");
                         paragraph_open = false;
                     }
-                }
+                },
                 // Italic begins.
                 0x40 => html.push_str("<i>"),
                 // Italic ends.
@@ -998,7 +1031,7 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                 // Set text color (3 bytes).
                 0x53 => {
                     offset += 3;
-                }
+                },
                 // Multiple embedded image (4 bytes).
                 0x5c => {
                     if offset + 4 < data.len() {
@@ -1007,7 +1040,7 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                         html.push_str(&format!("<img src=\"images/{}.jpg\" />", uid));
                         offset += 1;
                     }
-                }
+                },
                 // Underline begins.
                 0x60 => html.push_str("<u>"),
                 // Underline ends.
@@ -1019,40 +1052,40 @@ fn process_phtml(data: &[u8], paragraph_offsets: &[usize]) -> String {
                 // 16-bit Unicode character (3 bytes).
                 0x83 => {
                     offset += 3;
-                }
+                },
                 // 32-bit Unicode character (5 bytes).
                 0x85 => {
                     offset += 5;
-                }
+                },
                 // Begin custom font span (6 bytes).
                 0x8e => {
                     offset += 6;
-                }
+                },
                 // Adjust font glyph position (4 bytes).
                 0x8c => {
                     offset += 4;
-                }
+                },
                 // Change font page (2 bytes).
                 0x8a => {
                     offset += 2;
-                }
+                },
                 // End custom font span (0 bytes).
-                0x88 => {}
+                0x88 => {},
                 // Table-related functions.
-                0x90 => {} // Begin table row
+                0x90 => {}, // Begin table row
                 0x92 => {
                     offset += 2;
-                } // Insert table
+                }, // Insert table
                 0x97 => {
                     offset += 7;
-                } // Table cell
+                }, // Table cell
                 // Exact link modifier (2 bytes).
                 0x9a => {
                     offset += 2;
-                }
+                },
                 _ => {
                     // Unknown function code — skip.
-                }
+                },
             }
         } else if c == 0xa0 {
             html.push_str("&nbsp;");
@@ -1095,8 +1128,7 @@ fn text_to_html(text: &str) -> String {
         if !trimmed.is_empty() {
             html.push_str("<p>");
             html.push_str(
-                &crate::formats::common::text_utils::escape_html(trimmed)
-                    .replace('\n', "<br />"),
+                &crate::formats::common::text_utils::escape_html(trimmed).replace('\n', "<br />"),
             );
             html.push_str("</p>\n");
         }
@@ -1179,7 +1211,11 @@ fn read_haodoo(pdb: &PdbFile, is_unicode: bool) -> Result<Book> {
         .unwrap_or(0);
 
     // Remaining fields are chapter titles.
-    let chapter_titles: Vec<String> = fields.iter().skip(2).map(|s| s.trim().to_string()).collect();
+    let chapter_titles: Vec<String> = fields
+        .iter()
+        .skip(2)
+        .map(|s| s.trim().to_string())
+        .collect();
 
     let mut book = Book::new();
     book.metadata.title = title;
@@ -1243,9 +1279,7 @@ fn haodoo_text_to_html(text: &str) -> String {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             html.push_str("<p>");
-            html.push_str(
-                &crate::formats::common::text_utils::escape_html(trimmed),
-            );
+            html.push_str(&crate::formats::common::text_utils::escape_html(trimmed));
             html.push_str("</p>\n");
         }
     }
@@ -1303,8 +1337,13 @@ mod tests {
             pos += rec.len() as u32;
         }
 
-        let mut data =
-            build_pdb_header("Test PalmDOC", b"TEXt", b"REAd", total_records as u16, &offsets);
+        let mut data = build_pdb_header(
+            "Test PalmDOC",
+            b"TEXt",
+            b"REAd",
+            total_records as u16,
+            &offsets,
+        );
 
         data.extend_from_slice(&header_rec);
         for rec in &records {
@@ -1316,8 +1355,8 @@ mod tests {
 
     /// Builds a minimal zTXT PDB file for testing.
     fn build_ztxt_pdb(text: &str) -> Vec<u8> {
-        use flate2::write::ZlibEncoder;
         use flate2::Compression;
+        use flate2::write::ZlibEncoder;
         use std::io::Write;
 
         let text_bytes = text.as_bytes();
@@ -1364,8 +1403,13 @@ mod tests {
             pos += rec.len() as u32;
         }
 
-        let mut data =
-            build_pdb_header("Test zTXT", b"zTXT", b"GPlm", total_records as u16, &offsets);
+        let mut data = build_pdb_header(
+            "Test zTXT",
+            b"zTXT",
+            b"GPlm",
+            total_records as u16,
+            &offsets,
+        );
         data.extend_from_slice(&header_rec);
         for rec in &records {
             data.extend_from_slice(rec);
@@ -1525,7 +1569,11 @@ mod tests {
         let decoded = PdbReader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(decoded.metadata.title.as_deref(), Some("PDB Write Test"));
-        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
         assert!(content.contains("Hello PalmDOC world!"));
     }
 
@@ -1554,7 +1602,11 @@ mod tests {
         let decoded = PdbReader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(decoded.metadata.title.as_deref(), Some("zTXT Write Test"));
-        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
         assert!(content.contains("Hello zTXT world!"));
     }
 
@@ -1569,14 +1621,23 @@ mod tests {
         });
 
         let mut output = Vec::new();
-        PdbEreaderWriter::new().write_book(&book, &mut output).unwrap();
+        PdbEreaderWriter::new()
+            .write_book(&book, &mut output)
+            .unwrap();
 
         // Read it back.
         let mut cursor = Cursor::new(output);
         let decoded = PdbReader::new().read_book(&mut cursor).unwrap();
 
-        assert_eq!(decoded.metadata.title.as_deref(), Some("eReader Write Test"));
-        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        assert_eq!(
+            decoded.metadata.title.as_deref(),
+            Some("eReader Write Test")
+        );
+        let content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
         assert!(content.contains("Hello eReader world"));
     }
 }

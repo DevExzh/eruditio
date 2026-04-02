@@ -65,9 +65,7 @@ impl PmlWriter {
 impl FormatWriter for PmlWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         let pml = parser::book_to_pml(book);
-        output
-            .write_all(pml.as_bytes())
-            .map_err(EruditioError::Io)
+        output.write_all(pml.as_bytes()).map_err(EruditioError::Io)
     }
 }
 
@@ -112,7 +110,11 @@ mod tests {
 
         let mut cursor = Cursor::new(output);
         let decoded = PmlReader::new().read_book(&mut cursor).unwrap();
-        let content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
         assert!(content.contains("Hello world"));
     }
 

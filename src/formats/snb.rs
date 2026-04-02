@@ -5,14 +5,14 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use bzip2::Compression as BzCompression;
 use bzip2::read::BzDecoder;
 use bzip2::write::BzEncoder;
-use bzip2::Compression as BzCompression;
+use flate2::Compression;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
@@ -132,10 +132,8 @@ impl FormatReader for SnbReader {
         // Build chapters from TOC + content files.
         if chapters.is_empty() {
             // No TOC — gather all .snbc files as chapters.
-            let mut snbc_files: Vec<(&String, &Vec<u8>)> = files
-                .iter()
-                .filter(|(k, _)| k.ends_with(".snbc"))
-                .collect();
+            let mut snbc_files: Vec<(&String, &Vec<u8>)> =
+                files.iter().filter(|(k, _)| k.ends_with(".snbc")).collect();
             snbc_files.sort_by(|a, b| a.0.cmp(b.0));
 
             for (idx, (name, content)) in snbc_files.iter().enumerate() {
@@ -205,7 +203,9 @@ fn parse_vfat(data: &[u8], header: &SnbHeader) -> Result<Vec<VfatEntry>> {
     let entries_region = header.file_count * entry_size;
 
     if vfat_bytes.len() < entries_region {
-        return Err(EruditioError::Format("SNB VFAT too short for entries".into()));
+        return Err(EruditioError::Format(
+            "SNB VFAT too short for entries".into(),
+        ));
     }
 
     // Parse entries.
@@ -244,9 +244,7 @@ fn parse_tail(data: &[u8]) -> Result<TailInfo> {
 
     let tail_footer = &data[data.len() - 16..];
     if &tail_footer[8..16] != SNB_MAGIC {
-        return Err(EruditioError::Format(
-            "SNB tail magic mismatch".into(),
-        ));
+        return Err(EruditioError::Format("SNB tail magic mismatch".into()));
     }
 
     let tail_compressed_size = read_i32_be(tail_footer, 0) as usize;
@@ -353,7 +351,14 @@ fn extract_files(
             }
         } else if entry.attr == ATTR_PLAIN {
             // Plain file: decompress from plain stream blocks.
-            extract_plain_file(data, plain_start, tail, block_idx, content_offset, entry.size)?
+            extract_plain_file(
+                data,
+                plain_start,
+                tail,
+                block_idx,
+                content_offset,
+                entry.size,
+            )?
         } else {
             continue;
         };
@@ -383,7 +388,8 @@ fn extract_plain_file(
     let mut current_block = block_idx;
 
     while remaining > 0 {
-        let block_idx_in_offsets = plain_block_base + (current_block - plain_block_base.min(current_block));
+        let block_idx_in_offsets =
+            plain_block_base + (current_block - plain_block_base.min(current_block));
         if block_idx_in_offsets >= tail.block_offsets.len() {
             break;
         }
@@ -438,12 +444,10 @@ fn parse_book_metadata(xml: &str, book: &mut Book) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                current_tag =
-                    String::from_utf8_lossy(e.name().as_ref()).to_string();
-            }
+                current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+            },
             Ok(Event::Text(ref e)) => {
-                let text =
-                    String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -453,13 +457,13 @@ fn parse_book_metadata(xml: &str, book: &mut Book) {
                     "language" => book.metadata.language = Some(text),
                     "publisher" => book.metadata.publisher = Some(text),
                     "abstract" => book.metadata.description = Some(text),
-                    _ => {}
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::End(_)) => current_tag.clear(),
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
     }
 }
@@ -479,31 +483,29 @@ fn parse_toc(xml: &str) -> Vec<TocChapter> {
                     in_chapter = true;
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"src" {
-                            current_src =
-                                String::from_utf8_lossy(&attr.value).to_string();
+                            current_src = String::from_utf8_lossy(&attr.value).to_string();
                         }
                     }
                 }
-            }
+            },
             Ok(Event::Text(ref e)) if in_chapter => {
-                let title =
-                    String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let title = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
                 if !title.trim().is_empty() {
                     chapters.push(TocChapter {
                         src: current_src.clone(),
                         title: title.trim().to_string(),
                     });
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 if e.name().as_ref() == b"chapter" {
                     in_chapter = false;
                     current_src.clear();
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
     }
 
@@ -531,16 +533,14 @@ fn snbc_to_html(xml: &str) -> String {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let name =
-                    String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 if name == "body" {
                     in_body = true;
                 }
                 current_tag = name;
-            }
+            },
             Ok(Event::Text(ref e)) if in_body => {
-                let text =
-                    String::from_utf8_lossy(&e.clone().into_inner()).to_string();
+                let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -549,25 +549,22 @@ fn snbc_to_html(xml: &str) -> String {
                         html.push_str("<p>");
                         html.push_str(&html_escape(text.trim()));
                         html.push_str("</p>\n");
-                    }
+                    },
                     "img" => {
-                        html.push_str(&format!(
-                            "<img src=\"{}\" />\n",
-                            html_escape(text.trim())
-                        ));
-                    }
-                    _ => {}
+                        html.push_str(&format!("<img src=\"{}\" />\n", html_escape(text.trim())));
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 if e.name().as_ref() == b"body" {
                     in_body = false;
                 }
                 current_tag.clear();
-            }
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
     }
 
@@ -624,8 +621,7 @@ impl FormatWriter for SnbWriter {
 
         // 2. Build TOC and chapter SNBC files.
         let chapters = book.chapters();
-        let mut toc_xml =
-            String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<toc-snbf>\n");
+        let mut toc_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<toc-snbf>\n");
 
         for (i, chapter) in chapters.iter().enumerate() {
             let ch_filename = format!("chapter_{}.snbc", i);
@@ -831,9 +827,9 @@ impl FormatWriter for SnbWriter {
 /// Compresses data with zlib.
 fn snb_zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(data).map_err(|e| {
-        EruditioError::Compression(format!("SNB zlib compression error: {}", e))
-    })?;
+    encoder
+        .write_all(data)
+        .map_err(|e| EruditioError::Compression(format!("SNB zlib compression error: {}", e)))?;
     encoder.finish().map_err(|e| {
         EruditioError::Compression(format!("SNB zlib compression finish error: {}", e))
     })
@@ -842,12 +838,12 @@ fn snb_zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
 /// Compresses data with bz2.
 fn snb_bz2_compress(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = BzEncoder::new(Vec::new(), BzCompression::default());
-    encoder.write_all(data).map_err(|e| {
-        EruditioError::Compression(format!("SNB bz2 compression error: {}", e))
-    })?;
-    encoder.finish().map_err(|e| {
-        EruditioError::Compression(format!("SNB bz2 compression finish error: {}", e))
-    })
+    encoder
+        .write_all(data)
+        .map_err(|e| EruditioError::Compression(format!("SNB bz2 compression error: {}", e)))?;
+    encoder
+        .finish()
+        .map_err(|e| EruditioError::Compression(format!("SNB bz2 compression finish error: {}", e)))
 }
 
 /// Simple HTML tag stripping for SNBC content.
@@ -866,18 +862,18 @@ fn xml_escape(text: &str) -> String {
 fn zlib_decompress(data: &[u8], _expected_size: usize) -> Result<Vec<u8>> {
     let mut decoder = ZlibDecoder::new(data);
     let mut output = Vec::new();
-    decoder.read_to_end(&mut output).map_err(|e| {
-        EruditioError::Compression(format!("SNB zlib decompression error: {}", e))
-    })?;
+    decoder
+        .read_to_end(&mut output)
+        .map_err(|e| EruditioError::Compression(format!("SNB zlib decompression error: {}", e)))?;
     Ok(output)
 }
 
 fn bz2_decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = BzDecoder::new(data);
     let mut output = Vec::new();
-    decoder.read_to_end(&mut output).map_err(|e| {
-        EruditioError::Compression(format!("SNB bz2 decompression error: {}", e))
-    })?;
+    decoder
+        .read_to_end(&mut output)
+        .map_err(|e| EruditioError::Compression(format!("SNB bz2 decompression error: {}", e)))?;
     Ok(output)
 }
 
@@ -915,10 +911,10 @@ fn html_escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bzip2::write::BzEncoder;
     use bzip2::Compression as BzCompression;
-    use flate2::write::ZlibEncoder;
+    use bzip2::write::BzEncoder;
     use flate2::Compression;
+    use flate2::write::ZlibEncoder;
     use std::io::{Cursor, Write};
 
     fn zlib_compress(data: &[u8]) -> Vec<u8> {
@@ -952,9 +948,7 @@ mod tests {
             title, author
         );
 
-        let mut toc_xml = String::from(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<toc-snbf>\n",
-        );
+        let mut toc_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<toc-snbf>\n");
         for (i, (ch_title, _)) in chapters.iter().enumerate() {
             toc_xml.push_str(&format!(
                 "  <chapter src=\"ch{}.snbc\">{}</chapter>\n",
@@ -1040,20 +1034,17 @@ mod tests {
         file[0x18..0x1C].copy_from_slice(&(vfat_uncompressed_size as i32).to_be_bytes());
         file[0x1C..0x20].copy_from_slice(&(vfat_compressed.len() as i32).to_be_bytes());
         file[0x20..0x24].copy_from_slice(&bin_stream_size.to_be_bytes());
-        file[0x24..0x28]
-            .copy_from_slice(&(plain_uncompressed.len() as i32).to_be_bytes());
+        file[0x24..0x28].copy_from_slice(&(plain_uncompressed.len() as i32).to_be_bytes());
 
         // Write VFAT.
-        file[header_size..header_size + vfat_compressed.len()]
-            .copy_from_slice(&vfat_compressed);
+        file[header_size..header_size + vfat_compressed.len()].copy_from_slice(&vfat_compressed);
 
         // Write plain stream.
         file[plain_start_offset..plain_start_offset + plain_compressed.len()]
             .copy_from_slice(&plain_compressed);
 
         // Write tail.
-        file[tail_offset..tail_offset + tail_compressed.len()]
-            .copy_from_slice(&tail_compressed);
+        file[tail_offset..tail_offset + tail_compressed.len()].copy_from_slice(&tail_compressed);
 
         // Write tail footer.
         let footer_start = tail_offset + tail_compressed.len();

@@ -173,7 +173,10 @@ fn extract_chapters(
 }
 
 /// Extracts HTML content and image references from a single Page object.
-fn extract_page_html(page: &LrfObject, objects: &HashMap<u32, LrfObject>) -> (String, Vec<ImageRef>) {
+fn extract_page_html(
+    page: &LrfObject,
+    objects: &HashMap<u32, LrfObject>,
+) -> (String, Vec<ImageRef>) {
     let mut html = String::new();
     let mut images: Vec<ImageRef> = Vec::new();
 
@@ -196,54 +199,52 @@ fn extract_page_html(page: &LrfObject, objects: &HashMap<u32, LrfObject>) -> (St
 
         match block.obj_type {
             ObjType::Block => {
-                if let Some(linked_id) = block.link_id() {
-                    if let Some(linked_obj) = objects.get(&linked_id) {
-                        match linked_obj.obj_type {
-                            ObjType::Text | ObjType::SimpleText => {
-                                html.push_str(&text_object_to_html(linked_obj));
+                if let Some(linked_id) = block.link_id()
+                    && let Some(linked_obj) = objects.get(&linked_id)
+                {
+                    match linked_obj.obj_type {
+                        ObjType::Text | ObjType::SimpleText => {
+                            html.push_str(&text_object_to_html(linked_obj));
+                        },
+                        ObjType::Image => {
+                            if let Some(img_ref) = extract_image(linked_obj, objects) {
+                                html.push_str(&format!("<img src=\"{}\" />", img_ref.href));
+                                images.push(img_ref);
                             }
-                            ObjType::Image => {
-                                if let Some(img_ref) = extract_image(linked_obj, objects) {
-                                    html.push_str(&format!("<img src=\"{}\" />", img_ref.href));
-                                    images.push(img_ref);
-                                }
-                            }
-                            _ => {}
-                        }
+                        },
+                        _ => {},
                     }
                 }
-            }
+            },
             ObjType::Canvas | ObjType::Header | ObjType::Footer => {
                 // Canvas may contain blocks.
                 let canvas_blocks = block.contained_object_ids();
                 for &cb_id in &canvas_blocks {
                     if let Some(cb) = objects.get(&cb_id)
                         && cb.obj_type == ObjType::Block
+                        && let Some(linked_id) = cb.link_id()
+                        && let Some(linked_obj) = objects.get(&linked_id)
                     {
-                        if let Some(linked_id) = cb.link_id() {
-                            if let Some(linked_obj) = objects.get(&linked_id) {
-                                match linked_obj.obj_type {
-                                    ObjType::Text | ObjType::SimpleText => {
-                                        html.push_str(&text_object_to_html(linked_obj));
-                                    }
-                                    ObjType::Image => {
-                                        if let Some(img_ref) = extract_image(linked_obj, objects) {
-                                            html.push_str(&format!("<img src=\"{}\" />", img_ref.href));
-                                            images.push(img_ref);
-                                        }
-                                    }
-                                    _ => {}
+                        match linked_obj.obj_type {
+                            ObjType::Text | ObjType::SimpleText => {
+                                html.push_str(&text_object_to_html(linked_obj));
+                            },
+                            ObjType::Image => {
+                                if let Some(img_ref) = extract_image(linked_obj, objects) {
+                                    html.push_str(&format!("<img src=\"{}\" />", img_ref.href));
+                                    images.push(img_ref);
                                 }
-                            }
+                            },
+                            _ => {},
                         }
                     }
                 }
-            }
+            },
             ObjType::Text | ObjType::SimpleText => {
                 // Direct text reference.
                 html.push_str(&text_object_to_html(block));
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -264,7 +265,9 @@ fn text_object_to_html(obj: &LrfObject) -> String {
 /// to the corresponding ImageStream object.
 fn extract_image(image_obj: &LrfObject, objects: &HashMap<u32, LrfObject>) -> Option<ImageRef> {
     // Find the refstream tag pointing to the ImageStream object.
-    let stream_id = image_obj.tags.iter()
+    let stream_id = image_obj
+        .tags
+        .iter()
         .find(|t| t.id == TAG_REFSTREAM)
         .map(|t| t.as_u32())?;
 
@@ -289,7 +292,12 @@ fn extract_image(image_obj: &LrfObject, objects: &HashMap<u32, LrfObject>) -> Op
     let id = format!("lrf_img_{}", image_obj.id);
     let href = format!("images/{}.{}", id, ext);
 
-    Some(ImageRef { id, href, data, media_type })
+    Some(ImageRef {
+        id,
+        href,
+        data,
+        media_type,
+    })
 }
 
 /// Extracts object IDs referenced from a Page/Canvas stream.
@@ -433,8 +441,7 @@ mod tests {
         file[0x4C..0x4E].copy_from_slice(&compressed_info_size.to_le_bytes());
 
         // Compressed metadata.
-        file[info_start..info_start + compressed_xml.len()]
-            .copy_from_slice(&compressed_xml);
+        file[info_start..info_start + compressed_xml.len()].copy_from_slice(&compressed_xml);
 
         // Object data.
         for (i, od) in obj_data.iter().enumerate() {
@@ -515,8 +522,7 @@ mod tests {
     }
 
     fn zlib_compress(data: &[u8]) -> Vec<u8> {
-        let mut encoder =
-            ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(data).unwrap();
         encoder.finish().unwrap()
     }

@@ -1,7 +1,7 @@
 use eruditio::EruditioParser;
 use std::io::{Cursor, Write};
-use zip::write::FileOptions;
 use zip::ZipWriter;
+use zip::write::FileOptions;
 
 #[test]
 fn test_cbz_parsing() {

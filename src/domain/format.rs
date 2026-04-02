@@ -220,9 +220,13 @@ impl Format {
         }
 
         // LRF: L\x00R\x00F\x00\x00\x00
-        if bytes.len() >= 8 && bytes[0] == 0x4C && bytes[1] == 0x00
-            && bytes[2] == 0x52 && bytes[3] == 0x00
-            && bytes[4] == 0x46 && bytes[5] == 0x00
+        if bytes.len() >= 8
+            && bytes[0] == 0x4C
+            && bytes[1] == 0x00
+            && bytes[2] == 0x52
+            && bytes[3] == 0x00
+            && bytes[4] == 0x46
+            && bytes[5] == 0x00
         {
             return Some(Self::Lrf);
         }
@@ -254,9 +258,17 @@ mod tests {
     #[test]
     fn extension_round_trip() {
         let formats = [
-            Format::Epub, Format::Mobi, Format::Pdf, Format::Fb2,
-            Format::Cbz, Format::Txt, Format::Tcr, Format::Rtf,
-            Format::Html, Format::Docx, Format::Odt,
+            Format::Epub,
+            Format::Mobi,
+            Format::Pdf,
+            Format::Fb2,
+            Format::Cbz,
+            Format::Txt,
+            Format::Tcr,
+            Format::Rtf,
+            Format::Html,
+            Format::Docx,
+            Format::Odt,
         ];
         for fmt in formats {
             let ext = fmt.extension();

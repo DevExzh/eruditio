@@ -2,9 +2,9 @@ use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::html_utils::escape_html;
 use std::io::{Seek, Write};
-use zip::write::FileOptions;
 use zip::CompressionMethod;
 use zip::ZipWriter;
+use zip::write::FileOptions;
 
 /// Writes a `Book` as a valid EPUB archive to the given writer.
 pub fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
@@ -50,17 +50,15 @@ pub fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
         }
         let zip_path = format!("OEBPS/{}", &item.href);
         zip.start_file(&zip_path, deflated)
-            .map_err(|e| {
-                EruditioError::Format(format!("Failed to write {}: {}", zip_path, e))
-            })?;
+            .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
         match &item.data {
             crate::domain::ManifestData::Text(text) => {
                 zip.write_all(text.as_bytes()).map_err(EruditioError::Io)?;
-            }
+            },
             crate::domain::ManifestData::Inline(bytes) => {
                 zip.write_all(bytes).map_err(EruditioError::Io)?;
-            }
-            crate::domain::ManifestData::Empty => {}
+            },
+            crate::domain::ManifestData::Empty => {},
         }
     }
 
@@ -86,7 +84,9 @@ fn generate_opf(book: &Book) -> String {
 
     xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     xml.push('\n');
-    xml.push_str(r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">"#);
+    xml.push_str(
+        r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">"#,
+    );
     xml.push('\n');
 
     // Metadata
@@ -111,7 +111,10 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
     xml.push('\n');
 
     if let Some(ref title) = m.title {
-        xml.push_str(&format!("    <dc:title>{}</dc:title>\n", escape_html(title)));
+        xml.push_str(&format!(
+            "    <dc:title>{}</dc:title>\n",
+            escape_html(title)
+        ));
     }
     for author in &m.authors {
         xml.push_str(&format!(
@@ -120,7 +123,10 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
         ));
     }
     if let Some(ref lang) = m.language {
-        xml.push_str(&format!("    <dc:language>{}</dc:language>\n", escape_html(lang)));
+        xml.push_str(&format!(
+            "    <dc:language>{}</dc:language>\n",
+            escape_html(lang)
+        ));
     } else {
         xml.push_str("    <dc:language>en</dc:language>\n");
     }
@@ -151,7 +157,10 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
         ));
     }
     if let Some(ref rights) = m.rights {
-        xml.push_str(&format!("    <dc:rights>{}</dc:rights>\n", escape_html(rights)));
+        xml.push_str(&format!(
+            "    <dc:rights>{}</dc:rights>\n",
+            escape_html(rights)
+        ));
     }
     if let Some(ref date) = m.publication_date {
         xml.push_str(&format!(
@@ -224,7 +233,10 @@ fn generate_opf_spine(book: &Book, xml: &mut String) {
     xml.push_str(">\n");
 
     for spine_item in book.spine.iter() {
-        xml.push_str(&format!("    <itemref idref=\"{}\"", escape_html(&spine_item.manifest_id)));
+        xml.push_str(&format!(
+            "    <itemref idref=\"{}\"",
+            escape_html(&spine_item.manifest_id)
+        ));
         if !spine_item.linear {
             xml.push_str(" linear=\"no\"");
         }
@@ -347,7 +359,12 @@ mod tests {
             id: Some("ch2".into()),
         });
 
-        book.add_resource("cover", "images/cover.jpg", vec![0xFF, 0xD8, 0xFF], "image/jpeg");
+        book.add_resource(
+            "cover",
+            "images/cover.jpg",
+            vec![0xFF, 0xD8, 0xFF],
+            "image/jpeg",
+        );
 
         book.guide.push(GuideReference {
             ref_type: GuideType::Cover,

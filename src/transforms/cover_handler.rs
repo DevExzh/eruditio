@@ -17,13 +17,13 @@ impl Transform for CoverHandler {
         "cover_handler"
     }
 
-    fn apply(&self, book: &Book) -> Result<Book> {
+    fn apply(&self, book: Book) -> Result<Book> {
         // If cover is already set, nothing to do.
         if book.metadata.cover_image_id.is_some() {
-            return Ok(book.clone());
+            return Ok(book);
         }
 
-        let mut result = book.clone();
+        let mut result = book;
 
         // Strategy 1: Look for an image whose ID contains "cover".
         if let Some(cover_id) = find_cover_by_id(&result) {
@@ -55,8 +55,7 @@ fn find_cover_by_id(book: &Book) -> Option<String> {
     book.manifest
         .iter()
         .find(|item| {
-            item.media_type.starts_with("image/")
-                && item.id.to_lowercase().contains("cover")
+            item.media_type.starts_with("image/") && item.id.to_lowercase().contains("cover")
         })
         .map(|item| item.id.clone())
 }
@@ -66,8 +65,7 @@ fn find_cover_by_href(book: &Book) -> Option<String> {
     book.manifest
         .iter()
         .find(|item| {
-            item.media_type.starts_with("image/")
-                && item.href.to_lowercase().contains("cover")
+            item.media_type.starts_with("image/") && item.href.to_lowercase().contains("cover")
         })
         .map(|item| item.id.clone())
 }
@@ -106,10 +104,15 @@ mod tests {
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_resource("cover-image", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_resource(
+            "cover-image",
+            "images/cover.jpg",
+            vec![0xFF, 0xD8],
+            "image/jpeg",
+        );
 
         let handler = CoverHandler;
-        let result = handler.apply(&book).unwrap();
+        let result = handler.apply(book.clone()).unwrap();
 
         assert_eq!(
             result.metadata.cover_image_id.as_deref(),
@@ -123,7 +126,7 @@ mod tests {
         book.add_resource("img1", "images/cover.png", vec![0x89, 0x50], "image/png");
 
         let handler = CoverHandler;
-        let result = handler.apply(&book).unwrap();
+        let result = handler.apply(book).unwrap();
 
         assert_eq!(result.metadata.cover_image_id.as_deref(), Some("img1"));
     }
@@ -132,10 +135,15 @@ mod tests {
     fn preserves_existing_cover() {
         let mut book = Book::new();
         book.metadata.cover_image_id = Some("already-set".into());
-        book.add_resource("cover-image", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_resource(
+            "cover-image",
+            "images/cover.jpg",
+            vec![0xFF, 0xD8],
+            "image/jpeg",
+        );
 
         let handler = CoverHandler;
-        let result = handler.apply(&book).unwrap();
+        let result = handler.apply(book).unwrap();
 
         assert_eq!(
             result.metadata.cover_image_id.as_deref(),
@@ -149,7 +157,7 @@ mod tests {
         book.add_resource("img1", "images/photo.jpg", vec![0xFF, 0xD8], "image/jpeg");
 
         let handler = CoverHandler;
-        let result = handler.apply(&book).unwrap();
+        let result = handler.apply(book).unwrap();
 
         assert_eq!(result.metadata.cover_image_id.as_deref(), Some("img1"));
     }
@@ -164,7 +172,7 @@ mod tests {
         });
 
         let handler = CoverHandler;
-        let result = handler.apply(&book).unwrap();
+        let result = handler.apply(book).unwrap();
 
         assert!(result.metadata.cover_image_id.is_none());
     }

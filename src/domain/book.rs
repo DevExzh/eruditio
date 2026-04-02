@@ -54,8 +54,8 @@ impl Book {
             .unwrap_or_else(|| format!("chapter_{}", self.spine.len()));
         let href = format!("{}.xhtml", &id);
 
-        let item = ManifestItem::new(&id, &href, "application/xhtml+xml")
-            .with_text(&chapter.content);
+        let item =
+            ManifestItem::new(&id, &href, "application/xhtml+xml").with_text(&chapter.content);
         self.manifest.insert(item);
         self.spine.add(&id);
 

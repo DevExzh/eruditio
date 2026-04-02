@@ -27,7 +27,9 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
     let len = bytes.len();
 
     // Fast path: scan for any special character. If none, return as-is.
-    let has_special = bytes.iter().any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''));
+    let has_special = bytes
+        .iter()
+        .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''));
     if !has_special {
         return text.to_string();
     }
@@ -37,12 +39,9 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
 
     while pos < len {
         // Find the next byte that needs escaping.
-        let next = bytes[pos..]
-            .iter()
-            .position(|&b| {
-                b == b'&' || b == b'<' || b == b'>'
-                    || (xml_mode && (b == b'"' || b == b'\''))
-            });
+        let next = bytes[pos..].iter().position(|&b| {
+            b == b'&' || b == b'<' || b == b'>' || (xml_mode && (b == b'"' || b == b'\''))
+        });
 
         match next {
             Some(offset) => {
@@ -58,12 +57,12 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
                     _ => unreachable!(),
                 }
                 pos += offset + 1;
-            }
+            },
             None => {
                 // No more special chars — copy the rest and done.
                 result.push_str(&text[pos..]);
                 break;
-            }
+            },
         }
     }
 
@@ -97,18 +96,18 @@ pub fn strip_tags(html: &str) -> String {
                 match memchr(b'>', &bytes[tag_start..]) {
                     Some(end_offset) => {
                         pos = tag_start + end_offset + 1;
-                    }
+                    },
                     None => {
                         // Unclosed tag — skip the rest.
                         break;
-                    }
+                    },
                 }
-            }
+            },
             None => {
                 // No more tags — copy remaining text.
                 result.push_str(&html[pos..]);
                 break;
-            }
+            },
         }
     }
 
@@ -156,11 +155,11 @@ pub fn unescape_basic_entities(text: &str) -> String {
                     result.push('&');
                     pos = entity_start + 1;
                 }
-            }
+            },
             None => {
                 result.push_str(&text[pos..]);
                 break;
-            }
+            },
         }
     }
 
@@ -328,7 +327,7 @@ pub fn find_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         let matched = haystack[candidate..candidate + needle.len()]
             .iter()
             .zip(needle)
-            .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase());
+            .all(|(a, b)| a.eq_ignore_ascii_case(b));
 
         if matched {
             return Some(candidate);
@@ -365,15 +364,15 @@ mod tests {
 
     #[test]
     fn escape_html_mixed() {
-        assert_eq!(
-            escape_html("a & b < c > d"),
-            "a &amp; b &lt; c &gt; d"
-        );
+        assert_eq!(escape_html("a & b < c > d"), "a &amp; b &lt; c &gt; d");
     }
 
     #[test]
     fn escape_html_unicode() {
-        assert_eq!(escape_html("caf\u{00E9} & th\u{00E9}"), "caf\u{00E9} &amp; th\u{00E9}");
+        assert_eq!(
+            escape_html("caf\u{00E9} & th\u{00E9}"),
+            "caf\u{00E9} &amp; th\u{00E9}"
+        );
     }
 
     // -- escape_xml ----------------------------------------------------------
@@ -397,10 +396,7 @@ mod tests {
 
     #[test]
     fn strip_tags_nested() {
-        assert_eq!(
-            strip_tags("<div><p>A</p><p>B</p></div>"),
-            "AB"
-        );
+        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "AB");
     }
 
     #[test]
@@ -477,26 +473,17 @@ mod tests {
 
     #[test]
     fn case_insensitive_basic() {
-        assert_eq!(
-            find_case_insensitive(b"Hello World", b"hello"),
-            Some(0)
-        );
+        assert_eq!(find_case_insensitive(b"Hello World", b"hello"), Some(0));
     }
 
     #[test]
     fn case_insensitive_middle() {
-        assert_eq!(
-            find_case_insensitive(b"foo BAR baz", b"bar"),
-            Some(4)
-        );
+        assert_eq!(find_case_insensitive(b"foo BAR baz", b"bar"), Some(4));
     }
 
     #[test]
     fn case_insensitive_no_match() {
-        assert_eq!(
-            find_case_insensitive(b"Hello", b"xyz"),
-            None
-        );
+        assert_eq!(find_case_insensitive(b"Hello", b"xyz"), None);
     }
 
     #[test]

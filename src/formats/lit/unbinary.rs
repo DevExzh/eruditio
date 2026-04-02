@@ -40,7 +40,7 @@ pub(super) fn read_utf8_char(data: &[u8], pos: usize) -> Result<(char, usize)> {
             return Err(EruditioError::Parse(format!(
                 "Invalid UTF-8 leading byte: 0x{b:02X}"
             )));
-        }
+        },
     };
     if pos + len > data.len() {
         return Err(EruditioError::Parse("Truncated UTF-8 sequence".into()));
@@ -205,7 +205,7 @@ pub fn unbinary_to_html(
                             _ => encode_char(c, &mut buf),
                         }
                     }
-                }
+                },
 
                 State::GetFlags => {
                     if oc == 0 {
@@ -214,7 +214,7 @@ pub fn unbinary_to_html(
                         frame.flags = oc as u8;
                         frame.state = State::GetTag;
                     }
-                }
+                },
 
                 State::GetTag => {
                     frame.state = if oc == 0 { State::Text } else { State::GetAttr };
@@ -231,18 +231,16 @@ pub fn unbinary_to_html(
                                     frame.tag_name = Some(name.clone());
                                     frame.tag_index = None;
                                     frame.use_atoms = true;
-                                }
+                                },
                                 None => {
                                     // Missing atom — use placeholder (matches calibre behavior)
                                     frame.tag_name = Some(format!("?atom{oc}?"));
                                     frame.tag_index = None;
                                     frame.use_atoms = true;
-                                }
+                                },
                             }
                         } else if (oc as usize) < map.tags.len() {
-                            let name = map.tags[oc as usize]
-                                .unwrap_or("unknown")
-                                .to_string();
+                            let name = map.tags[oc as usize].unwrap_or("unknown").to_string();
                             frame.tag_index = Some(oc as usize);
                             frame.tag_name = Some(name);
                             frame.use_atoms = false;
@@ -257,7 +255,7 @@ pub fn unbinary_to_html(
                     } else if frame.flags & FLAG_CLOSING != 0 {
                         break;
                     }
-                }
+                },
 
                 State::GetAttr => {
                     frame.in_censorship = false;
@@ -323,7 +321,7 @@ pub fn unbinary_to_html(
                             };
                         }
                     }
-                }
+                },
 
                 State::GetValueLength => {
                     if !frame.in_censorship {
@@ -343,7 +341,7 @@ pub fn unbinary_to_html(
                         frame.count = count;
                         frame.state = State::GetValue;
                     }
-                }
+                },
 
                 State::GetValue => {
                     if frame.count == 0xFFFE {
@@ -371,7 +369,7 @@ pub fn unbinary_to_html(
                             frame.state = State::GetAttr;
                         }
                     }
-                }
+                },
 
                 State::GetCustomLength => {
                     frame.count = oc as i64 - 1;
@@ -380,7 +378,7 @@ pub fn unbinary_to_html(
                     }
                     frame.tag_name = Some(String::new());
                     frame.state = State::GetCustom;
-                }
+                },
 
                 State::GetCustom => {
                     if let Some(ref mut name) = frame.tag_name {
@@ -393,7 +391,7 @@ pub fn unbinary_to_html(
                         }
                         frame.state = State::GetAttr;
                     }
-                }
+                },
 
                 State::GetAttrLength => {
                     frame.count = oc as i64 - 1;
@@ -402,7 +400,7 @@ pub fn unbinary_to_html(
                     }
                     buf.push(' ');
                     frame.state = State::GetCustomAttr;
-                }
+                },
 
                 State::GetCustomAttr => {
                     encode_char(c, &mut buf);
@@ -411,7 +409,7 @@ pub fn unbinary_to_html(
                         buf.push('=');
                         frame.state = State::GetValueLength;
                     }
-                }
+                },
 
                 State::GetHrefLength => {
                     frame.count = oc as i64 - 1;
@@ -420,7 +418,7 @@ pub fn unbinary_to_html(
                     }
                     frame.href_buf.clear();
                     frame.state = State::GetHref;
-                }
+                },
 
                 State::GetHref => {
                     frame.href_buf.push(c);
@@ -441,7 +439,7 @@ pub fn unbinary_to_html(
                         buf.push('"');
                         frame.state = State::GetAttr;
                     }
-                }
+                },
 
                 State::CloseTag => unreachable!(),
             }
@@ -468,8 +466,7 @@ fn escape_reserved(raw: &str) -> String {
     while i < len {
         if i + 1 < len && bytes[i] == b'<' && bytes[i + 1] == b'<' {
             // Preserve comment start: <<followed by!--
-            if i + 4 < len && bytes[i + 2] == b'!' && bytes[i + 3] == b'-' && bytes[i + 4] == b'-'
-            {
+            if i + 4 < len && bytes[i + 2] == b'!' && bytes[i + 3] == b'-' && bytes[i + 4] == b'-' {
                 result.push('<');
             } else {
                 result.push_str("&lt;");
@@ -623,7 +620,10 @@ mod tests {
 
     #[test]
     fn escape_reserved_preserves_comments() {
-        assert_eq!(escape_reserved("<<!--- comment --->>"), "<!--- comment --->");
+        assert_eq!(
+            escape_reserved("<<!--- comment --->>"),
+            "<!--- comment --->"
+        );
     }
 
     #[test]
@@ -635,10 +635,7 @@ mod tests {
                 path: "content/chapter1.html".to_string(),
             },
         );
-        assert_eq!(
-            item_path("ch1", "content", &manifest),
-            "chapter1.html"
-        );
+        assert_eq!(item_path("ch1", "content", &manifest), "chapter1.html");
     }
 
     #[test]

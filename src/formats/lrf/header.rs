@@ -76,10 +76,7 @@ impl LrfHeader {
         let compressed_info_size = read_u16_le(data, 0x4C);
 
         let (thumbnail_type, thumbnail_size) = if version > 800 {
-            (
-                Some(read_u16_le(data, 0x4E)),
-                Some(read_u32_le(data, 0x50)),
-            )
+            (Some(read_u16_le(data, 0x4E)), Some(read_u32_le(data, 0x50)))
         } else {
             (None, None)
         };
@@ -148,8 +145,8 @@ pub fn parse_metadata(data: &[u8], header: &LrfHeader) -> Result<LrfMetadata> {
 
 /// Parses the metadata XML into structured fields.
 fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
 
     let mut reader = Reader::from_str(xml);
     let mut meta = LrfMetadata::default();
@@ -172,25 +169,24 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                         if (name == "Title" || name == "Author") && in_book_info {
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"reading" {
-                                    pending_reading = Some(
-                                        String::from_utf8_lossy(&attr.value).to_string(),
-                                    );
+                                    pending_reading =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string());
                                 }
                             }
                         }
-                    }
+                    },
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 match name.as_str() {
                     "BookInfo" => in_book_info = false,
                     "DocInfo" => in_doc_info = false,
-                    _ => {}
+                    _ => {},
                 }
                 current_tag.clear();
                 pending_reading = None;
-            }
+            },
             Ok(Event::Text(ref e)) => {
                 let text = String::from_utf8_lossy(&e.clone().into_inner()).to_string();
                 if text.trim().is_empty() {
@@ -201,30 +197,30 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                         "Title" => {
                             meta.title = Some(text);
                             meta.title_reading = pending_reading.take();
-                        }
+                        },
                         "Author" => {
                             meta.author = Some(text);
                             meta.author_reading = pending_reading.take();
-                        }
+                        },
                         "Publisher" => meta.publisher = Some(text),
                         "Category" => meta.category = Some(text),
                         "Classification" => meta.classification = Some(text),
                         "FreeText" => meta.free_text = Some(text),
                         "BookID" => meta.book_id = Some(text),
-                        _ => {}
+                        _ => {},
                     }
                 } else if in_doc_info {
                     match current_tag.as_str() {
                         "Language" => meta.language = Some(text),
                         "Creator" => meta.creator = Some(text),
                         "CreationDate" => meta.creation_date = Some(text),
-                        _ => {}
+                        _ => {},
                     }
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
     }
 

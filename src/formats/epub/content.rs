@@ -1,6 +1,6 @@
 use crate::domain::Manifest;
-use crate::error::{EruditioError, Result};
 use crate::domain::manifest::ManifestData;
+use crate::error::{EruditioError, Result};
 use std::io::{Read, Seek};
 use zip::ZipArchive;
 
@@ -57,9 +57,9 @@ pub fn load_manifest_data<R: Read + Seek>(
                     Err(_) => {
                         log::warn!("EPUB: missing file in archive: {}", zip_path);
                         continue;
-                    }
+                    },
                 }
-            }
+            },
         };
 
         if let Some(item_mut) = manifest.get_mut(id) {
@@ -128,8 +128,14 @@ mod tests {
 
     #[test]
     fn resolve_href_joins_paths() {
-        assert_eq!(resolve_href("OEBPS/", "chapter1.xhtml"), "OEBPS/chapter1.xhtml");
-        assert_eq!(resolve_href("OEBPS/", "images/cover.jpg"), "OEBPS/images/cover.jpg");
+        assert_eq!(
+            resolve_href("OEBPS/", "chapter1.xhtml"),
+            "OEBPS/chapter1.xhtml"
+        );
+        assert_eq!(
+            resolve_href("OEBPS/", "images/cover.jpg"),
+            "OEBPS/images/cover.jpg"
+        );
         assert_eq!(resolve_href("", "chapter1.xhtml"), "chapter1.xhtml");
     }
 

@@ -1,7 +1,7 @@
 use crate::domain::TocItem;
 use crate::error::{EruditioError, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 
 /// Parses an EPUB3 navigation document, extracting the TOC from
 /// `<nav epub:type="toc">`.
@@ -32,7 +32,7 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                         if is_toc_nav(e) {
                             in_toc_nav = true;
                         }
-                    }
+                    },
                     "ol" if in_toc_nav => {
                         // If there's a pending item, push it before opening a child list.
                         if has_current_item && !item_pushed {
@@ -43,7 +43,7 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                             item_pushed = true;
                         }
                         list_stack.push(Vec::new());
-                    }
+                    },
                     "a" if in_toc_nav => {
                         in_anchor = true;
                         current_title.clear();
@@ -52,30 +52,28 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                         item_pushed = false;
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"href" {
-                                current_href =
-                                    String::from_utf8_lossy(&attr.value).into_owned();
+                                current_href = String::from_utf8_lossy(&attr.value).into_owned();
                             }
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Text(ref e)) => {
                 if in_anchor {
-                    current_title
-                        .push_str(&String::from_utf8_lossy(&e.clone().into_inner()));
+                    current_title.push_str(&String::from_utf8_lossy(&e.clone().into_inner()));
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 let tag = local_tag(e.name().as_ref());
                 match tag.as_str() {
                     "nav" if in_toc_nav => {
                         in_toc_nav = false;
-                    }
+                    },
                     "a" if in_toc_nav => {
                         in_anchor = false;
                         has_current_item = true;
-                    }
+                    },
                     "li" if in_toc_nav => {
                         // Push item if it wasn't already pushed (no nested <ol>).
                         if has_current_item && !item_pushed {
@@ -88,7 +86,7 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                         item_pushed = false;
                         current_title.clear();
                         current_href.clear();
-                    }
+                    },
                     "ol" if in_toc_nav => {
                         // Close the current list level.
                         if let Some(children) = list_stack.pop() {
@@ -102,15 +100,15 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                                 return Ok(children);
                             }
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(EruditioError::Parse(format!("Nav XHTML error: {}", e)));
-            }
-            _ => {}
+            },
+            _ => {},
         }
         buf.clear();
     }

@@ -36,10 +36,7 @@ mod tests {
 
     #[test]
     fn strip_tags_removes_html() {
-        assert_eq!(
-            strip_tags("<p>Hello <b>world</b></p>"),
-            "Hello world"
-        );
+        assert_eq!(strip_tags("<p>Hello <b>world</b></p>"), "Hello world");
     }
 
     #[test]

@@ -49,17 +49,7 @@ pub fn format_guid(data: &[u8]) -> String {
     let d3 = u16_le(&data[6..8]);
     format!(
         "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
-        d1,
-        d2,
-        d3,
-        data[8],
-        data[9],
-        data[10],
-        data[11],
-        data[12],
-        data[13],
-        data[14],
-        data[15],
+        d1, d2, d3, data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
     )
 }
 
@@ -332,9 +322,9 @@ pub fn lzx_decompress_section(
             decoder = Some(Lzxd::new(window_size));
         }
 
-        let lzx = decoder.as_mut().ok_or_else(|| {
-            EruditioError::Compression("LZX decoder not initialized".into())
-        })?;
+        let lzx = decoder
+            .as_mut()
+            .ok_or_else(|| EruditioError::Compression("LZX decoder not initialized".into()))?;
 
         // Determine compressed data range for this block
         let comp_start = if i < reset_table.block_addresses.len() {
@@ -357,8 +347,7 @@ pub fn lzx_decompress_section(
 
         // Output size for this block
         let bytes_produced = (i as u64) * block_len;
-        let output_size =
-            (block_len.min(uncompressed_len.saturating_sub(bytes_produced))) as usize;
+        let output_size = (block_len.min(uncompressed_len.saturating_sub(bytes_produced))) as usize;
         if output_size == 0 {
             break;
         }
@@ -366,12 +355,12 @@ pub fn lzx_decompress_section(
         match lzx.decompress_next(compressed_block, output_size) {
             Ok(decompressed) => {
                 result.extend_from_slice(decompressed);
-            }
+            },
             Err(e) => {
                 // Log warning but try to continue with partial data
                 log::warn!("LZX decompression error at block {i}: {e}");
                 break;
-            }
+            },
         }
     }
 
@@ -557,24 +546,12 @@ mod tests {
 
     #[test]
     fn window_size_conversions() {
-        assert_eq!(
-            window_size_from_bytes(0x8000).unwrap(),
-            WindowSize::KB32
-        );
-        assert_eq!(
-            window_size_from_bytes(0x10000).unwrap(),
-            WindowSize::KB64
-        );
+        assert_eq!(window_size_from_bytes(0x8000).unwrap(), WindowSize::KB32);
+        assert_eq!(window_size_from_bytes(0x10000).unwrap(), WindowSize::KB64);
         assert!(window_size_from_bytes(12345).is_err());
 
-        assert_eq!(
-            window_size_from_bits(15).unwrap(),
-            WindowSize::KB32
-        );
-        assert_eq!(
-            window_size_from_bits(16).unwrap(),
-            WindowSize::KB64
-        );
+        assert_eq!(window_size_from_bits(15).unwrap(), WindowSize::KB32);
+        assert_eq!(window_size_from_bits(16).unwrap(), WindowSize::KB64);
         assert!(window_size_from_bits(14).is_err());
         assert!(window_size_from_bits(26).is_err());
     }
@@ -588,10 +565,7 @@ mod tests {
             0xD3, 0x11, // d3 LE
             0x85, 0x40, 0x00, 0xC0, 0x4F, 0x58, 0xC3, 0xCF,
         ];
-        assert_eq!(
-            format_guid(&data),
-            "{67F6E4A2-60BF-11D3-8540-00C04F58C3CF}"
-        );
+        assert_eq!(format_guid(&data), "{67F6E4A2-60BF-11D3-8540-00C04F58C3CF}");
     }
 
     #[test]

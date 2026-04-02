@@ -5,8 +5,8 @@
 //! reader (Kepub files are valid EPUBs). The writer adds Kobo span markup
 //! before delegating to the EPUB writer.
 
-use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::domain::manifest::ManifestData;
+use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::epub::{EpubReader, EpubWriter};
 use std::io::{Read, Write};
@@ -114,7 +114,7 @@ fn insert_kobo_spans(html: &str) -> String {
                 None => {
                     out.push_str(&html[pos..]);
                     break;
-                }
+                },
             };
 
             let tag_content = &html[tag_start..tag_end];

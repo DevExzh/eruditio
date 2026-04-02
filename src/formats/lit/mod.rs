@@ -13,14 +13,14 @@ pub mod writer;
 use std::collections::HashMap;
 use std::io::Read;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::domain::{Book, Chapter, FormatReader, Metadata};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::itss::{self, DirectoryEntry};
 
-use unbinary::{consume_sized_utf8_string, AtomTable, ManifestPath};
+use unbinary::{AtomTable, ManifestPath, consume_sized_utf8_string};
 
 pub use writer::LitWriter;
 
@@ -79,7 +79,9 @@ impl LitContainer {
         // --- Secondary header (CAOL + ITSF) ---
         let sec_hdr_offset = hdr_len + num_pieces * 16;
         if sec_hdr_offset + sec_hdr_len > data.len() {
-            return Err(EruditioError::Format("Secondary header out of range".into()));
+            return Err(EruditioError::Format(
+                "Secondary header out of range".into(),
+            ));
         }
         let sec_hdr = &data[sec_hdr_offset..sec_hdr_offset + sec_hdr_len];
 
@@ -136,8 +138,12 @@ impl LitContainer {
 
                     if chunk_size > 0 && piece.len() >= 32 {
                         Self::parse_ifcm_directory(
-                            piece, chunk_size, num_chunks, entry_chunklen,
-                            entry_unknown, &mut entries,
+                            piece,
+                            chunk_size,
+                            num_chunks,
+                            entry_chunklen,
+                            entry_unknown,
+                            &mut entries,
                         )?;
                     }
                 }
@@ -148,8 +154,7 @@ impl LitContainer {
         let section_names = Self::read_section_names(&entries, &data, content_offset)?;
 
         // --- Read manifest ---
-        let manifest_items =
-            Self::read_manifest(&entries, &data, content_offset)?;
+        let manifest_items = Self::read_manifest(&entries, &data, content_offset)?;
 
         // --- DRM check ---
         // Only level-5 DRM (owner-locked license) is unrecoverable.
@@ -239,9 +244,9 @@ impl LitContainer {
         let mut prepad = 2usize;
 
         for name in &hash_names {
-            let entry = entries.get(*name).ok_or_else(|| {
-                EruditioError::Parse(format!("DRM: missing {name}"))
-            })?;
+            let entry = entries
+                .get(*name)
+                .ok_or_else(|| EruditioError::Parse(format!("DRM: missing {name}")))?;
             let mut file_data = Self::read_raw(data, content_offset, entry)?;
 
             if prepad > 0 {
@@ -267,9 +272,9 @@ impl LitContainer {
         }
 
         // Decrypt the sealed entry to recover the book key
-        let sealed_entry = entries.get("/DRMStorage/DRMSealed").ok_or_else(|| {
-            EruditioError::Parse("DRM: missing DRMSealed".into())
-        })?;
+        let sealed_entry = entries
+            .get("/DRMStorage/DRMSealed")
+            .ok_or_else(|| EruditioError::Parse("DRM: missing DRMSealed".into()))?;
         let sealed = Self::read_raw(data, content_offset, sealed_entry)?;
 
         let decrypted = des_ecb_decrypt(&sealed, &des_key);
@@ -280,9 +285,7 @@ impl LitContainer {
             ));
         }
         if decrypted.len() < 9 {
-            return Err(EruditioError::Encryption(
-                "Decrypted key too short".into(),
-            ));
+            return Err(EruditioError::Encryption("Decrypted key too short".into()));
         }
 
         let mut book_key = [0u8; 8];
@@ -392,11 +395,7 @@ impl LitContainer {
         Ok(items)
     }
 
-    fn read_raw(
-        data: &[u8],
-        content_offset: u64,
-        entry: &DirectoryEntry,
-    ) -> Result<Vec<u8>> {
+    fn read_raw(data: &[u8], content_offset: u64, entry: &DirectoryEntry) -> Result<Vec<u8>> {
         let start = (content_offset + entry.offset) as usize;
         let end = start + entry.size as usize;
         if end > data.len() {
@@ -485,8 +484,7 @@ impl LitContainer {
                 let rt_entry = self.entries.get(&rt_path).ok_or_else(|| {
                     EruditioError::Parse(format!("Missing reset table: {rt_path}"))
                 })?;
-                let reset_table =
-                    Self::read_raw(&self.data, self.content_offset, rt_entry)?;
+                let reset_table = Self::read_raw(&self.data, self.content_offset, rt_entry)?;
                 content = lit_lzx_decompress(&content, &control, &reset_table)?;
                 if csize <= control.len() {
                     control = control[csize..].to_vec();
@@ -583,11 +581,7 @@ fn des_ecb_decrypt(data: &[u8], key: &[u8; 8]) -> Vec<u8> {
 // LZX decompression (LIT variant)
 // ---------------------------------------------------------------------------
 
-fn lit_lzx_decompress(
-    content: &[u8],
-    control: &[u8],
-    reset_table: &[u8],
-) -> Result<Vec<u8>> {
+fn lit_lzx_decompress(content: &[u8], control: &[u8], reset_table: &[u8]) -> Result<Vec<u8>> {
     let window_size_bytes = itss::parse_lzxc_control_data_lit(control)?;
     let window_size = itss::window_size_from_bytes(window_size_bytes)?;
 
@@ -682,7 +676,7 @@ fn strip_common_prefix(items: &mut [LitManifestItem]) {
                 Some(idx) => shared = trimmed[..idx + 1].to_string(),
                 None => {
                     shared.clear();
-                }
+                },
             }
         }
         if shared.is_empty() {
@@ -712,46 +706,46 @@ fn parse_opf_metadata(opf_xml: &str, metadata: &mut Metadata) {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 current_tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
-            }
+            },
             Ok(Event::Text(e)) => {
                 let text = String::from_utf8_lossy(&e.into_inner()).trim().to_string();
                 if !text.is_empty() {
                     match current_tag.as_str() {
                         "dc:title" if metadata.title.is_none() => {
                             metadata.title = Some(text);
-                        }
+                        },
                         "dc:creator" => {
                             metadata.authors.push(text);
-                        }
+                        },
                         "dc:language" if metadata.language.is_none() => {
                             metadata.language = Some(text);
-                        }
+                        },
                         "dc:publisher" if metadata.publisher.is_none() => {
                             metadata.publisher = Some(text);
-                        }
+                        },
                         "dc:description" if metadata.description.is_none() => {
                             metadata.description = Some(text);
-                        }
+                        },
                         "dc:identifier" if metadata.identifier.is_none() => {
                             metadata.identifier = Some(text);
-                        }
+                        },
                         "dc:subject" => {
                             metadata.subjects.push(text);
-                        }
+                        },
                         "dc:rights" if metadata.rights.is_none() => {
                             metadata.rights = Some(text);
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
                 current_tag.clear();
-            }
+            },
             Ok(Event::End(_)) => {
                 current_tag.clear();
-            }
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
         buf.clear();
     }

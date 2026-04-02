@@ -5,6 +5,7 @@
 
 use crate::domain::Book;
 use crate::formats::common::html_utils::strip_tags;
+use crate::formats::common::text_utils::escape_html;
 
 /// Converts PML markup to HTML.
 pub fn pml_to_html(pml: &str) -> String {
@@ -40,7 +41,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     html.push_str("<!-- pagebreak -->\n");
                     pos += 1;
-                }
+                },
                 // Chapter title (h1 with page break).
                 b'x' => {
                     if in_paragraph {
@@ -60,7 +61,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     html.push_str("<h1>");
                     html.push_str(&escape_html(title));
                     html.push_str("</h1>\n");
-                }
+                },
                 // Extended headings: \X0 through \X4 → h2 through h6.
                 b'X' => {
                     pos += 1;
@@ -87,7 +88,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     html.push_str(&format!("<h{level}>"));
                     html.push_str(&escape_html(title));
                     html.push_str(&format!("</h{level}>\n"));
-                }
+                },
                 // Bold toggle.
                 b'b' | b'B' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -98,7 +99,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     bold = !bold;
                     pos += 1;
-                }
+                },
                 // Italic toggle.
                 b'i' | b'I' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -109,7 +110,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     italic = !italic;
                     pos += 1;
-                }
+                },
                 // Underline toggle.
                 b'u' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -120,7 +121,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     underline = !underline;
                     pos += 1;
-                }
+                },
                 // Strikethrough toggle.
                 b'o' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -131,7 +132,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     strikethrough = !strikethrough;
                     pos += 1;
-                }
+                },
                 // Large text toggle.
                 b'l' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -142,7 +143,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     large = !large;
                     pos += 1;
-                }
+                },
                 // Small caps toggle.
                 b'k' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -153,7 +154,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     small_caps = !small_caps;
                     pos += 1;
-                }
+                },
                 // Superscript.
                 b'S' if pos + 1 < len && bytes[pos + 1] == b'p' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -164,7 +165,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     superscript = !superscript;
                     pos += 2;
-                }
+                },
                 // Subscript.
                 b'S' if pos + 1 < len && bytes[pos + 1] == b'b' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
@@ -175,7 +176,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     }
                     subscript = !subscript;
                     pos += 2;
-                }
+                },
                 // Center alignment.
                 b'c' => {
                     if in_paragraph {
@@ -198,7 +199,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 2;
                     }
-                }
+                },
                 // Right alignment.
                 b'r' => {
                     if in_paragraph {
@@ -219,19 +220,19 @@ pub fn pml_to_html(pml: &str) -> String {
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 2;
                     }
-                }
+                },
                 // Indent.
                 b't' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
                     html.push_str("&emsp;");
                     pos += 1;
-                }
+                },
                 // Newline / line break.
                 b'n' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
                     html.push_str("<br />");
                     pos += 1;
-                }
+                },
                 // Link: \q="#target"text\q
                 b'q' => {
                     pos += 1;
@@ -251,17 +252,14 @@ pub fn pml_to_html(pml: &str) -> String {
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 2; // skip closing \q
                     }
-                }
+                },
                 // Link target: \Q="id"
                 b'Q' => {
                     pos += 1;
                     let target_id = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!(
-                        "<a id=\"{}\"></a>",
-                        escape_html(&target_id)
-                    ));
-                }
+                    html.push_str(&format!("<a id=\"{}\"></a>", escape_html(&target_id)));
+                },
                 // Image: \m="filename.png"
                 b'm' => {
                     pos += 1;
@@ -271,26 +269,20 @@ pub fn pml_to_html(pml: &str) -> String {
                         "<img src=\"{}\" alt=\"\" />",
                         escape_html(&filename)
                     ));
-                }
+                },
                 // Footnote reference: \Fn="id" or sidebar reference: \Sd="id"
                 b'F' if pos + 1 < len && bytes[pos + 1] == b'n' => {
                     pos += 2;
                     let fn_id = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!(
-                        "<a href=\"#fn-{}\">[*]</a>",
-                        escape_html(&fn_id)
-                    ));
-                }
+                    html.push_str(&format!("<a href=\"#fn-{}\">[*]</a>", escape_html(&fn_id)));
+                },
                 b'S' if pos + 1 < len && bytes[pos + 1] == b'd' => {
                     pos += 2;
                     let sb_id = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!(
-                        "<a href=\"#sb-{}\">[*]</a>",
-                        escape_html(&sb_id)
-                    ));
-                }
+                    html.push_str(&format!("<a href=\"#sb-{}\">[*]</a>", escape_html(&sb_id)));
+                },
                 // Footnote content: \FN="id"...\FN
                 b'F' if pos + 1 < len && bytes[pos + 1] == b'N' => {
                     pos += 2;
@@ -306,16 +298,17 @@ pub fn pml_to_html(pml: &str) -> String {
                         match memchr::memchr(b'\\', &bytes[pos..len]) {
                             Some(offset) => {
                                 let abs = pos + offset;
-                                if abs + 2 < len && bytes[abs + 1] == b'F' && bytes[abs + 2] == b'N' {
+                                if abs + 2 < len && bytes[abs + 1] == b'F' && bytes[abs + 2] == b'N'
+                                {
                                     pos = abs;
                                     break;
                                 }
                                 pos = abs + 1;
-                            }
+                            },
                             None => {
                                 pos = len;
                                 break;
-                            }
+                            },
                         }
                     }
                     html.push_str(&escape_html(&pml[content_start..pos]));
@@ -323,7 +316,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 3; // skip \FN
                     }
-                }
+                },
                 // Sidebar content: \SB="id"...\SB
                 b'S' if pos + 1 < len && bytes[pos + 1] == b'B' => {
                     pos += 2;
@@ -338,16 +331,17 @@ pub fn pml_to_html(pml: &str) -> String {
                         match memchr::memchr(b'\\', &bytes[pos..len]) {
                             Some(offset) => {
                                 let abs = pos + offset;
-                                if abs + 2 < len && bytes[abs + 1] == b'S' && bytes[abs + 2] == b'B' {
+                                if abs + 2 < len && bytes[abs + 1] == b'S' && bytes[abs + 2] == b'B'
+                                {
                                     pos = abs;
                                     break;
                                 }
                                 pos = abs + 1;
-                            }
+                            },
                             None => {
                                 pos = len;
                                 break;
-                            }
+                            },
                         }
                     }
                     html.push_str(&escape_html(&pml[content_start..pos]));
@@ -355,7 +349,7 @@ pub fn pml_to_html(pml: &str) -> String {
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 3; // skip \SB
                     }
-                }
+                },
                 // Horizontal rule.
                 b'w' => {
                     if in_paragraph {
@@ -370,19 +364,19 @@ pub fn pml_to_html(pml: &str) -> String {
                     };
                     html.push_str(&format!("<hr style=\"width: {};\" />\n", w));
                     pos += 1;
-                }
+                },
                 // Em dash.
                 b'-' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
                     html.push('\u{2014}');
                     pos += 1;
-                }
+                },
                 // Escaped backslash.
                 b'\\' => {
                     ensure_paragraph(&mut html, &mut in_paragraph);
                     html.push('\\');
                     pos += 1;
-                }
+                },
                 // Accented character: \aXXX (3-digit code).
                 b'a' => {
                     pos += 1;
@@ -397,7 +391,7 @@ pub fn pml_to_html(pml: &str) -> String {
                         ensure_paragraph(&mut html, &mut in_paragraph);
                         html.push(ch);
                     }
-                }
+                },
                 // Unicode character: \UXXXX (4-digit hex).
                 b'U' => {
                     pos += 1;
@@ -412,12 +406,12 @@ pub fn pml_to_html(pml: &str) -> String {
                         ensure_paragraph(&mut html, &mut in_paragraph);
                         html.push(ch);
                     }
-                }
+                },
                 // Unknown escape — skip one full UTF-8 character.
                 _ => {
                     let ch_len = pml[pos..].chars().next().map_or(1, |c| c.len_utf8());
                     pos += ch_len;
-                }
+                },
             }
         } else if bytes[pos] == b'\n' {
             // Newline in PML starts a new paragraph.
@@ -444,8 +438,7 @@ pub fn pml_to_html(pml: &str) -> String {
             ensure_paragraph(&mut html, &mut in_paragraph);
             let start = pos;
             let remaining = &bytes[pos..len];
-            let skip = memchr::memchr3(b'\\', b'\n', b'\r', remaining)
-                .unwrap_or(remaining.len());
+            let skip = memchr::memchr3(b'\\', b'\n', b'\r', remaining).unwrap_or(remaining.len());
             pos += skip;
             html.push_str(&escape_html(&pml[start..pos]));
         }
@@ -554,8 +547,12 @@ fn html_to_pml(html: &str, pml: &mut String) {
                 pml.push_str("\\i");
             } else if tag == "<u>" || tag == "</u>" {
                 pml.push_str("\\u");
-            } else if tag == "<s>" || tag == "</s>" || tag == "<strike>" || tag == "</strike>"
-                || tag == "<del>" || tag == "</del>"
+            } else if tag == "<s>"
+                || tag == "</s>"
+                || tag == "<strike>"
+                || tag == "</strike>"
+                || tag == "<del>"
+                || tag == "</del>"
             {
                 pml.push_str("\\o");
             } else if tag == "<sup>" || tag == "</sup>" {
@@ -611,7 +608,7 @@ fn pml_escape_char(pml: &mut String, ch: char) {
         '\\' => pml.push_str("\\\\"),
         c if (c as u32) > 127 => {
             pml.push_str(&format!("\\U{:04X}", c as u32));
-        }
+        },
         c => pml.push(c),
     }
 }
@@ -692,9 +689,6 @@ fn ensure_paragraph(html: &mut String, in_paragraph: &mut bool) {
 }
 
 /// Escapes text for HTML output.
-fn escape_html(text: &str) -> String {
-    crate::formats::common::text_utils::escape_html(text)
-}
 
 #[cfg(test)]
 mod tests {

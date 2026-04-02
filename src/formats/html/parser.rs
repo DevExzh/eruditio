@@ -2,7 +2,7 @@
 
 use crate::domain::metadata::Metadata;
 use crate::formats::common::text_utils;
-
+use crate::formats::common::text_utils::escape_xml as escape_html;
 
 /// Extracts metadata from HTML `<head>` section.
 ///
@@ -52,17 +52,23 @@ pub fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
         let close_tag = format!("</h{}>", level);
 
         let mut search_from = 0;
-        while let Some(pos) = text_utils::find_case_insensitive(body[search_from..].as_bytes(), open_tag.as_bytes()) {
+        while let Some(pos) =
+            text_utils::find_case_insensitive(&body.as_bytes()[search_from..], open_tag.as_bytes())
+        {
             let abs_pos = search_from + pos;
 
             // Extract the heading text.
             let after_open = &body[abs_pos..];
             if let Some(gt) = after_open.find('>') {
                 let content_start = abs_pos + gt + 1;
-                if let Some(close_pos) = text_utils::find_case_insensitive(body[content_start..].as_bytes(), close_tag.as_bytes()) {
-                    let heading_text = strip_html_tags(&body[content_start..content_start + close_pos])
-                        .trim()
-                        .to_string();
+                if let Some(close_pos) = text_utils::find_case_insensitive(
+                    &body.as_bytes()[content_start..],
+                    close_tag.as_bytes(),
+                ) {
+                    let heading_text =
+                        strip_html_tags(&body[content_start..content_start + close_pos])
+                            .trim()
+                            .to_string();
                     if !heading_text.is_empty() {
                         split_points.push((abs_pos, heading_text));
                     }
@@ -155,11 +161,7 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
     let content_end = lower[content_start..].find(&close)? + content_start;
 
     let text = html[content_start..content_end].trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// Extracts content between an opening tag (with possible attributes) and closing tag.
@@ -194,16 +196,16 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
             match name.as_str() {
                 "author" | "dc.creator" => {
                     meta.authors.push(content);
-                }
+                },
                 "description" | "dc.description" => {
                     meta.description = Some(content);
-                }
+                },
                 "language" | "dc.language" => {
                     meta.language = Some(content);
-                }
+                },
                 "publisher" | "dc.publisher" => {
                     meta.publisher = Some(content);
-                }
+                },
                 "keywords" | "dc.subject" => {
                     for kw in content.split(',') {
                         let trimmed = kw.trim().to_string();
@@ -211,13 +213,14 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
                             meta.subjects.push(trimmed);
                         }
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
         // Also check http-equiv for Content-Language.
-        if tag_lower.contains("http-equiv") && tag_lower.contains("content-language")
+        if tag_lower.contains("http-equiv")
+            && tag_lower.contains("content-language")
             && let Some(content) = extract_attribute(tag, "content")
         {
             meta.language = Some(content);
@@ -271,9 +274,6 @@ fn strip_outer_tags(html: &str) -> String {
 }
 
 /// Escapes text for safe use in HTML attributes and content.
-fn escape_html(text: &str) -> String {
-    crate::formats::common::text_utils::escape_xml(text)
-}
 
 #[cfg(test)]
 mod tests {
@@ -288,7 +288,8 @@ mod tests {
 
     #[test]
     fn extracts_meta_author() {
-        let html = r#"<html><head><meta name="author" content="Jane Doe"></head><body></body></html>"#;
+        let html =
+            r#"<html><head><meta name="author" content="Jane Doe"></head><body></body></html>"#;
         let meta = extract_metadata(html);
         assert_eq!(meta.authors, vec!["Jane Doe"]);
     }

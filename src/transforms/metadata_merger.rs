@@ -1,7 +1,7 @@
 //! Merges user-provided metadata overrides into a book.
 
-use crate::domain::metadata::Metadata;
 use crate::domain::Book;
+use crate::domain::metadata::Metadata;
 use crate::domain::traits::Transform;
 use crate::error::Result;
 
@@ -24,8 +24,8 @@ impl Transform for MetadataMerger {
         "metadata_merger"
     }
 
-    fn apply(&self, book: &Book) -> Result<Book> {
-        let mut result = book.clone();
+    fn apply(&self, book: Book) -> Result<Book> {
+        let mut result = book;
         let meta = &mut result.metadata;
         let ovr = &self.overrides;
 
@@ -102,7 +102,7 @@ mod tests {
         overrides.title = Some("New Title".into());
 
         let merger = MetadataMerger::new(overrides);
-        let result = merger.apply(&book).unwrap();
+        let result = merger.apply(book).unwrap();
 
         assert_eq!(result.metadata.title.as_deref(), Some("New Title"));
     }
@@ -117,7 +117,7 @@ mod tests {
         overrides.publisher = Some("New Publisher".into());
 
         let merger = MetadataMerger::new(overrides);
-        let result = merger.apply(&book).unwrap();
+        let result = merger.apply(book).unwrap();
 
         assert_eq!(result.metadata.title.as_deref(), Some("Keep Me"));
         assert_eq!(result.metadata.language.as_deref(), Some("en"));
@@ -133,7 +133,7 @@ mod tests {
         overrides.authors = vec!["New Author".into()];
 
         let merger = MetadataMerger::new(overrides);
-        let result = merger.apply(&book).unwrap();
+        let result = merger.apply(book).unwrap();
 
         assert_eq!(result.metadata.authors, vec!["New Author"]);
     }
@@ -146,7 +146,7 @@ mod tests {
         let overrides = Metadata::default(); // authors is empty vec
 
         let merger = MetadataMerger::new(overrides);
-        let result = merger.apply(&book).unwrap();
+        let result = merger.apply(book).unwrap();
 
         assert_eq!(result.metadata.authors, vec!["Keep"]);
     }
@@ -164,7 +164,7 @@ mod tests {
             .insert("new_key".into(), "new_value".into());
 
         let merger = MetadataMerger::new(overrides);
-        let result = merger.apply(&book).unwrap();
+        let result = merger.apply(book).unwrap();
 
         assert_eq!(result.metadata.extended.get("existing").unwrap(), "value");
         assert_eq!(
@@ -182,7 +182,7 @@ mod tests {
         overrides.title = Some("Changed".into());
 
         let merger = MetadataMerger::new(overrides);
-        let _result = merger.apply(&book).unwrap();
+        let _result = merger.apply(book.clone()).unwrap();
 
         assert_eq!(book.metadata.title.as_deref(), Some("Original"));
     }

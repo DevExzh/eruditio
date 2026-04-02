@@ -47,7 +47,7 @@ fn main() {
                 println!("  ERROR: Could not read file: {}", e);
                 fail += 1;
                 continue;
-            }
+            },
         };
 
         println!("\n--- {} ({} bytes) ---", name, size);
@@ -61,7 +61,10 @@ fn main() {
                 let total_text: usize = chapters.iter().map(|c| c.content.len()).sum();
                 if total_text == 0 || chapters.is_empty() {
                     no_text += 1;
-                    println!("  NO_TEXT ({:.1}ms) - no text layer found", elapsed.as_secs_f64() * 1000.0);
+                    println!(
+                        "  NO_TEXT ({:.1}ms) - no text layer found",
+                        elapsed.as_secs_f64() * 1000.0
+                    );
                 } else {
                     success += 1;
                     println!("  OK ({:.1}ms)", elapsed.as_secs_f64() * 1000.0);
@@ -69,7 +72,8 @@ fn main() {
                     println!("  Total text: {} chars", total_text);
                     // Preview first page
                     if let Some(ch) = chapters.first() {
-                        let preview: String = ch.content
+                        let preview: String = ch
+                            .content
                             .chars()
                             .filter(|c| !c.is_control() && *c != '<' && *c != '>')
                             .take(200)
@@ -77,19 +81,22 @@ fn main() {
                         println!("  Preview: {}...", preview.trim());
                     }
                 }
-            }
+            },
             Err(e) => {
                 let elapsed = start.elapsed();
                 fail += 1;
                 println!("  FAIL ({:.1}ms): {}", elapsed.as_secs_f64() * 1000.0, e);
-            }
+            },
         }
     }
 
     println!("\n{}", "=".repeat(80));
     println!(
         "Results: {} with text, {} no text, {} failed (out of {} files)",
-        success, no_text, fail, entries.len()
+        success,
+        no_text,
+        fail,
+        entries.len()
     );
     println!("{}", "=".repeat(80));
 }
