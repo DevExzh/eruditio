@@ -4,7 +4,7 @@ use zip::ZipArchive;
 
 /// Validates the mimetype file in an EPUB archive.
 /// It must be exactly 'application/epub+zip'.
-pub fn verify_mimetype<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<()> {
+pub(crate) fn verify_mimetype<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<()> {
     let mut mimetype_file = archive
         .by_name("mimetype")
         .map_err(|_| EruditioError::Format("Missing mimetype file".to_string()))?;

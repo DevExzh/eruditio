@@ -3,32 +3,33 @@
 //! The EXTH header is an optional block within Record 0, immediately after
 //! the MOBI header. It contains a variable number of typed metadata records
 //! (author, publisher, ISBN, description, cover offset, etc.).
+#![allow(dead_code)]
 
 use crate::error::{EruditioError, Result};
 use crate::formats::common::palm_db::{read_u32_be, write_u32_be};
 
 // --- Well-known EXTH record type codes ---
 
-pub const EXTH_AUTHOR: u32 = 100;
-pub const EXTH_PUBLISHER: u32 = 101;
-pub const EXTH_DESCRIPTION: u32 = 103;
-pub const EXTH_ISBN: u32 = 104;
-pub const EXTH_SUBJECT: u32 = 105;
-pub const EXTH_PUBLISHED_DATE: u32 = 106;
-pub const EXTH_RIGHTS: u32 = 109;
-pub const EXTH_ASIN: u32 = 113;
-pub const EXTH_ADULT: u32 = 117;
-pub const EXTH_KF8_BOUNDARY: u32 = 121;
-pub const EXTH_COVER_OFFSET: u32 = 201;
-pub const EXTH_THUMB_OFFSET: u32 = 202;
-pub const EXTH_CREATOR_SOFTWARE: u32 = 204;
-pub const EXTH_UPDATED_TITLE: u32 = 503;
-pub const EXTH_LANGUAGE: u32 = 524;
-pub const EXTH_CDE_TYPE: u32 = 501;
+pub(crate) const EXTH_AUTHOR: u32 = 100;
+pub(crate) const EXTH_PUBLISHER: u32 = 101;
+pub(crate) const EXTH_DESCRIPTION: u32 = 103;
+pub(crate) const EXTH_ISBN: u32 = 104;
+pub(crate) const EXTH_SUBJECT: u32 = 105;
+pub(crate) const EXTH_PUBLISHED_DATE: u32 = 106;
+pub(crate) const EXTH_RIGHTS: u32 = 109;
+pub(crate) const EXTH_ASIN: u32 = 113;
+pub(crate) const EXTH_ADULT: u32 = 117;
+pub(crate) const EXTH_KF8_BOUNDARY: u32 = 121;
+pub(crate) const EXTH_COVER_OFFSET: u32 = 201;
+pub(crate) const EXTH_THUMB_OFFSET: u32 = 202;
+pub(crate) const EXTH_CREATOR_SOFTWARE: u32 = 204;
+pub(crate) const EXTH_UPDATED_TITLE: u32 = 503;
+pub(crate) const EXTH_LANGUAGE: u32 = 524;
+pub(crate) const EXTH_CDE_TYPE: u32 = 501;
 
 /// A single EXTH record.
 #[derive(Debug, Clone)]
-pub struct ExthRecord {
+pub(crate) struct ExthRecord {
     /// Record type code.
     pub record_type: u32,
     /// Raw record data (interpretation depends on type).
@@ -53,7 +54,7 @@ impl ExthRecord {
 
 /// Parsed EXTH header containing all metadata records.
 #[derive(Debug, Clone, Default)]
-pub struct ExthHeader {
+pub(crate) struct ExthHeader {
     pub records: Vec<ExthRecord>,
 }
 
@@ -143,7 +144,7 @@ impl ExthHeader {
 }
 
 /// Builds a serialized EXTH header block from a list of (type, data) pairs.
-pub fn build_exth(records: &[(u32, &[u8])]) -> Vec<u8> {
+pub(crate) fn build_exth(records: &[(u32, &[u8])]) -> Vec<u8> {
     if records.is_empty() {
         return Vec::new();
     }

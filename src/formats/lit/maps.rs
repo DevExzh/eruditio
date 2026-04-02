@@ -728,7 +728,7 @@ pub(super) static ATTRS_WBR: &[(u16, &str)] = &[(0x9399, "clear")];
 // ---------------------------------------------------------------------------
 
 /// Look up a per-tag HTML attribute by tag index and attribute code.
-pub fn html_tag_attr(tag_index: usize, code: u16) -> Option<&'static str> {
+pub(crate) fn html_tag_attr(tag_index: usize, code: u16) -> Option<&'static str> {
     let table: &[(u16, &str)] = match tag_index {
         3 => ATTRS_A,
         5 => ATTRS_ADDRESS,
@@ -792,7 +792,7 @@ pub fn html_tag_attr(tag_index: usize, code: u16) -> Option<&'static str> {
 }
 
 /// Look up a global HTML attribute by code.
-pub fn html_global_attr(code: u16) -> Option<&'static str> {
+pub(crate) fn html_global_attr(code: u16) -> Option<&'static str> {
     lookup(HTML_GLOBAL_ATTRS, code)
 }
 
@@ -873,12 +873,12 @@ pub(super) static OPF_ATTRS: &[(u16, &str)] = &[
 ];
 
 /// Look up an OPF attribute by code (global only; no per-tag attrs for OPF).
-pub fn opf_global_attr(code: u16) -> Option<&'static str> {
+pub(crate) fn opf_global_attr(code: u16) -> Option<&'static str> {
     lookup(OPF_ATTRS, code)
 }
 
 /// OPF has no per-tag attributes.
-pub fn opf_tag_attr(_tag_index: usize, _code: u16) -> Option<&'static str> {
+pub(crate) fn opf_tag_attr(_tag_index: usize, _code: u16) -> Option<&'static str> {
     None
 }
 
@@ -887,19 +887,19 @@ pub fn opf_tag_attr(_tag_index: usize, _code: u16) -> Option<&'static str> {
 // ---------------------------------------------------------------------------
 
 /// A complete set of tag/attribute maps for the unbinary decoder.
-pub struct LitMap {
+pub(crate) struct LitMap {
     pub tags: &'static [Option<&'static str>],
     pub global_attr: fn(u16) -> Option<&'static str>,
     pub tag_attr: fn(usize, u16) -> Option<&'static str>,
 }
 
-pub static HTML_MAP: LitMap = LitMap {
+pub(crate) static HTML_MAP: LitMap = LitMap {
     tags: &HTML_TAGS,
     global_attr: html_global_attr,
     tag_attr: html_tag_attr,
 };
 
-pub static OPF_MAP: LitMap = LitMap {
+pub(crate) static OPF_MAP: LitMap = LitMap {
     tags: &OPF_TAGS,
     global_attr: opf_global_attr,
     tag_attr: opf_tag_attr,

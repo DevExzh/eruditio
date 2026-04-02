@@ -1,4 +1,5 @@
 //! LRF object types and stream descrambling/decompression.
+#![allow(dead_code)]
 
 use crate::error::{EruditioError, Result};
 use flate2::bufread::ZlibDecoder;
@@ -18,7 +19,7 @@ const STREAM_SCRAMBLED: u16 = 0x200;
 /// Object type IDs from the ObjectStart tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
-pub enum ObjType {
+pub(crate) enum ObjType {
     PageTree = 0x01,
     Page = 0x02,
     Header = 0x03,
@@ -86,7 +87,7 @@ impl ObjType {
 }
 
 /// A parsed LRF object with its tags and optional stream data.
-pub struct LrfObject {
+pub(crate) struct LrfObject {
     pub id: u32,
     pub obj_type: ObjType,
     pub tags: Vec<Tag>,
@@ -115,7 +116,7 @@ impl LrfObject {
 }
 
 /// Parses all objects from the LRF file data using the object index.
-pub fn parse_objects(
+pub(crate) fn parse_objects(
     data: &[u8],
     object_index_offset: u64,
     number_of_objects: u64,
@@ -305,13 +306,13 @@ fn descramble(buf: &mut [u8], xor_key: u16, is_media: bool) {
 }
 
 /// Parses TOC entries from a TOCObject's stream data.
-pub struct TocEntry {
+pub(crate) struct TocEntry {
     pub refpage: u32,
     pub refobj: u32,
     pub label: String,
 }
 
-pub fn parse_toc_stream(stream: &[u8]) -> Result<Vec<TocEntry>> {
+pub(crate) fn parse_toc_stream(stream: &[u8]) -> Result<Vec<TocEntry>> {
     if stream.len() < 2 {
         return Ok(Vec::new());
     }

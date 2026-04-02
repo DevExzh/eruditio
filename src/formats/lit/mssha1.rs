@@ -10,6 +10,7 @@
 //!    a different one (or the custom `f6_42`).
 //!
 //! Ported from calibre's `calibre/ebooks/lit/mssha1.py`.
+#![allow(dead_code)]
 
 // Round function identifiers
 const F_0_19: u8 = 0;
@@ -120,7 +121,7 @@ fn bytes_to_words(data: &[u8]) -> [u32; 16] {
 }
 
 /// Compute the Microsoft SHA1 digest of the given data.
-pub fn mssha1_digest(data: &[u8]) -> [u8; 20] {
+pub(crate) fn mssha1_digest(data: &[u8]) -> [u8; 20] {
     let mut h = INIT_H;
     let total_bits = (data.len() as u64) * 8;
 

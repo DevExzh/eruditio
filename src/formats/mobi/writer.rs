@@ -49,7 +49,7 @@ fn build_fcis(text_length: u32) -> Vec<u8> {
 const EOF_RECORD: &[u8] = &[0xE9, 0x8E, 0x0D, 0x0A];
 
 /// Generates a complete MOBI file from a `Book` and returns the raw bytes.
-pub fn write_mobi(book: &Book) -> Result<Vec<u8>> {
+pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     // Convert book content to HTML.
     let html = book_to_mobi_html(book);
     let text_bytes = html.as_bytes();

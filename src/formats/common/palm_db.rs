@@ -12,8 +12,8 @@ const PDB_HEADER_SIZE: usize = 78;
 const RECORD_ENTRY_SIZE: usize = 8;
 
 /// Well-known PDB type+creator identities (8 bytes at header offsets 60-67).
-pub const IDENTITY_BOOKMOBI: &[u8; 8] = b"BOOKMOBI";
-pub const IDENTITY_TEXTREAD: &[u8; 8] = b"TEXtREAd";
+pub(crate) const IDENTITY_BOOKMOBI: &[u8; 8] = b"BOOKMOBI";
+pub(crate) const IDENTITY_TEXTREAD: &[u8; 8] = b"TEXtREAd";
 
 /// Parsed PDB file header.
 #[derive(Debug, Clone)]

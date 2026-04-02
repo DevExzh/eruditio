@@ -5,7 +5,7 @@ use std::io::{Read, Seek};
 use zip::ZipArchive;
 
 /// Finds the path to the root OPF file from META-INF/container.xml.
-pub fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String> {
+pub(crate) fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String> {
     let mut container_file = archive
         .by_name("META-INF/container.xml")
         .map_err(|_| EruditioError::Format("Missing META-INF/container.xml".to_string()))?;

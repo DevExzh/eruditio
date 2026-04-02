@@ -9,7 +9,7 @@ use super::tags::*;
 
 /// A token produced by scanning a Text object's stream.
 #[derive(Debug)]
-pub enum TextToken {
+pub(crate) enum TextToken {
     /// Raw text content (already decoded from UTF-16LE).
     Text(String),
     /// An inline formatting tag with its payload.
@@ -21,7 +21,7 @@ pub enum TextToken {
 /// The stream is UTF-16LE text interspersed with `0xF5` tag markers.
 /// We scan forward looking for `0xF5` bytes, then back up one byte
 /// to check if it's a valid tag.
-pub fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
+pub(crate) fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
     let mut tokens = Vec::new();
     let mut pos = 0;
 
@@ -77,7 +77,7 @@ pub fn tokenize_text_stream(stream: &[u8]) -> Vec<TextToken> {
 }
 
 /// Converts a sequence of text tokens into HTML.
-pub fn tokens_to_html(tokens: &[TextToken]) -> String {
+pub(crate) fn tokens_to_html(tokens: &[TextToken]) -> String {
     let mut html = String::with_capacity(tokens.len() * 32);
     let mut in_para = false;
 

@@ -8,7 +8,7 @@ use crate::formats::common::text_utils::escape_xml as escape_html;
 ///
 /// Parses `<title>`, `<meta name="author">`, `<meta name="description">`,
 /// `<meta name="language">`, and `<meta http-equiv="Content-Language">`.
-pub fn extract_metadata(html: &str) -> Metadata {
+pub(crate) fn extract_metadata(html: &str) -> Metadata {
     let mut meta = Metadata {
         title: extract_tag_content(html, "title"),
         ..Metadata::default()
@@ -27,7 +27,7 @@ pub fn extract_metadata(html: &str) -> Metadata {
 ///
 /// Returns the content between `<body>` and `</body>`, or the entire
 /// string if no body tags are found (for HTML fragments).
-pub fn extract_body(html: &str) -> String {
+pub(crate) fn extract_body(html: &str) -> String {
     if let Some(body) = extract_between(html, "<body", "</body>") {
         body
     } else {
@@ -41,7 +41,7 @@ pub fn extract_body(html: &str) -> String {
 ///
 /// Splits on `<h1>` and `<h2>` tags. Each chunk becomes a chapter.
 /// If no headings are found, returns the entire content as one chapter.
-pub fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
+pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
     let mut chapters = Vec::new();
 
     // Find all h1/h2 positions.
@@ -116,7 +116,7 @@ pub fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
 }
 
 /// Generates a complete HTML5 document from title and body content.
-pub fn build_html_document(title: &str, meta: &Metadata, body: &str) -> String {
+pub(crate) fn build_html_document(title: &str, meta: &Metadata, body: &str) -> String {
     let mut html = String::with_capacity(body.len() + 512);
 
     html.push_str("<!DOCTYPE html>\n<html>\n<head>\n");

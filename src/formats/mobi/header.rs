@@ -5,40 +5,41 @@
 //! 2. MOBI header (variable, typically 228 or 264 bytes)
 //! 3. EXTH header (optional, indicated by EXTH flag)
 //! 4. Full title string (at an offset specified in the MOBI header)
+#![allow(dead_code)]
 
 use crate::error::{EruditioError, Result};
 use crate::formats::common::palm_db::{read_u16_be, read_u32_be};
 
 /// Sentinel value for "not present" index fields.
-pub const NULL_INDEX: u32 = 0xFFFF_FFFF;
+pub(crate) const NULL_INDEX: u32 = 0xFFFF_FFFF;
 
 /// Maximum uncompressed text record size.
-pub const RECORD_SIZE: usize = 4096;
+pub(crate) const RECORD_SIZE: usize = 4096;
 
 // --- Compression types ---
 
 /// No compression.
-pub const COMPRESSION_NONE: u16 = 1;
+pub(crate) const COMPRESSION_NONE: u16 = 1;
 /// PalmDoc LZ77 compression.
-pub const COMPRESSION_PALMDOC: u16 = 2;
+pub(crate) const COMPRESSION_PALMDOC: u16 = 2;
 /// Huff/CDIC compression.
-pub const COMPRESSION_HUFFCDIC: u16 = 17480; // 0x4448 = 'DH'
+pub(crate) const COMPRESSION_HUFFCDIC: u16 = 17480; // 0x4448 = 'DH'
 
 // --- Encryption types ---
 
 /// No encryption.
-pub const ENCRYPTION_NONE: u16 = 0;
+pub(crate) const ENCRYPTION_NONE: u16 = 0;
 
 // --- Text encodings ---
 
 /// Windows-1252 encoding.
-pub const ENCODING_CP1252: u32 = 1252;
+pub(crate) const ENCODING_CP1252: u32 = 1252;
 /// UTF-8 encoding.
-pub const ENCODING_UTF8: u32 = 65001;
+pub(crate) const ENCODING_UTF8: u32 = 65001;
 
 /// Parsed PalmDOC header (first 16 bytes of Record 0).
 #[derive(Debug, Clone)]
-pub struct PalmDocHeader {
+pub(crate) struct PalmDocHeader {
     /// Compression type (1=none, 2=PalmDoc, 17480=HUFF/CDIC).
     pub compression: u16,
     /// Total uncompressed text length in bytes.
@@ -76,7 +77,7 @@ impl PalmDocHeader {
 
 /// Parsed MOBI header (starts at offset 16 in Record 0).
 #[derive(Debug, Clone)]
-pub struct MobiHeader {
+pub(crate) struct MobiHeader {
     /// Header length in bytes.
     pub header_length: u32,
     /// MOBI type (2=book, 3=PalmDOC, etc.).
@@ -282,7 +283,7 @@ fn extract_full_title(record0: &[u8], offset: u32, length: u32) -> String {
 ///
 /// MOBI text records may have extra bytes appended after the compressed
 /// data. These must be stripped before decompression.
-pub fn trailing_data_size(record_data: &[u8], extra_flags: u32) -> usize {
+pub(crate) fn trailing_data_size(record_data: &[u8], extra_flags: u32) -> usize {
     let mut total = 0;
 
     // Process trailing entry flags (bits 1+).

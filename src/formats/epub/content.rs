@@ -26,7 +26,7 @@ const TEXT_MEDIA_TYPES: &[&str] = &[
 /// media types are stored as `ManifestData::Text`, binary types as
 /// `ManifestData::Inline`. Items whose files are missing in the ZIP are
 /// left as `ManifestData::Empty`.
-pub fn load_manifest_data<R: Read + Seek>(
+pub(crate) fn load_manifest_data<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     manifest: &mut Manifest,
     opf_dir: &str,
@@ -74,7 +74,7 @@ pub fn load_manifest_data<R: Read + Seek>(
 ///
 /// If the OPF is at `OEBPS/content.opf`, then `opf_dir` is `OEBPS/`
 /// and a manifest href `chapter1.xhtml` resolves to `OEBPS/chapter1.xhtml`.
-pub fn resolve_href(opf_dir: &str, href: &str) -> String {
+pub(crate) fn resolve_href(opf_dir: &str, href: &str) -> String {
     if opf_dir.is_empty() || href.starts_with('/') {
         return href.to_string();
     }
@@ -82,7 +82,7 @@ pub fn resolve_href(opf_dir: &str, href: &str) -> String {
 }
 
 /// Extracts the directory portion of the OPF path (including trailing slash).
-pub fn opf_directory(opf_path: &str) -> String {
+pub(crate) fn opf_directory(opf_path: &str) -> String {
     match opf_path.rfind('/') {
         Some(pos) => opf_path[..=pos].to_string(),
         None => String::new(),

@@ -1,4 +1,5 @@
 //! LRF file header parsing and metadata extraction.
+#![allow(dead_code)]
 
 use crate::error::{EruditioError, Result};
 use flate2::bufread::ZlibDecoder;
@@ -11,7 +12,7 @@ const LRF_MAGIC: [u8; 6] = [0x4C, 0x00, 0x52, 0x00, 0x46, 0x00];
 const MIN_HEADER_SIZE: usize = 0x58;
 
 /// Parsed LRF file header.
-pub struct LrfHeader {
+pub(crate) struct LrfHeader {
     pub version: u16,
     pub xor_key: u16,
     pub root_object_id: u32,
@@ -31,7 +32,7 @@ pub struct LrfHeader {
 
 /// Metadata extracted from the compressed XML block in the header.
 #[derive(Default)]
-pub struct LrfMetadata {
+pub(crate) struct LrfMetadata {
     pub title: Option<String>,
     pub title_reading: Option<String>,
     pub author: Option<String>,
@@ -116,7 +117,7 @@ impl LrfHeader {
 }
 
 /// Extracts metadata from the compressed XML block in the LRF header.
-pub fn parse_metadata(data: &[u8], header: &LrfHeader) -> Result<LrfMetadata> {
+pub(crate) fn parse_metadata(data: &[u8], header: &LrfHeader) -> Result<LrfMetadata> {
     let info_len = header.compressed_info_len();
     if info_len == 0 {
         return Ok(LrfMetadata::default());
@@ -239,11 +240,11 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-pub fn read_u16_le(data: &[u8], offset: usize) -> u16 {
+pub(crate) fn read_u16_le(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
 }
 
-pub fn read_u32_le(data: &[u8], offset: usize) -> u32 {
+pub(crate) fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([
         data[offset],
         data[offset + 1],
@@ -252,7 +253,7 @@ pub fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     ])
 }
 
-pub fn read_u64_le(data: &[u8], offset: usize) -> u64 {
+pub(crate) fn read_u64_le(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes([
         data[offset],
         data[offset + 1],

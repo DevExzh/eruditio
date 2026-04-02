@@ -15,13 +15,13 @@ const FLAG_ATOM: u8 = 0x10;
 
 /// Atom tables for custom per-document tags and attributes.
 #[derive(Default)]
-pub struct AtomTable {
+pub(crate) struct AtomTable {
     pub tags: HashMap<u32, String>,
     pub attrs: HashMap<u32, String>,
 }
 
 /// Manifest entry used for href resolution in unbinary decoding.
-pub struct ManifestPath {
+pub(crate) struct ManifestPath {
     pub path: String,
 }
 
@@ -165,7 +165,7 @@ fn item_path(id: &str, dir: &str, manifest: &HashMap<String, ManifestPath>) -> S
 // ---------------------------------------------------------------------------
 
 /// Convert LIT binary token data to HTML/OPF text.
-pub fn unbinary_to_html(
+pub(crate) fn unbinary_to_html(
     bin: &[u8],
     path: &str,
     manifest: &HashMap<String, ManifestPath>,

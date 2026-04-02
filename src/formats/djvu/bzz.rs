@@ -523,7 +523,7 @@ impl<'a> BzzDecoder<'a> {
 }
 
 /// Decompress BZZ-encoded data, returning the decoded bytes.
-pub fn bzz_decompress(data: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn bzz_decompress(data: &[u8]) -> Result<Vec<u8>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }

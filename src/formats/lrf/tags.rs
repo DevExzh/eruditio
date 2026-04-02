@@ -2,13 +2,14 @@
 //!
 //! Every piece of data inside an LRF object is encoded as a 2-byte tag
 //! header (`tag_id`, `0xF5`) followed by a type-specific payload.
+#![allow(dead_code)]
 
 use super::header::read_u16_le;
 use crate::error::{EruditioError, Result};
 
 /// A parsed LRF tag.
 #[derive(Debug, Clone)]
-pub struct Tag {
+pub(crate) struct Tag {
     pub id: u16,
     pub contents: Vec<u8>,
 }
@@ -86,46 +87,46 @@ impl Tag {
 }
 
 // -- Structural tag IDs --
-pub const TAG_OBJECT_START: u16 = 0xF500;
-pub const TAG_OBJECT_END: u16 = 0xF501;
-pub const TAG_OBJECT_INFO_LINK: u16 = 0xF502;
-pub const TAG_LINK: u16 = 0xF503;
-pub const TAG_STREAM_SIZE: u16 = 0xF504;
-pub const TAG_STREAM_START: u16 = 0xF505;
-pub const TAG_STREAM_END: u16 = 0xF506;
-pub const TAG_CONTAINED_OBJECTS: u16 = 0xF50B;
-pub const TAG_STREAM_FLAGS: u16 = 0xF554;
-pub const TAG_REFSTREAM: u16 = 0xF54C;
+pub(crate) const TAG_OBJECT_START: u16 = 0xF500;
+pub(crate) const TAG_OBJECT_END: u16 = 0xF501;
+pub(crate) const TAG_OBJECT_INFO_LINK: u16 = 0xF502;
+pub(crate) const TAG_LINK: u16 = 0xF503;
+pub(crate) const TAG_STREAM_SIZE: u16 = 0xF504;
+pub(crate) const TAG_STREAM_START: u16 = 0xF505;
+pub(crate) const TAG_STREAM_END: u16 = 0xF506;
+pub(crate) const TAG_CONTAINED_OBJECTS: u16 = 0xF50B;
+pub(crate) const TAG_STREAM_FLAGS: u16 = 0xF554;
+pub(crate) const TAG_REFSTREAM: u16 = 0xF54C;
 
 // -- Text content tag IDs --
-pub const TAG_TEXT_P_START: u16 = 0xF5A1;
-pub const TAG_TEXT_P_END: u16 = 0xF5A2;
-pub const TAG_TEXT_CR: u16 = 0xF5D2;
-pub const TAG_TEXT_ITALIC_START: u16 = 0xF581;
-pub const TAG_TEXT_ITALIC_END: u16 = 0xF582;
-pub const TAG_TEXT_SUP_START: u16 = 0xF5B7;
-pub const TAG_TEXT_SUP_END: u16 = 0xF5B8;
-pub const TAG_TEXT_SUB_START: u16 = 0xF5B9;
-pub const TAG_TEXT_SUB_END: u16 = 0xF5BA;
-pub const TAG_TEXT_NOBR_START: u16 = 0xF5BB;
-pub const TAG_TEXT_NOBR_END: u16 = 0xF5BC;
-pub const TAG_TEXT_PLOT: u16 = 0xF5D1;
-pub const TAG_TEXT_CR_GRAPH: u16 = 0xF5CC;
-pub const TAG_TEXT_CHAR_BUTTON: u16 = 0xF5A7;
-pub const TAG_TEXT_CHAR_BUTTON_END: u16 = 0xF5A8;
-pub const TAG_TEXT_EMPLINE_START: u16 = 0xF5C1;
-pub const TAG_TEXT_EMPLINE_END: u16 = 0xF5C2;
-pub const TAG_TEXT_SPACE: u16 = 0xF5CA;
+pub(crate) const TAG_TEXT_P_START: u16 = 0xF5A1;
+pub(crate) const TAG_TEXT_P_END: u16 = 0xF5A2;
+pub(crate) const TAG_TEXT_CR: u16 = 0xF5D2;
+pub(crate) const TAG_TEXT_ITALIC_START: u16 = 0xF581;
+pub(crate) const TAG_TEXT_ITALIC_END: u16 = 0xF582;
+pub(crate) const TAG_TEXT_SUP_START: u16 = 0xF5B7;
+pub(crate) const TAG_TEXT_SUP_END: u16 = 0xF5B8;
+pub(crate) const TAG_TEXT_SUB_START: u16 = 0xF5B9;
+pub(crate) const TAG_TEXT_SUB_END: u16 = 0xF5BA;
+pub(crate) const TAG_TEXT_NOBR_START: u16 = 0xF5BB;
+pub(crate) const TAG_TEXT_NOBR_END: u16 = 0xF5BC;
+pub(crate) const TAG_TEXT_PLOT: u16 = 0xF5D1;
+pub(crate) const TAG_TEXT_CR_GRAPH: u16 = 0xF5CC;
+pub(crate) const TAG_TEXT_CHAR_BUTTON: u16 = 0xF5A7;
+pub(crate) const TAG_TEXT_CHAR_BUTTON_END: u16 = 0xF5A8;
+pub(crate) const TAG_TEXT_EMPLINE_START: u16 = 0xF5C1;
+pub(crate) const TAG_TEXT_EMPLINE_END: u16 = 0xF5C2;
+pub(crate) const TAG_TEXT_SPACE: u16 = 0xF5CA;
 
 // -- Style attribute tag IDs --
-pub const TAG_FONT_SIZE: u16 = 0xF511;
-pub const TAG_FONT_WEIGHT: u16 = 0xF515;
-pub const TAG_FONT_FACE: u16 = 0xF516;
-pub const TAG_TEXT_COLOR: u16 = 0xF517;
-pub const TAG_TEXT_BG_COLOR: u16 = 0xF518;
-pub const TAG_LINE_SPACE: u16 = 0xF51C;
-pub const TAG_PAR_INDENT: u16 = 0xF51D;
-pub const TAG_ALIGN: u16 = 0xF53C;
+pub(crate) const TAG_FONT_SIZE: u16 = 0xF511;
+pub(crate) const TAG_FONT_WEIGHT: u16 = 0xF515;
+pub(crate) const TAG_FONT_FACE: u16 = 0xF516;
+pub(crate) const TAG_TEXT_COLOR: u16 = 0xF517;
+pub(crate) const TAG_TEXT_BG_COLOR: u16 = 0xF518;
+pub(crate) const TAG_LINE_SPACE: u16 = 0xF51C;
+pub(crate) const TAG_PAR_INDENT: u16 = 0xF51D;
+pub(crate) const TAG_ALIGN: u16 = 0xF53C;
 
 /// Returns the payload size for a given tag ID.
 /// Returns `None` for string/variable-length tags (read dynamically).
@@ -231,7 +232,7 @@ fn tag_payload_size(tag_id: u16) -> Option<usize> {
 
 /// Parses one tag from the data at the given offset.
 /// Returns the parsed tag and the new offset after the tag.
-pub fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
+pub(crate) fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
     if offset + 2 > data.len() {
         return Err(EruditioError::Format(
             "LRF tag: unexpected end of data".into(),
@@ -314,7 +315,7 @@ pub fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
 }
 
 /// Parses all tags from a byte slice until exhausted or ObjectEnd is hit.
-pub fn parse_tags(data: &[u8]) -> Result<Vec<Tag>> {
+pub(crate) fn parse_tags(data: &[u8]) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
     let mut offset = 0;
 
@@ -338,7 +339,7 @@ pub fn parse_tags(data: &[u8]) -> Result<Vec<Tag>> {
 }
 
 /// Decodes UTF-16LE bytes to a Rust String.
-pub fn decode_utf16le(data: &[u8]) -> String {
+pub(crate) fn decode_utf16le(data: &[u8]) -> String {
     let u16s: Vec<u16> = data
         .chunks_exact(2)
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))

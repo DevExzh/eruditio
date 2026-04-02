@@ -8,7 +8,7 @@ use crate::formats::common::html_utils::strip_tags;
 use crate::formats::common::text_utils::escape_html;
 
 /// Converts PML markup to HTML.
-pub fn pml_to_html(pml: &str) -> String {
+pub(crate) fn pml_to_html(pml: &str) -> String {
     let mut html = String::with_capacity(pml.len() * 2);
     let mut pos = 0;
     let bytes = pml.as_bytes();
@@ -453,7 +453,7 @@ pub fn pml_to_html(pml: &str) -> String {
 }
 
 /// Splits HTML (converted from PML) into chapters at h1/pagebreak boundaries.
-pub fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
+pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
     let mut chapters = Vec::new();
 
     // Split on h1 tags or pagebreak markers.
@@ -502,7 +502,7 @@ pub fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
 }
 
 /// Converts a `Book` to PML markup.
-pub fn book_to_pml(book: &Book) -> String {
+pub(crate) fn book_to_pml(book: &Book) -> String {
     let mut pml = String::with_capacity(4096);
 
     for (i, chapter) in book.chapters().iter().enumerate() {

@@ -2,7 +2,7 @@
 
 /// A token produced by the RTF lexer.
 #[derive(Debug, Clone, PartialEq)]
-pub enum RtfToken {
+pub(crate) enum RtfToken {
     /// `{` — opens a group.
     GroupStart,
     /// `}` — closes a group.
@@ -30,7 +30,7 @@ const MAX_TOKENS: usize = 10_000_000;
 /// the RTF source are ignored (they're not meaningful in RTF).
 ///
 /// Returns an error if the token count exceeds `MAX_TOKENS`.
-pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str> {
+pub(crate) fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str> {
     let mut tokens = Vec::new();
     let mut pos = 0;
     let len = input.len();

@@ -553,7 +553,7 @@ impl crate::domain::FormatWriter for LrfWriter {
 }
 
 /// Generates a complete LRF file from a `Book` and returns the raw bytes.
-pub fn write_lrf(book: &Book) -> Result<Vec<u8>> {
+pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // ---------------------------------------------------------------
     // 1. Metadata XML (compressed)
     // ---------------------------------------------------------------

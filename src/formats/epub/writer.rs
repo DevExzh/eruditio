@@ -7,7 +7,7 @@ use zip::ZipWriter;
 use zip::write::FileOptions;
 
 /// Writes a `Book` as a valid EPUB archive to the given writer.
-pub fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
+pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
     let mut zip = ZipWriter::new(writer);
     let stored: FileOptions<'_, ()> =
         FileOptions::default().compression_method(CompressionMethod::Stored);
