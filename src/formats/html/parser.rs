@@ -181,12 +181,14 @@ fn extract_between(html: &str, open_prefix: &str, close_tag: &str) -> Option<Str
 
 /// Extracts metadata from `<meta>` tags within head content.
 fn extract_meta_tags(head: &str, meta: &mut Metadata) {
-    let lower = head.to_lowercase();
+    let bytes = head.as_bytes();
     let mut search_from = 0;
 
-    while let Some(pos) = lower[search_from..].find("<meta") {
+    while let Some(pos) =
+        text_utils::find_case_insensitive(&bytes[search_from..], b"<meta")
+    {
         let abs_pos = search_from + pos;
-        let tag_end = match lower[abs_pos..].find('>') {
+        let tag_end = match head[abs_pos..].find('>') {
             Some(e) => abs_pos + e,
             None => break,
         };
@@ -195,7 +197,7 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
         let tag_lower = tag.to_lowercase();
 
         if let Some(name) = extract_attribute(&tag_lower, "name")
-            && let Some(content) = extract_attribute(tag, "content")
+            && let Some(content) = extract_attribute_ci(&tag_lower, tag, "content")
         {
             match name.as_str() {
                 "author" | "dc.creator" => {
@@ -225,7 +227,7 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
         // Also check http-equiv for Content-Language.
         if tag_lower.contains("http-equiv")
             && tag_lower.contains("content-language")
-            && let Some(content) = extract_attribute(tag, "content")
+            && let Some(content) = extract_attribute_ci(&tag_lower, tag, "content")
         {
             meta.language = Some(content);
         }
@@ -241,6 +243,17 @@ fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
     let value_start = start + pattern.len();
     let value_end = tag[value_start..].find('"')? + value_start;
     Some(tag[value_start..value_end].to_string())
+}
+
+/// Finds the attribute position in `tag_lower` (lowercased) but extracts the
+/// value from `tag_orig` (original case). Both strings must have identical
+/// byte length (true for ASCII HTML tags).
+fn extract_attribute_ci(tag_lower: &str, tag_orig: &str, attr_name: &str) -> Option<String> {
+    let pattern = format!("{}=\"", attr_name);
+    let start = tag_lower.find(&pattern)?;
+    let value_start = start + pattern.len();
+    let value_end = tag_orig[value_start..].find('"')? + value_start;
+    Some(tag_orig[value_start..value_end].to_string())
 }
 
 /// Strips HTML tags from a string.
@@ -392,5 +405,12 @@ mod tests {
         let html = "<Html><Head><title>T</title></Head><Body><p>Hello</p></Body></Html>";
         let result = strip_outer_tags(html);
         assert_eq!(result, "<p>Hello</p>");
+    }
+
+    #[test]
+    fn extracts_meta_from_uppercase_tags() {
+        let html = r#"<html><head><META NAME="author" CONTENT="Jane"></head><body></body></html>"#;
+        let meta = extract_metadata(html);
+        assert_eq!(meta.authors, vec!["Jane"]);
     }
 }
