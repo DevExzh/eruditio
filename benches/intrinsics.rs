@@ -9,11 +9,9 @@ use eruditio::formats::common::text_utils;
 
 fn bench_case_fold(c: &mut Criterion) {
     // 64-byte equal slices with random case.
-    let a_64: Vec<u8> = b"The Quick Brown Fox Jumps Over The Lazy Dog! Hello World Boo!!"
-        [..64]
+    let a_64: Vec<u8> = b"The Quick Brown Fox Jumps Over The Lazy Dog! Hello World Boo!!OK"
         .to_vec();
-    let b_64: Vec<u8> = b"tHE qUICK bROWN fOX jUMPS oVER tHE lAZY dOG! hELLO wORLD bOO!!"
-        [..64]
+    let b_64: Vec<u8> = b"tHE qUICK bROWN fOX jUMPS oVER tHE lAZY dOG! hELLO wORLD bOO!!ok"
         .to_vec();
 
     c.bench_function("case_fold/eq_64", |bench| {
