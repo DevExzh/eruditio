@@ -319,49 +319,55 @@ struct HhcEntry {
 /// ```
 fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
     let text = String::from_utf8_lossy(data);
-    let lower = text.to_lowercase();
+    let bytes = text.as_bytes();
     let mut entries = Vec::new();
 
     // Find each <object type="text/sitemap"> ... </object> block
     let mut search_pos = 0;
-    while let Some(obj_start) = lower[search_pos..].find("<object") {
-        let abs_start = search_pos + obj_start;
-        let tag_end = match lower[abs_start..].find('>') {
+    while let Some(obj_offset) =
+        text_utils::find_case_insensitive(&bytes[search_pos..], b"<object")
+    {
+        let abs_start = search_pos + obj_offset;
+        let tag_end = match text[abs_start..].find('>') {
             Some(p) => abs_start + p,
             None => break,
         };
-        let tag = &lower[abs_start..=tag_end];
+        let tag = &text[abs_start..=tag_end];
 
-        if !tag.contains("text/sitemap") {
+        if !tag.as_bytes().windows(b"text/sitemap".len()).any(|w| {
+            w.eq_ignore_ascii_case(b"text/sitemap")
+        }) {
             search_pos = tag_end + 1;
             continue;
         }
 
-        let obj_end = match lower[tag_end..].find("</object") {
+        let obj_end = match text_utils::find_case_insensitive(&bytes[tag_end..], b"</object") {
             Some(p) => tag_end + p,
             None => break,
         };
 
         let block = &text[tag_end + 1..obj_end];
-        let block_lower = block.to_lowercase();
+        let block_bytes = block.as_bytes();
 
         let mut name = String::new();
         let mut local = String::new();
 
         // Extract <param> values
         let mut param_pos = 0;
-        while let Some(p) = block_lower[param_pos..].find("<param") {
+        while let Some(p) =
+            text_utils::find_case_insensitive(&block_bytes[param_pos..], b"<param")
+        {
             let param_start = param_pos + p;
-            let param_end = match block_lower[param_start..].find('>') {
+            let param_end = match block[param_start..].find('>') {
                 Some(pe) => param_start + pe,
                 None => break,
             };
             let param_tag = &block[param_start..=param_end];
-            let param_lower = &block_lower[param_start..=param_end];
+            let param_lower = param_tag.to_lowercase();
 
             if let (Some(n), Some(v)) = (
-                extract_attr(param_lower, param_tag, "name"),
-                extract_attr(param_lower, param_tag, "value"),
+                extract_attr(&param_lower, param_tag, "name"),
+                extract_attr(&param_lower, param_tag, "value"),
             ) {
                 match n.to_lowercase().as_str() {
                     "name" => name = v,
@@ -698,6 +704,23 @@ mod tests {
         let result = decode_html(&data);
         assert!(result.contains('\u{201C}'));
         assert!(result.contains('\u{201D}'));
+    }
+
+    #[test]
+    fn parse_hhc_mixed_case() {
+        let hhc = br#"
+<html><body>
+<ul>
+<li><Object Type="text/sitemap">
+  <Param Name="Name" Value="Intro">
+  <Param Name="Local" Value="intro.htm">
+</Object>
+</ul>
+</body></html>"#;
+        let entries = parse_hhc(hhc);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "Intro");
+        assert_eq!(entries[0].local, "intro.htm");
     }
 
     #[test]
