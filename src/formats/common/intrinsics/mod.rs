@@ -15,3 +15,4 @@ pub(crate) mod cp1252;
 pub(crate) mod hex_decode;
 pub(crate) mod case_fold;
 pub(crate) mod histogram;
+pub(crate) mod is_ascii;
