@@ -151,14 +151,16 @@ pub(crate) fn build_html_document(title: &str, meta: &Metadata, body: &str) -> S
 
 /// Extracts text content between opening and closing tags of the given element.
 fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
-    let lower = html.to_lowercase();
+    let bytes = html.as_bytes();
     let open = format!("<{}", tag);
     let close = format!("</{}>", tag);
 
-    let start = lower.find(&open)?;
+    let start = text_utils::find_case_insensitive(bytes, open.as_bytes())?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
-    let content_end = lower[content_start..].find(&close)? + content_start;
+    let content_end =
+        text_utils::find_case_insensitive(&bytes[content_start..], close.as_bytes())?
+            + content_start;
 
     let text = html[content_start..content_end].trim().to_string();
     if text.is_empty() { None } else { Some(text) }
@@ -166,11 +168,13 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
 
 /// Extracts content between an opening tag (with possible attributes) and closing tag.
 fn extract_between(html: &str, open_prefix: &str, close_tag: &str) -> Option<String> {
-    let lower = html.to_lowercase();
-    let start = lower.find(&open_prefix.to_lowercase())?;
+    let bytes = html.as_bytes();
+    let start = text_utils::find_case_insensitive(bytes, open_prefix.as_bytes())?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
-    let content_end = lower[content_start..].find(&close_tag.to_lowercase())? + content_start;
+    let content_end =
+        text_utils::find_case_insensitive(&bytes[content_start..], close_tag.as_bytes())?
+            + content_start;
 
     Some(html[content_start..content_end].to_string())
 }
@@ -360,6 +364,20 @@ mod tests {
         let html = r#"<html><head><meta name="keywords" content="fiction, adventure, fantasy"></head><body></body></html>"#;
         let meta = extract_metadata(html);
         assert_eq!(meta.subjects, vec!["fiction", "adventure", "fantasy"]);
+    }
+
+    #[test]
+    fn extract_tag_content_case_insensitive() {
+        let html = "<html><head><TITLE>My Book</TITLE></head></html>";
+        let meta = extract_metadata(html);
+        assert_eq!(meta.title.as_deref(), Some("My Book"));
+    }
+
+    #[test]
+    fn extract_body_mixed_case_tags() {
+        let html = "<HTML><HEAD><title>T</title></HEAD><BODY><p>Content</p></BODY></HTML>";
+        let body = extract_body(html);
+        assert_eq!(body, "<p>Content</p>");
     }
 
     #[test]
