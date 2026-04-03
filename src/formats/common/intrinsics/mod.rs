@@ -16,3 +16,4 @@ pub(crate) mod hex_decode;
 pub(crate) mod case_fold;
 pub(crate) mod histogram;
 pub(crate) mod is_ascii;
+pub(crate) mod skip_ws;
