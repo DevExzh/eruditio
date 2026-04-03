@@ -10,6 +10,7 @@ use std::io::Read;
 use crate::domain::{Book, Chapter, FormatReader};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::itss::{self, DirectoryEntry};
+use crate::formats::common::text_utils;
 
 /// Maximum number of directory entries to prevent DoS from crafted files.
 const MAX_ENTRIES: usize = 1_000_000;
@@ -397,16 +398,16 @@ fn extract_attr(tag_lower: &str, tag_orig: &str, attr_name: &str) -> Option<Stri
 
 /// Strip `<script>` tags and their content from HTML.
 fn strip_scripts(html: &str) -> String {
-    let lower = html.to_lowercase();
+    let bytes = html.as_bytes();
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
 
-    while let Some(start) = lower[pos..].find("<script") {
+    while let Some(start) = text_utils::find_case_insensitive(&bytes[pos..], b"<script") {
         let abs_start = pos + start;
         result.push_str(&html[pos..abs_start]);
 
         // Find closing </script>
-        if let Some(end) = lower[abs_start..].find("</script>") {
+        if let Some(end) = text_utils::find_case_insensitive(&bytes[abs_start..], b"</script>") {
             pos = abs_start + end + "</script>".len();
         } else {
             // No closing tag — skip to end
@@ -697,5 +698,19 @@ mod tests {
         let result = decode_html(&data);
         assert!(result.contains('\u{201C}'));
         assert!(result.contains('\u{201D}'));
+    }
+
+    #[test]
+    fn strip_scripts_case_insensitive() {
+        let html = "<p>Hello</p><SCRIPT>alert('x');</SCRIPT><p>World</p>";
+        let cleaned = strip_scripts(html);
+        assert_eq!(cleaned, "<p>Hello</p><p>World</p>");
+    }
+
+    #[test]
+    fn strip_scripts_mixed_case() {
+        let html = "<p>A</p><Script type=\"text/javascript\">code();</Script><p>B</p>";
+        let cleaned = strip_scripts(html);
+        assert_eq!(cleaned, "<p>A</p><p>B</p>");
     }
 }
