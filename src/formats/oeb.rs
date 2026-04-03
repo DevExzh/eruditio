@@ -6,6 +6,7 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::text_utils;
 use crate::formats::common::text_utils::escape_xml;
 use std::io::{Cursor, Read, Write};
 use zip::write::FileOptions;
@@ -510,10 +511,11 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
 
 /// Extracts the <body> content from an XHTML document.
 fn extract_body(html: &str) -> Option<String> {
-    let lower = html.to_lowercase();
-    let body_start = lower.find("<body")?;
+    let bytes = html.as_bytes();
+    let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
     let content_start = html[body_start..].find('>')? + body_start + 1;
-    let content_end = lower[content_start..].find("</body>")? + content_start;
+    let content_end =
+        text_utils::find_case_insensitive(&bytes[content_start..], b"</body>")? + content_start;
 
     let body = html[content_start..content_end].trim();
     if body.is_empty() {
@@ -696,5 +698,17 @@ mod tests {
         assert_eq!(extract_attr(tag, "id"), Some("ch1".into()));
         assert_eq!(extract_attr(tag, "href"), Some("file.xhtml".into()));
         assert_eq!(extract_attr(tag, "media-type"), Some("text/html".into()));
+    }
+
+    #[test]
+    fn extract_body_case_insensitive() {
+        let html = "<HTML><BODY><p>Content</p></BODY></HTML>";
+        assert_eq!(extract_body(html), Some("<p>Content</p>".into()));
+    }
+
+    #[test]
+    fn extract_body_mixed_case() {
+        let html = "<html><Body class=\"main\"><p>Hello</p></body></html>";
+        assert_eq!(extract_body(html), Some("<p>Hello</p>".into()));
     }
 }
