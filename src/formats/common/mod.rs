@@ -5,3 +5,4 @@ pub mod palm_db;
 pub mod text_utils;
 pub mod xml_utils;
 pub mod zip_utils;
+pub(crate) mod intrinsics;

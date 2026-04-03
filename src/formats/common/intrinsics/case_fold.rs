@@ -1,0 +1,1 @@
+//! Case-insensitive comparison — placeholder.

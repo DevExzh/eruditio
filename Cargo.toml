@@ -45,3 +45,7 @@ harness = false
 [[bench]]
 name = "mobi_roundtrip"
 harness = false
+
+[[bench]]
+name = "intrinsics"
+harness = false
