@@ -1,60 +1,140 @@
-// benches/intrinsics.rs
+// benches/intrinsics.rs — Direct benchmarks for all 6 intrinsic operations.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use eruditio::formats::common::text_utils;
 
 // ---------------------------------------------------------------------------
-// case-insensitive search (exercises case_fold + byte_scan indirectly)
+// case_fold: eq_ignore_ascii_case via find_case_insensitive
+// ---------------------------------------------------------------------------
+
+fn bench_case_fold(c: &mut Criterion) {
+    // 64-byte equal slices with random case.
+    let a_64: Vec<u8> = b"The Quick Brown Fox Jumps Over The Lazy Dog! Hello World Boo!!"
+        [..64]
+        .to_vec();
+    let b_64: Vec<u8> = b"tHE qUICK bROWN fOX jUMPS oVER tHE lAZY dOG! hELLO wORLD bOO!!"
+        [..64]
+        .to_vec();
+
+    c.bench_function("case_fold/eq_64", |bench| {
+        bench.iter(|| {
+            // Verify equality through find_case_insensitive (needle = full haystack).
+            text_utils::find_case_insensitive(black_box(&a_64), black_box(&b_64))
+        })
+    });
+
+    // 1024-byte slices.
+    let a_1k: Vec<u8> = a_64.repeat(16);
+    let b_1k: Vec<u8> = b_64.repeat(16);
+
+    c.bench_function("case_fold/eq_1k", |bench| {
+        bench.iter(|| {
+            text_utils::find_case_insensitive(black_box(&a_1k), black_box(&b_1k))
+        })
+    });
+}
+
+// ---------------------------------------------------------------------------
+// byte_scan: find_first_in_set via escape_xml
+// ---------------------------------------------------------------------------
+
+fn bench_byte_scan(c: &mut Criterion) {
+    // 10K realistic HTML with scattered special chars.
+    let html_10k = "Hello &amp; welcome to the <b>world</b> of \"ebooks\". ".repeat(200);
+
+    c.bench_function("byte_scan/find_5_in_10k", |bench| {
+        bench.iter(|| text_utils::escape_xml(black_box(&html_10k)))
+    });
+
+    // 10K clean text (no hits — full scan).
+    let clean_10k = "This is plain text without any special characters at all ok. ".repeat(167);
+
+    c.bench_function("byte_scan/clean_10k", |bench| {
+        bench.iter(|| text_utils::escape_xml(black_box(&clean_10k)))
+    });
+}
+
+// ---------------------------------------------------------------------------
+// cp1252: decode_cp1252
+// ---------------------------------------------------------------------------
+
+fn bench_cp1252(c: &mut Criterion) {
+    // 10K pure ASCII.
+    let ascii_10k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
+        .repeat(222)[..10_000]
+        .to_vec();
+
+    c.bench_function("cp1252/decode_10k_ascii", |bench| {
+        bench.iter(|| text_utils::decode_cp1252(black_box(&ascii_10k)))
+    });
+
+    // 10K mixed: ~20% non-ASCII bytes.
+    let mut mixed_10k = ascii_10k.clone();
+    for (i, b) in mixed_10k.iter_mut().enumerate() {
+        if i % 5 == 0 {
+            *b = 0x93; // left double quote in cp1252
+        }
+    }
+
+    c.bench_function("cp1252/decode_10k_mixed", |bench| {
+        bench.iter(|| text_utils::decode_cp1252(black_box(&mixed_10k)))
+    });
+}
+
+// ---------------------------------------------------------------------------
+// hex_decode: decode_hex_pairs
+// ---------------------------------------------------------------------------
+
+fn bench_hex_decode(c: &mut Criterion) {
+    // 10K dense hex (no whitespace).
+    let hex_10k: String = (0..5000)
+        .map(|i| format!("{:02x}", (i % 256) as u8))
+        .collect();
+
+    c.bench_function("hex_decode/dense_10k", |bench| {
+        bench.iter(|| text_utils::decode_hex_pairs(black_box(&hex_10k)))
+    });
+}
+
+// ---------------------------------------------------------------------------
+// find_case_insensitive (exercises case_fold + memchr)
 // ---------------------------------------------------------------------------
 
 fn bench_find_case_insensitive(c: &mut Criterion) {
-    // Short needle in medium haystack.
     let haystack_1k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
         .repeat(23);
     let needle_short = b"LAZY DOG";
 
-    c.bench_function("find_ci/short_needle_1k", |b| {
-        b.iter(|| text_utils::find_case_insensitive(
-            black_box(&haystack_1k), black_box(needle_short)
-        ))
+    c.bench_function("find_ci/short_needle_1k", |bench| {
+        bench.iter(|| {
+            text_utils::find_case_insensitive(black_box(&haystack_1k), black_box(needle_short))
+        })
     });
 
-    // Longer haystack (10k) with needle near the end.
     let haystack_10k: Vec<u8> = b"abcdefghij klmnopqrst uvwxyz0123 456789ABCD "
         .repeat(222);
     let needle_mid = b"789ABCD";
 
-    c.bench_function("find_ci/mid_needle_10k", |b| {
-        b.iter(|| text_utils::find_case_insensitive(
-            black_box(&haystack_10k), black_box(needle_mid)
-        ))
+    c.bench_function("find_ci/mid_needle_10k", |bench| {
+        bench.iter(|| {
+            text_utils::find_case_insensitive(black_box(&haystack_10k), black_box(needle_mid))
+        })
     });
 
-    // Needle not found (worst case — full scan).
     let needle_missing = b"ZZZZZ";
-    c.bench_function("find_ci/missing_needle_10k", |b| {
-        b.iter(|| text_utils::find_case_insensitive(
-            black_box(&haystack_10k), black_box(needle_missing)
-        ))
+    c.bench_function("find_ci/missing_needle_10k", |bench| {
+        bench.iter(|| {
+            text_utils::find_case_insensitive(black_box(&haystack_10k), black_box(needle_missing))
+        })
     });
 }
 
-// ---------------------------------------------------------------------------
-// XML escape with 5-byte set (exercises byte_scan directly)
-// ---------------------------------------------------------------------------
-
-fn bench_escape_xml(c: &mut Criterion) {
-    // XML mode uses 5-byte set (&<>"') — the primary byte_scan use case.
-    let mixed = "Hello &amp; welcome to the <b>world</b> of \"ebooks\". ".repeat(200);
-    let clean = "This is plain text without any special characters at all ok. ".repeat(167);
-
-    c.bench_function("escape_xml/10k_mixed", |b| {
-        b.iter(|| text_utils::escape_xml(black_box(&mixed)))
-    });
-    c.bench_function("escape_xml/10k_clean", |b| {
-        b.iter(|| text_utils::escape_xml(black_box(&clean)))
-    });
-}
-
-criterion_group!(benches, bench_find_case_insensitive, bench_escape_xml);
+criterion_group!(
+    benches,
+    bench_case_fold,
+    bench_byte_scan,
+    bench_cp1252,
+    bench_hex_decode,
+    bench_find_case_insensitive,
+);
 criterion_main!(benches);
