@@ -362,6 +362,13 @@ pub(crate) fn decode_cp1252(data: &[u8]) -> String {
         return String::new();
     }
 
+    // Fast-path: if the entire input is ASCII, it's valid UTF-8 and we can
+    // convert without any table lookups or SIMD chunk processing.
+    if super::is_ascii::is_all_ascii(data) {
+        // SAFETY: All bytes are in 0x00-0x7F, which is valid UTF-8.
+        return unsafe { String::from_utf8_unchecked(data.to_vec()) };
+    }
+
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         if is_x86_feature_detected!("avx2") {
