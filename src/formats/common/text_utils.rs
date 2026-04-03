@@ -193,6 +193,33 @@ pub fn decode_hex_pairs(hex: &str) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// ASCII detection (delegated to intrinsics for SIMD acceleration)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if every byte in `data` is in the ASCII range (0x00–0x7F).
+pub fn is_all_ascii(data: &[u8]) -> bool {
+    super::intrinsics::is_ascii::is_all_ascii(data)
+}
+
+// ---------------------------------------------------------------------------
+// Whitespace skipping (delegated to intrinsics for SIMD acceleration)
+// ---------------------------------------------------------------------------
+
+/// Returns the number of leading XML-whitespace bytes (0x20, 0x09, 0x0A, 0x0D).
+pub fn skip_whitespace(data: &[u8]) -> usize {
+    super::intrinsics::skip_ws::skip_whitespace(data)
+}
+
+// ---------------------------------------------------------------------------
+// Short pattern search (delegated to intrinsics for SIMD acceleration)
+// ---------------------------------------------------------------------------
+
+/// Finds the first occurrence of a 2–4 byte `needle` in `haystack`.
+pub fn find_short_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    super::intrinsics::short_pattern::find_short_pattern(haystack, needle)
+}
+
+// ---------------------------------------------------------------------------
 // Case-insensitive ASCII search (allocation-free)
 // ---------------------------------------------------------------------------
 

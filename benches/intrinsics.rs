@@ -137,10 +137,16 @@ fn bench_is_ascii(c: &mut Criterion) {
         .repeat(23)[..1024]
         .to_vec();
 
-    c.bench_function("is_ascii/ascii_1k", |bench| {
+    c.bench_function("is_ascii/scalar_1k", |bench| {
         bench.iter(|| {
             let all_ascii = black_box(&ascii_1k).iter().all(|&b| b < 0x80);
             black_box(all_ascii);
+        })
+    });
+
+    c.bench_function("is_ascii/simd_1k", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::is_all_ascii(black_box(&ascii_1k)));
         })
     });
 
@@ -148,10 +154,16 @@ fn bench_is_ascii(c: &mut Criterion) {
     let mut fail_last = ascii_1k.clone();
     fail_last[1023] = 0x80;
 
-    c.bench_function("is_ascii/ascii_1k_fail_last", |bench| {
+    c.bench_function("is_ascii/scalar_1k_fail_last", |bench| {
         bench.iter(|| {
             let all_ascii = black_box(&fail_last).iter().all(|&b| b < 0x80);
             black_box(all_ascii);
+        })
+    });
+
+    c.bench_function("is_ascii/simd_1k_fail_last", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::is_all_ascii(black_box(&fail_last)));
         })
     });
 
@@ -160,10 +172,16 @@ fn bench_is_ascii(c: &mut Criterion) {
         [..64]
         .to_vec();
 
-    c.bench_function("is_ascii/ascii_64", |bench| {
+    c.bench_function("is_ascii/scalar_64", |bench| {
         bench.iter(|| {
             let all_ascii = black_box(&ascii_64).iter().all(|&b| b < 0x80);
             black_box(all_ascii);
+        })
+    });
+
+    c.bench_function("is_ascii/simd_64", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::is_all_ascii(black_box(&ascii_64)));
         })
     });
 }
@@ -177,7 +195,7 @@ fn bench_skip_ws(c: &mut Criterion) {
     let mut ws_64: Vec<u8> = vec![b' '; 64];
     ws_64.push(b'x');
 
-    c.bench_function("skip_ws/ws_run_64", |bench| {
+    c.bench_function("skip_ws/scalar_64", |bench| {
         bench.iter(|| {
             let count = black_box(&ws_64)
                 .iter()
@@ -187,10 +205,16 @@ fn bench_skip_ws(c: &mut Criterion) {
         })
     });
 
+    c.bench_function("skip_ws/simd_64", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::skip_whitespace(black_box(&ws_64)));
+        })
+    });
+
     // 1024 whitespace bytes.
     let ws_1k: Vec<u8> = vec![b' '; 1024];
 
-    c.bench_function("skip_ws/ws_run_1k", |bench| {
+    c.bench_function("skip_ws/scalar_1k", |bench| {
         bench.iter(|| {
             let count = black_box(&ws_1k)
                 .iter()
@@ -200,16 +224,28 @@ fn bench_skip_ws(c: &mut Criterion) {
         })
     });
 
+    c.bench_function("skip_ws/simd_1k", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::skip_whitespace(black_box(&ws_1k)));
+        })
+    });
+
     // 1024 non-WS bytes (early exit).
     let no_ws: Vec<u8> = vec![b'a'; 1024];
 
-    c.bench_function("skip_ws/ws_none", |bench| {
+    c.bench_function("skip_ws/scalar_none", |bench| {
         bench.iter(|| {
             let count = black_box(&no_ws)
                 .iter()
                 .take_while(|&&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
                 .count();
             black_box(count);
+        })
+    });
+
+    c.bench_function("skip_ws/simd_none", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::skip_whitespace(black_box(&no_ws)));
         })
     });
 }
@@ -223,7 +259,7 @@ fn bench_short_pattern(c: &mut Criterion) {
     let html_10k = "<p>Hello world</p><div>Content here</div><span>More text</span>".repeat(160);
     let html_bytes = html_10k.as_bytes();
 
-    c.bench_function("short_pat/find_2b_10k", |bench| {
+    c.bench_function("short_pat/scalar_2b_10k", |bench| {
         bench.iter(|| {
             let result = black_box(html_bytes)
                 .windows(2)
@@ -232,11 +268,17 @@ fn bench_short_pattern(c: &mut Criterion) {
         })
     });
 
+    c.bench_function("short_pat/simd_2b_10k", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::find_short_pattern(black_box(html_bytes), b"</"));
+        })
+    });
+
     // 10K data for 4-byte pattern.
     let xml_10k = "<item>data</item><!-- comment --><item>more</item>".repeat(200);
     let xml_bytes = xml_10k.as_bytes();
 
-    c.bench_function("short_pat/find_4b_10k", |bench| {
+    c.bench_function("short_pat/scalar_4b_10k", |bench| {
         bench.iter(|| {
             let result = black_box(xml_bytes)
                 .windows(4)
@@ -245,16 +287,28 @@ fn bench_short_pattern(c: &mut Criterion) {
         })
     });
 
+    c.bench_function("short_pat/simd_4b_10k", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::find_short_pattern(black_box(xml_bytes), b"<!--"));
+        })
+    });
+
     // 10K with no match (full scan).
     let no_match_10k: Vec<u8> = b"abcdefghij klmnopqrst uvwxyz0123 456789ABCD "
         .repeat(222);
 
-    c.bench_function("short_pat/find_2b_miss_10k", |bench| {
+    c.bench_function("short_pat/scalar_2b_miss_10k", |bench| {
         bench.iter(|| {
             let result = black_box(&no_match_10k[..])
                 .windows(2)
                 .position(|w| w == b"</");
             black_box(result);
+        })
+    });
+
+    c.bench_function("short_pat/simd_2b_miss_10k", |bench| {
+        bench.iter(|| {
+            black_box(text_utils::find_short_pattern(black_box(&no_match_10k), b"</"));
         })
     });
 }
