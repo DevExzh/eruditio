@@ -49,3 +49,7 @@ harness = false
 [[bench]]
 name = "intrinsics"
 harness = false
+
+[[bench]]
+name = "intrinsics_integration"
+harness = false
