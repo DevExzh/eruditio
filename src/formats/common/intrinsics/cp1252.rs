@@ -57,6 +57,8 @@ pub(crate) static CP1252_TABLE: [char; 256] = {
     table[0x9A] = '\u{0161}'; // Latin small letter s with caron
     table[0x9B] = '\u{203A}'; // Single right-pointing angle quotation
     table[0x9C] = '\u{0153}'; // Latin small ligature oe
+    // 0x9D is undefined in CP-1252; map to U+FFFD replacement character.
+    table[0x9D] = '\u{FFFD}';
     table[0x9E] = '\u{017E}'; // Latin small letter z with caron
     table[0x9F] = '\u{0178}'; // Latin capital letter Y with diaeresis
     table
@@ -93,7 +95,7 @@ mod x86 {
     /// AVX2 implementation -- processes 32 bytes at a time looking for all-ASCII
     /// runs, falls back to SSE2 then scalar for non-ASCII bytes.
     #[target_feature(enable = "avx2")]
-    pub(crate) unsafe fn decode_cp1252_avx2(data: &[u8]) -> String {
+    pub(super) unsafe fn decode_cp1252_avx2(data: &[u8]) -> String {
         let len = data.len();
         let mut result = String::with_capacity(len);
         let mut i: usize = 0;
@@ -165,7 +167,7 @@ mod x86 {
 
     /// SSE2 implementation -- processes 16 bytes at a time, then a scalar tail.
     #[target_feature(enable = "sse2")]
-    pub(crate) unsafe fn decode_cp1252_sse2(data: &[u8]) -> String {
+    pub(super) unsafe fn decode_cp1252_sse2(data: &[u8]) -> String {
         let len = data.len();
         let mut result = String::with_capacity(len);
         let mut i: usize = 0;
@@ -226,7 +228,7 @@ mod aarch64 {
 
     /// NEON implementation -- processes 16 bytes at a time looking for all-ASCII
     /// runs, falls back to scalar for non-ASCII bytes.
-    pub(crate) unsafe fn decode_cp1252_neon(data: &[u8]) -> String {
+    pub(super) unsafe fn decode_cp1252_neon(data: &[u8]) -> String {
         let len = data.len();
         let mut result = String::with_capacity(len);
         let mut i: usize = 0;
@@ -298,7 +300,7 @@ mod wasm {
     /// tail.
     #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
-    pub(crate) unsafe fn decode_cp1252_simd128(data: &[u8]) -> String {
+    pub(super) unsafe fn decode_cp1252_simd128(data: &[u8]) -> String {
         let len = data.len();
         let mut result = String::with_capacity(len);
         let mut i: usize = 0;

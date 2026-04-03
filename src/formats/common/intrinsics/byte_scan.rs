@@ -28,7 +28,7 @@ mod x86 {
     /// AVX2 implementation -- processes 32 bytes at a time, then a 16-byte
     /// SSE2 tail, then a scalar tail.
     #[target_feature(enable = "avx2")]
-    pub(crate) unsafe fn find_first_in_set_avx2(
+    pub(super) unsafe fn find_first_in_set_avx2(
         haystack: &[u8],
         set: &[u8],
     ) -> Option<usize> {
@@ -87,7 +87,7 @@ mod x86 {
 
     /// SSE2 implementation -- processes 16 bytes at a time, then a scalar tail.
     #[target_feature(enable = "sse2")]
-    pub(crate) unsafe fn find_first_in_set_sse2(
+    pub(super) unsafe fn find_first_in_set_sse2(
         haystack: &[u8],
         set: &[u8],
     ) -> Option<usize> {
@@ -134,7 +134,7 @@ mod aarch64 {
     use core::arch::aarch64::*;
 
     /// NEON implementation -- processes 16 bytes at a time, then a scalar tail.
-    pub(crate) unsafe fn find_first_in_set_neon(
+    pub(super) unsafe fn find_first_in_set_neon(
         haystack: &[u8],
         set: &[u8],
     ) -> Option<usize> {
@@ -190,7 +190,7 @@ mod wasm {
     /// tail.
     #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
-    pub(crate) unsafe fn find_first_in_set_simd128(
+    pub(super) unsafe fn find_first_in_set_simd128(
         haystack: &[u8],
         set: &[u8],
     ) -> Option<usize> {

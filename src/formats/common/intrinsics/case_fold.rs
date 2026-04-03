@@ -65,7 +65,7 @@ mod x86 {
     /// AVX2 implementation -- processes 32 bytes at a time with case folding,
     /// then a 16-byte SSE2 tail, then a scalar tail.
     #[target_feature(enable = "avx2")]
-    pub(crate) unsafe fn eq_ignore_ascii_case_avx2(a: &[u8], b: &[u8]) -> bool {
+    pub(super) unsafe fn eq_ignore_ascii_case_avx2(a: &[u8], b: &[u8]) -> bool {
         debug_assert_eq!(a.len(), b.len());
         let len = a.len();
         let mut i: usize = 0;
@@ -120,7 +120,7 @@ mod x86 {
     /// SSE2 implementation -- processes 16 bytes at a time with case folding,
     /// then a scalar tail.
     #[target_feature(enable = "sse2")]
-    pub(crate) unsafe fn eq_ignore_ascii_case_sse2(a: &[u8], b: &[u8]) -> bool {
+    pub(super) unsafe fn eq_ignore_ascii_case_sse2(a: &[u8], b: &[u8]) -> bool {
         debug_assert_eq!(a.len(), b.len());
         let len = a.len();
         let mut i: usize = 0;
@@ -165,7 +165,7 @@ mod aarch64 {
 
     /// NEON implementation -- processes 16 bytes at a time with case folding,
     /// then a scalar tail.
-    pub(crate) unsafe fn eq_ignore_ascii_case_neon(a: &[u8], b: &[u8]) -> bool {
+    pub(super) unsafe fn eq_ignore_ascii_case_neon(a: &[u8], b: &[u8]) -> bool {
         debug_assert_eq!(a.len(), b.len());
         let len = a.len();
         let mut i: usize = 0;
@@ -220,7 +220,7 @@ mod wasm {
     /// then a scalar tail.
     #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
-    pub(crate) unsafe fn eq_ignore_ascii_case_simd128(a: &[u8], b: &[u8]) -> bool {
+    pub(super) unsafe fn eq_ignore_ascii_case_simd128(a: &[u8], b: &[u8]) -> bool {
         debug_assert_eq!(a.len(), b.len());
         let len = a.len();
         let mut i: usize = 0;

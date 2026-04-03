@@ -123,7 +123,7 @@ mod x86 {
     /// scalar for any chunk that contains non-hex bytes or for the trailing
     /// remainder.
     #[target_feature(enable = "sse2")]
-    pub(crate) unsafe fn decode_hex_pairs_sse2(hex: &str) -> Vec<u8> {
+    pub(super) unsafe fn decode_hex_pairs_sse2(hex: &str) -> Vec<u8> {
         let bytes = hex.as_bytes();
         let len = bytes.len();
         let mut out = Vec::with_capacity(len / 2);
