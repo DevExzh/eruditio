@@ -166,74 +166,18 @@ pub fn unescape_basic_entities(text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// CP-1252 decoding (static lookup table)
+// CP-1252 decoding (delegated to intrinsics for SIMD acceleration)
 // ---------------------------------------------------------------------------
-
-/// Windows-1252 to Unicode lookup table. Bytes 0x00-0x7F and 0xA0-0xFF map
-/// directly to the same Unicode code point. Bytes 0x80-0x9F have special
-/// mappings.
-static CP1252_TABLE: [char; 256] = {
-    let mut table = ['\0'; 256];
-    let mut i = 0u16;
-    while i < 256 {
-        table[i as usize] = i as u8 as char;
-        i += 1;
-    }
-    // Special mappings for 0x80-0x9F range.
-    table[0x80] = '\u{20AC}'; // Euro sign
-    // 0x81 is undefined in CP-1252; map to U+FFFD replacement character.
-    table[0x81] = '\u{FFFD}';
-    table[0x82] = '\u{201A}'; // Single low-9 quotation mark
-    table[0x83] = '\u{0192}'; // Latin small letter f with hook
-    table[0x84] = '\u{201E}'; // Double low-9 quotation mark
-    table[0x85] = '\u{2026}'; // Horizontal ellipsis
-    table[0x86] = '\u{2020}'; // Dagger
-    table[0x87] = '\u{2021}'; // Double dagger
-    table[0x88] = '\u{02C6}'; // Modifier letter circumflex accent
-    table[0x89] = '\u{2030}'; // Per mille sign
-    table[0x8A] = '\u{0160}'; // Latin capital letter S with caron
-    table[0x8B] = '\u{2039}'; // Single left-pointing angle quotation
-    table[0x8C] = '\u{0152}'; // Latin capital ligature OE
-    // 0x8D is undefined in CP-1252; map to U+FFFD replacement character.
-    table[0x8D] = '\u{FFFD}';
-    table[0x8E] = '\u{017D}'; // Latin capital letter Z with caron
-    // 0x8F is undefined in CP-1252; map to U+FFFD replacement character.
-    table[0x8F] = '\u{FFFD}';
-    // 0x90 is undefined in CP-1252; map to U+FFFD replacement character.
-    table[0x90] = '\u{FFFD}';
-    table[0x91] = '\u{2018}'; // Left single quotation mark
-    table[0x92] = '\u{2019}'; // Right single quotation mark
-    table[0x93] = '\u{201C}'; // Left double quotation mark
-    table[0x94] = '\u{201D}'; // Right double quotation mark
-    table[0x95] = '\u{2022}'; // Bullet
-    table[0x96] = '\u{2013}'; // En dash
-    table[0x97] = '\u{2014}'; // Em dash
-    table[0x98] = '\u{02DC}'; // Small tilde
-    table[0x99] = '\u{2122}'; // Trade mark sign
-    table[0x9A] = '\u{0161}'; // Latin small letter s with caron
-    table[0x9B] = '\u{203A}'; // Single right-pointing angle quotation
-    table[0x9C] = '\u{0153}'; // Latin small ligature oe
-    table[0x9E] = '\u{017E}'; // Latin small letter z with caron
-    table[0x9F] = '\u{0178}'; // Latin capital letter Y with diaeresis
-    table
-};
 
 /// Converts a single CP-1252 byte to its Unicode character.
 #[inline]
 pub fn cp1252_byte_to_char(byte: u8) -> char {
-    CP1252_TABLE[byte as usize]
+    super::intrinsics::cp1252::cp1252_byte_to_char(byte)
 }
 
 /// Decodes a CP-1252 (Windows-1252) byte slice to a Unicode `String`.
-///
-/// Uses a static 256-entry lookup table for O(1) per byte with no branch
-/// misprediction overhead.
 pub fn decode_cp1252(data: &[u8]) -> String {
-    let mut result = String::with_capacity(data.len());
-    for &b in data {
-        result.push(CP1252_TABLE[b as usize]);
-    }
-    result
+    super::intrinsics::cp1252::decode_cp1252(data)
 }
 
 // ---------------------------------------------------------------------------
