@@ -244,25 +244,21 @@ fn strip_html_tags(html: &str) -> String {
     crate::formats::common::text_utils::strip_tags(html)
 }
 
-/// Case-insensitive byte search for an ASCII needle in a haystack.
-fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
-    let nb = needle.as_bytes();
-    haystack
-        .as_bytes()
-        .windows(nb.len())
-        .position(|w| w.eq_ignore_ascii_case(nb))
-}
-
 /// Strips outer HTML structure tags (html, head, body) leaving content.
 fn strip_outer_tags(html: &str) -> String {
+    let bytes = html.as_bytes();
+
     // Find </head> case-insensitively — skip everything up to and including it.
-    let start = find_ascii_ci(html, "</head>").map(|p| p + 7).unwrap_or(0);
+    let start = text_utils::find_case_insensitive(bytes, b"</head>")
+        .map(|p| p + 7)
+        .unwrap_or(0);
     let working = &html[start..];
+    let working_bytes = working.as_bytes();
 
     // Find the earliest of </html> or </body> and truncate there.
     let end = [
-        find_ascii_ci(working, "</html>"),
-        find_ascii_ci(working, "</body>"),
+        text_utils::find_case_insensitive(working_bytes, b"</html>"),
+        text_utils::find_case_insensitive(working_bytes, b"</body>"),
     ]
     .into_iter()
     .flatten()
@@ -271,7 +267,7 @@ fn strip_outer_tags(html: &str) -> String {
     let result = &working[..end];
 
     // Strip opening <body...> if present.
-    if let Some(pos) = find_ascii_ci(result, "<body")
+    if let Some(pos) = text_utils::find_case_insensitive(result.as_bytes(), b"<body")
         && let Some(gt) = result[pos..].find('>')
     {
         return result[pos + gt + 1..].trim().to_string();
@@ -364,5 +360,19 @@ mod tests {
         let html = r#"<html><head><meta name="keywords" content="fiction, adventure, fantasy"></head><body></body></html>"#;
         let meta = extract_metadata(html);
         assert_eq!(meta.subjects, vec!["fiction", "adventure", "fantasy"]);
+    }
+
+    #[test]
+    fn strip_outer_tags_case_insensitive() {
+        let html = "<HTML><HEAD><title>T</title></HEAD><BODY class=\"x\"><p>Content</p></BODY></HTML>";
+        let result = strip_outer_tags(html);
+        assert_eq!(result, "<p>Content</p>");
+    }
+
+    #[test]
+    fn strip_outer_tags_mixed_case() {
+        let html = "<Html><Head><title>T</title></Head><Body><p>Hello</p></Body></Html>";
+        let result = strip_outer_tags(html);
+        assert_eq!(result, "<p>Hello</p>");
     }
 }
