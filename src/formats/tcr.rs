@@ -1,5 +1,6 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::intrinsics;
 use crate::formats::txt::{TxtReader, book_to_plain_text};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
@@ -107,10 +108,11 @@ fn tcr_compress(data: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
         return (dictionary, Vec::new());
     }
 
-    // Count single-byte frequencies.
+    // Count single-byte frequencies using the multi-array histogram intrinsic.
+    let hist = intrinsics::histogram::byte_histogram(data);
     let mut byte_freq = [0u64; 256];
-    for &b in data {
-        byte_freq[b as usize] += 1;
+    for (i, &count) in hist.iter().enumerate() {
+        byte_freq[i] = count as u64;
     }
 
     // Collect unique bytes sorted by frequency (most frequent first).
