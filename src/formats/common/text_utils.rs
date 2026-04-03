@@ -227,10 +227,10 @@ pub fn find_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         }
 
         // Compare the rest of the needle case-insensitively.
-        let matched = haystack[candidate..candidate + needle.len()]
-            .iter()
-            .zip(needle)
-            .all(|(a, b)| a.eq_ignore_ascii_case(b));
+        let matched = super::intrinsics::case_fold::eq_ignore_ascii_case(
+            &haystack[candidate..candidate + needle.len()],
+            needle,
+        );
 
         if matched {
             return Some(candidate);
