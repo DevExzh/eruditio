@@ -181,63 +181,15 @@ pub fn decode_cp1252(data: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Hex decoding (lookup-table based)
+// Hex decoding (delegated to intrinsics)
 // ---------------------------------------------------------------------------
-
-/// Lookup table: ASCII byte value -> hex nibble value (0-15), or 0xFF for
-/// non-hex bytes.
-static HEX_VAL: [u8; 256] = {
-    let mut table = [0xFF_u8; 256];
-    table[b'0' as usize] = 0;
-    table[b'1' as usize] = 1;
-    table[b'2' as usize] = 2;
-    table[b'3' as usize] = 3;
-    table[b'4' as usize] = 4;
-    table[b'5' as usize] = 5;
-    table[b'6' as usize] = 6;
-    table[b'7' as usize] = 7;
-    table[b'8' as usize] = 8;
-    table[b'9' as usize] = 9;
-    table[b'a' as usize] = 10;
-    table[b'b' as usize] = 11;
-    table[b'c' as usize] = 12;
-    table[b'd' as usize] = 13;
-    table[b'e' as usize] = 14;
-    table[b'f' as usize] = 15;
-    table[b'A' as usize] = 10;
-    table[b'B' as usize] = 11;
-    table[b'C' as usize] = 12;
-    table[b'D' as usize] = 13;
-    table[b'E' as usize] = 14;
-    table[b'F' as usize] = 15;
-    table
-};
 
 /// Decodes pairs of hex ASCII characters into bytes.
 ///
 /// Skips whitespace between hex digits. Non-hex characters (other than
 /// whitespace) cause the pair to be skipped.
 pub fn decode_hex_pairs(hex: &str) -> Vec<u8> {
-    let bytes = hex.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len() / 2);
-    let mut i = 0;
-    while i < bytes.len() {
-        // Skip whitespace.
-        if bytes[i].is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        if i + 1 >= bytes.len() {
-            break;
-        }
-        let hi = HEX_VAL[bytes[i] as usize];
-        let lo = HEX_VAL[bytes[i + 1] as usize];
-        if hi != 0xFF && lo != 0xFF {
-            out.push((hi << 4) | lo);
-        }
-        i += 2;
-    }
-    out
+    super::intrinsics::hex_decode::decode_hex_pairs(hex)
 }
 
 // ---------------------------------------------------------------------------
