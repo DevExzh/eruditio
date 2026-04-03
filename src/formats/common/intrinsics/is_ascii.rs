@@ -13,6 +13,172 @@
 //! | *other*       | scalar loop                            |
 
 // ---------------------------------------------------------------------------
+// x86 / x86_64  SIMD implementations
+// ---------------------------------------------------------------------------
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod x86 {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::*;
+
+    /// AVX2 implementation -- processes 32 bytes at a time.
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn is_all_ascii_avx2(data: &[u8]) -> bool {
+        let len = data.len();
+        let mut i: usize = 0;
+
+        // --- 32-byte AVX2 chunks ---
+        while i + 32 <= len {
+            // SAFETY: `i + 32 <= len <= data.len()`, so the 32-byte unaligned
+            // load is within bounds. AVX2 is enabled by `target_feature`.
+            unsafe {
+                let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+                // movemask extracts the high bit of each byte. Any non-zero
+                // result means at least one byte has bit 7 set (non-ASCII).
+                let mask = _mm256_movemask_epi8(chunk) as u32;
+                if mask != 0 {
+                    return false;
+                }
+            }
+            i += 32;
+        }
+
+        // --- 16-byte SSE2 tail ---
+        if i + 16 <= len {
+            // SAFETY: `i + 16 <= len`. SSE2 is implied by AVX2.
+            unsafe {
+                let chunk = _mm_loadu_si128(data.as_ptr().add(i) as *const __m128i);
+                let mask = _mm_movemask_epi8(chunk) as u32;
+                if mask != 0 {
+                    return false;
+                }
+            }
+            i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if data[i] >= 0x80 {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// SSE2 implementation -- processes 16 bytes at a time.
+    #[target_feature(enable = "sse2")]
+    pub(super) unsafe fn is_all_ascii_sse2(data: &[u8]) -> bool {
+        let len = data.len();
+        let mut i: usize = 0;
+
+        // --- 16-byte SSE2 chunks ---
+        while i + 16 <= len {
+            // SAFETY: `i + 16 <= len <= data.len()`. SSE2 is enabled by
+            // `target_feature`.
+            unsafe {
+                let chunk = _mm_loadu_si128(data.as_ptr().add(i) as *const __m128i);
+                let mask = _mm_movemask_epi8(chunk) as u32;
+                if mask != 0 {
+                    return false;
+                }
+            }
+            i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if data[i] >= 0x80 {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// aarch64  NEON implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64 {
+    use core::arch::aarch64::*;
+
+    /// NEON implementation -- processes 16 bytes at a time.
+    pub(super) unsafe fn is_all_ascii_neon(data: &[u8]) -> bool {
+        let len = data.len();
+        let mut i: usize = 0;
+
+        while i + 16 <= len {
+            // SAFETY: `i + 16 <= len <= data.len()`. NEON is always available
+            // on aarch64.
+            unsafe {
+                let chunk = vld1q_u8(data.as_ptr().add(i));
+                // Reinterpret as signed; if the minimum value is negative,
+                // at least one byte has bit 7 set (non-ASCII).
+                let as_signed = vreinterpretq_s8_u8(chunk);
+                if vminvq_s8(as_signed) < 0 {
+                    return false;
+                }
+            }
+            i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if data[i] >= 0x80 {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wasm32  SIMD128 implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use core::arch::wasm32::*;
+
+    /// SIMD128 implementation -- processes 16 bytes at a time.
+    #[allow(dead_code)]
+    #[target_feature(enable = "simd128")]
+    pub(super) unsafe fn is_all_ascii_simd128(data: &[u8]) -> bool {
+        let len = data.len();
+        let mut i: usize = 0;
+
+        while i + 16 <= len {
+            // SAFETY: `i + 16 <= len <= data.len()`. simd128 is enabled by
+            // `target_feature`.
+            unsafe {
+                let chunk = v128_load(data.as_ptr().add(i) as *const v128);
+                // i8x16_bitmask extracts the high bit of each byte.
+                let mask = i8x16_bitmask(chunk) as u32;
+                if mask != 0 {
+                    return false;
+                }
+            }
+            i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if data[i] >= 0x80 {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Scalar fallback
 // ---------------------------------------------------------------------------
 
@@ -22,14 +188,49 @@ pub(crate) fn is_all_ascii_scalar(data: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch function (scalar-only until SIMD is added in Task 2)
+// Dispatch function
 // ---------------------------------------------------------------------------
 
 /// Returns `true` if every byte in `data` is in the ASCII range (0x00-0x7F).
 /// Returns `true` for empty input.
 ///
 /// Selects the best available SIMD implementation at runtime.
+#[allow(unreachable_code)]
 pub(crate) fn is_all_ascii(data: &[u8]) -> bool {
+    if data.is_empty() {
+        return true;
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 feature is confirmed present by the runtime check.
+            return unsafe { x86::is_all_ascii_avx2(data) };
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: SSE2 is always available on x86_64.
+            return unsafe { x86::is_all_ascii_sse2(data) };
+        }
+        #[cfg(target_arch = "x86")]
+        if is_x86_feature_detected!("sse2") {
+            // SAFETY: SSE2 feature is confirmed present by the runtime check.
+            return unsafe { x86::is_all_ascii_sse2(data) };
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON is always available on aarch64.
+        return unsafe { aarch64::is_all_ascii_neon(data) };
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        #[cfg(target_feature = "simd128")]
+        {
+            // SAFETY: simd128 target feature is statically enabled.
+            return unsafe { wasm::is_all_ascii_simd128(data) };
+        }
+    }
     is_all_ascii_scalar(data)
 }
 
@@ -116,5 +317,35 @@ mod tests {
     fn short_input_under_16() {
         assert!(is_all_ascii(b"tiny"));
         assert!(!is_all_ascii(&[0x80]));
+    }
+
+    #[test]
+    fn property_simd_matches_scalar() {
+        let mut rng: u64 = 0xDEAD_BEEF_CAFE_BABE;
+
+        for _ in 0..2000 {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+
+            let len = (rng % 200) as usize;
+
+            let data: Vec<u8> = (0..len)
+                .map(|_| {
+                    rng ^= rng << 13;
+                    rng ^= rng >> 7;
+                    rng ^= rng << 17;
+                    (rng & 0xFF) as u8
+                })
+                .collect();
+
+            let expected = is_all_ascii_scalar(&data);
+            let got = is_all_ascii(&data);
+            assert_eq!(
+                got, expected,
+                "mismatch for len={len}, data[..min(8,len)]={:?}",
+                &data[..len.min(8)]
+            );
+        }
     }
 }
