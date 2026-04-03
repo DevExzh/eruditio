@@ -5,6 +5,7 @@
 
 use crate::domain::Book;
 use crate::formats::common::html_utils::strip_tags;
+use crate::formats::common::text_utils;
 use crate::formats::common::text_utils::escape_html;
 
 /// Converts PML markup to HTML.
@@ -460,11 +461,17 @@ pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
     let mut current_title: Option<String> = None;
     let mut current_content = String::new();
     let mut pos = 0;
-    let lower = html.to_lowercase();
+    let bytes = html.as_bytes();
 
     while pos < html.len() {
-        // Check for h1 tag.
-        if lower[pos..].starts_with("<h1>") || lower[pos..].starts_with("<h1 ") {
+        // Check for h1 tag using case-insensitive prefix match.
+        let remaining = &bytes[pos..];
+        if remaining.len() >= 4
+            && remaining[0].eq_ignore_ascii_case(&b'<')
+            && remaining[1].eq_ignore_ascii_case(&b'h')
+            && remaining[2].eq_ignore_ascii_case(&b'1')
+            && (remaining[3] == b'>' || remaining[3] == b' ')
+        {
             // Save previous chapter if non-empty.
             if !current_content.trim().is_empty() {
                 chapters.push((current_title.take(), current_content.trim().to_string()));
@@ -472,7 +479,8 @@ pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
             }
             // Extract title.
             let tag_end = html[pos..].find('>').map(|e| pos + e + 1).unwrap_or(pos);
-            let close = lower[tag_end..].find("</h1>").map(|e| tag_end + e);
+            let close = text_utils::find_case_insensitive(&bytes[tag_end..], b"</h1>")
+                .map(|e| tag_end + e);
             if let Some(close_pos) = close {
                 current_title = Some(strip_tags(&html[tag_end..close_pos]).trim().to_string());
                 pos = close_pos + 5; // skip </h1>
@@ -783,6 +791,15 @@ mod tests {
     #[test]
     fn split_chapters_on_h1() {
         let html = "<h1>Chapter 1</h1><p>Content 1</p><h1>Chapter 2</h1><p>Content 2</p>";
+        let chapters = split_pml_chapters(html);
+        assert_eq!(chapters.len(), 2);
+        assert_eq!(chapters[0].0.as_deref(), Some("Chapter 1"));
+        assert_eq!(chapters[1].0.as_deref(), Some("Chapter 2"));
+    }
+
+    #[test]
+    fn split_chapters_case_insensitive() {
+        let html = "<H1>Chapter 1</H1><p>Content 1</p><H1>Chapter 2</H1><p>Content 2</p>";
         let chapters = split_pml_chapters(html);
         assert_eq!(chapters.len(), 2);
         assert_eq!(chapters[0].0.as_deref(), Some("Chapter 1"));
