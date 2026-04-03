@@ -112,8 +112,11 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                 }
             },
             b'\n' | b'\r' => {
-                // Bare newlines are ignored in RTF.
-                pos += 1;
+                // Bare newlines (and any following whitespace) are ignored in RTF.
+                // Use SIMD-accelerated skip for consecutive whitespace bytes.
+                let remaining = &input[pos..len];
+                let ws_count = crate::formats::common::intrinsics::skip_ws::skip_whitespace(remaining);
+                pos += ws_count.max(1); // advance at least 1 to avoid infinite loop
             },
             _ => {
                 // Plain text — collect until we hit a control character.
