@@ -109,13 +109,11 @@ impl HashChain {
                 continue;
             }
 
-            // SAFETY: match_length_simd requires that both slices have at
-            // least `max_len` readable bytes.
-            // For `data[pos..]`: `max_len <= remaining = data.len() - pos`,
-            //   so `pos + max_len <= data.len()`.
-            // For `data[cand..]`: `cand < pos`, so `data.len() - cand >
-            //   data.len() - pos >= max_len`, giving `cand + max_len < data.len()`.
-            let length = unsafe { match_length_simd(&data[cand..], &data[pos..], max_len) };
+            let length = crate::formats::common::intrinsics::match_length::common_prefix_length(
+                &data[cand..],
+                &data[pos..],
+                max_len,
+            );
 
             if length >= MIN_MATCH && length > best_length {
                 best_distance = pos - cand;
@@ -135,56 +133,6 @@ impl HashChain {
             None
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// SIMD / scalar match-length comparison
-// ---------------------------------------------------------------------------
-
-/// Determines how many leading bytes of `a` and `b` are equal, up to
-/// `max_len`. Uses SSE2 on x86_64 for the first 16 bytes; falls back to
-/// scalar comparison otherwise.
-#[cfg(target_arch = "x86_64")]
-#[inline]
-unsafe fn match_length_simd(a: &[u8], b: &[u8], max_len: usize) -> usize {
-    use std::arch::x86_64::*;
-
-    // SAFETY: caller ensures both slices have at least `max_len` readable
-    // bytes. We additionally check that each slice has at least 16 bytes
-    // available so the 128-bit unaligned loads are valid.
-    if max_len >= 16 && a.len() >= 16 && b.len() >= 16 {
-        // SAFETY: length checks above guarantee 16 bytes are readable in
-        // both `a` and `b`. SSE2 is available on all x86_64 targets.
-        unsafe {
-            let va = _mm_loadu_si128(a.as_ptr() as *const __m128i);
-            let vb = _mm_loadu_si128(b.as_ptr() as *const __m128i);
-            let cmp = _mm_cmpeq_epi8(va, vb);
-            let mask = _mm_movemask_epi8(cmp) as u32;
-            if mask != 0xFFFF {
-                return (mask.trailing_ones() as usize).min(max_len);
-            }
-        }
-        // All 16 bytes matched; cap at max_len.
-        return max_len.min(16);
-    }
-
-    // Scalar fallback for short comparisons.
-    let mut matched = 0;
-    while matched < max_len && a[matched] == b[matched] {
-        matched += 1;
-    }
-    matched
-}
-
-/// Scalar fallback for non-x86_64 targets.
-#[cfg(not(target_arch = "x86_64"))]
-#[inline]
-fn match_length_simd(a: &[u8], b: &[u8], max_len: usize) -> usize {
-    let mut matched = 0;
-    while matched < max_len && a[matched] == b[matched] {
-        matched += 1;
-    }
-    matched
 }
 
 // ---------------------------------------------------------------------------
