@@ -59,7 +59,7 @@ fn bench_byte_scan(c: &mut Criterion) {
 fn bench_cp1252(c: &mut Criterion) {
     // 10K pure ASCII.
     let ascii_10k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
-        .repeat(222)[..10_000]
+        .repeat(223)[..10_000]
         .to_vec();
 
     c.bench_function("cp1252/decode_10k_ascii", |bench| {
