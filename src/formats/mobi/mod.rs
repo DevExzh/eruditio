@@ -438,12 +438,16 @@ struct SimpleChapter {
 
 /// Splits HTML on `<mbp:pagebreak` tags.
 fn split_on_pagebreaks(html: &str) -> Vec<&str> {
-    let lower = html.to_lowercase();
+    let bytes = html.as_bytes();
+    let needle = b"<mbp:pagebreak";
     let mut parts = Vec::new();
     let mut last = 0;
 
-    let needle = "<mbp:pagebreak";
-    for (idx, _) in lower.match_indices(needle) {
+    let mut search_from = 0;
+    while let Some(offset) =
+        text_utils::find_case_insensitive(&bytes[search_from..], needle)
+    {
+        let idx = search_from + offset;
         if idx > last {
             parts.push(&html[last..idx]);
         }
@@ -453,6 +457,7 @@ fn split_on_pagebreaks(html: &str) -> Vec<&str> {
         } else {
             last = idx + needle.len();
         }
+        search_from = last;
     }
 
     if last < html.len() {
@@ -718,6 +723,16 @@ mod tests {
     fn detect_png() {
         let data = b"\x89PNG\r\n\x1a\nmore";
         assert_eq!(detect_image_type(data), ("png", "image/png"));
+    }
+
+    #[test]
+    fn split_on_pagebreaks_case_insensitive() {
+        let html = "part1<MBP:pagebreak />part2<Mbp:Pagebreak/>part3";
+        let parts = split_on_pagebreaks(html);
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "part1");
+        assert_eq!(parts[1], "part2");
+        assert_eq!(parts[2], "part3");
     }
 
     #[test]
