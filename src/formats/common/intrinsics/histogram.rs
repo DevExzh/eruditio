@@ -6,6 +6,7 @@
 //! but achieves significant throughput improvement on all platforms.
 
 /// Counts the frequency of each byte value in `data` using a single counter array.
+#[allow(dead_code)]
 pub(crate) fn byte_histogram_scalar(data: &[u8]) -> [u32; 256] {
     let mut counts = [0u32; 256];
     for &b in data {
@@ -18,6 +19,7 @@ pub(crate) fn byte_histogram_scalar(data: &[u8]) -> [u32; 256] {
 ///
 /// Uses 4 independent counter arrays to avoid store-forwarding stalls
 /// when consecutive bytes index the same cache line.
+#[allow(dead_code)]
 pub(crate) fn byte_histogram(data: &[u8]) -> [u32; 256] {
     if data.len() < 64 {
         return byte_histogram_scalar(data);

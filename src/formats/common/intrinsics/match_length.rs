@@ -171,6 +171,7 @@ mod wasm {
 
     /// SIMD128 implementation -- processes 16 bytes at a time, then a scalar
     /// tail.
+    #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
     pub(crate) unsafe fn common_prefix_length_simd128(
         a: &[u8],

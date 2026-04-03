@@ -296,6 +296,7 @@ mod wasm {
 
     /// SIMD128 implementation -- processes 16 bytes at a time, then a scalar
     /// tail.
+    #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
     pub(crate) unsafe fn decode_cp1252_simd128(data: &[u8]) -> String {
         let len = data.len();

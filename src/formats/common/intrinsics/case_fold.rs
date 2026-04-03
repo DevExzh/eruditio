@@ -218,6 +218,7 @@ mod wasm {
 
     /// SIMD128 implementation -- processes 16 bytes at a time with case folding,
     /// then a scalar tail.
+    #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
     pub(crate) unsafe fn eq_ignore_ascii_case_simd128(a: &[u8], b: &[u8]) -> bool {
         debug_assert_eq!(a.len(), b.len());
@@ -243,7 +244,7 @@ mod wasm {
                     vb,
                     v128_and(u8x16_lt(u8x16_sub(vb, upper_a), range), mask_20),
                 );
-                if i8x16_bitmask(i8x16_eq(la, lb)) != 0xFFFF_u16 as i32 {
+                if i8x16_bitmask(i8x16_eq(la, lb)) != 0xFFFF {
                     return false;
                 }
             }
