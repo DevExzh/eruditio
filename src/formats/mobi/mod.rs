@@ -13,6 +13,7 @@ use crate::error::{EruditioError, Result};
 use crate::formats::common::compression::huffcdic::HuffCdicReader;
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::PdbFile;
+use crate::formats::common::text_utils;
 use std::io::{Read, Write};
 
 use self::exth::{
@@ -467,15 +468,21 @@ fn split_on_pagebreaks(html: &str) -> Vec<&str> {
 
 /// Extracts the text content of the first `<h1>...<h3>` tag.
 fn extract_first_heading(html: &str) -> Option<String> {
-    let lower = html.to_lowercase();
+    let bytes = html.as_bytes();
 
-    for tag in &["<h1", "<h2", "<h3"] {
-        if let Some(start_idx) = lower.find(tag) {
+    for (open_tag, close_needle) in [
+        (b"<h1" as &[u8], b"</h1" as &[u8]),
+        (b"<h2", b"</h2"),
+        (b"<h3", b"</h3"),
+    ] {
+        if let Some(start_idx) = text_utils::find_case_insensitive(bytes, open_tag) {
             // Find end of opening tag.
             let content_start = html[start_idx..].find('>')? + start_idx + 1;
             // Find closing tag.
-            let close_tag = format!("</h{}", &tag[2..]);
-            let content_end = lower[content_start..].find(&close_tag)? + content_start;
+            let content_end = text_utils::find_case_insensitive(
+                &bytes[content_start..],
+                close_needle,
+            )? + content_start;
 
             let heading_html = &html[content_start..content_end];
             let text = strip_html_tags(heading_html).trim().to_string();
@@ -711,5 +718,17 @@ mod tests {
     fn detect_png() {
         let data = b"\x89PNG\r\n\x1a\nmore";
         assert_eq!(detect_image_type(data), ("png", "image/png"));
+    }
+
+    #[test]
+    fn extract_heading_case_insensitive() {
+        let html = "<H1>Title Here</H1><p>Content</p>";
+        assert_eq!(extract_first_heading(html), Some("Title Here".into()));
+    }
+
+    #[test]
+    fn extract_heading_mixed_case_h2() {
+        let html = "<p>Intro</p><H2>Second Level</H2><p>More</p>";
+        assert_eq!(extract_first_heading(html), Some("Second Level".into()));
     }
 }
