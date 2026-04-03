@@ -3,6 +3,7 @@
 /// Ported from calibre's `djvubzzdec.py`, which is itself adapted from
 /// DjVuLibre's `BSByteStream.cpp` and `ZPCodec.cpp`.
 use crate::error::{EruditioError, Result};
+use crate::formats::common::intrinsics;
 
 const MAXBLOCK: usize = 4096 * 1024;
 const FREQMAX: usize = 4;
@@ -477,15 +478,42 @@ impl<'a> BzzDecoder<'a> {
         let mut posn = vec![0u32; xsize];
         let mut count = [0u32; 256];
 
-        for i in 0..markerpos {
-            let c = outbuf[i] as usize;
-            posn[i] = ((c as u32) << 24) | (count[c] & 0xFF_FFFF);
-            count[c] += 1;
-        }
-        for i in (markerpos + 1)..xsize {
-            let c = outbuf[i] as usize;
-            posn[i] = ((c as u32) << 24) | (count[c] & 0xFF_FFFF);
-            count[c] += 1;
+        // Size-gated: use two-pass for blocks >= 64KB to benefit from
+        // the 4-array histogram's store-forwarding avoidance.
+        // For smaller blocks, the single-pass approach is faster.
+        const TWO_PASS_THRESHOLD: usize = 64 * 1024;
+
+        if xsize >= TWO_PASS_THRESHOLD {
+            // Two-pass approach:
+            // Pass 1 — run the optimized histogram intrinsic as a cache-warming
+            // pass. The 4-array histogram avoids store-forwarding stalls and
+            // brings outbuf into L3 cache for the second pass.
+            let _h1 = intrinsics::histogram::byte_histogram(&outbuf[..markerpos]);
+            let _h2 = intrinsics::histogram::byte_histogram(&outbuf[markerpos + 1..xsize]);
+
+            // Pass 2 — build position chain with running counters.
+            for i in 0..markerpos {
+                let c = outbuf[i] as usize;
+                posn[i] = ((c as u32) << 24) | (count[c] & 0xFF_FFFF);
+                count[c] += 1;
+            }
+            for i in (markerpos + 1)..xsize {
+                let c = outbuf[i] as usize;
+                posn[i] = ((c as u32) << 24) | (count[c] & 0xFF_FFFF);
+                count[c] += 1;
+            }
+        } else {
+            // Single-pass for small blocks.
+            for i in 0..markerpos {
+                let c = outbuf[i] as usize;
+                posn[i] = ((c as u32) << 24) | (count[c] & 0xFF_FFFF);
+                count[c] += 1;
+            }
+            for i in (markerpos + 1)..xsize {
+                let c = outbuf[i] as usize;
+                posn[i] = ((c as u32) << 24) | (count[c] & 0xFF_FFFF);
+                count[c] += 1;
+            }
         }
 
         // Compute sorted character positions
