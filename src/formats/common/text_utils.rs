@@ -26,16 +26,14 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
     let bytes = text.as_bytes();
     let len = bytes.len();
 
-    // Fast path: scan for any special character. If none, return as-is.
-    // Match only the characters that will actually be escaped in this mode.
-    let has_special = if xml_mode {
-        bytes
-            .iter()
-            .any(|&b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''))
+    let set: &[u8] = if xml_mode {
+        b"&<>\"'"
     } else {
-        bytes.iter().any(|&b| matches!(b, b'&' | b'<' | b'>'))
+        b"&<>"
     };
-    if !has_special {
+
+    // Fast path: no special characters found.
+    if !super::intrinsics::byte_scan::has_any_in_set(bytes, set) {
         return text.to_string();
     }
 
@@ -43,10 +41,7 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
     let mut pos = 0;
 
     while pos < len {
-        // Find the next byte that needs escaping.
-        let next = bytes[pos..].iter().position(|&b| {
-            b == b'&' || b == b'<' || b == b'>' || (xml_mode && (b == b'"' || b == b'\''))
-        });
+        let next = super::intrinsics::byte_scan::find_first_in_set(&bytes[pos..], set);
 
         match next {
             Some(offset) => {
@@ -59,15 +54,14 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
                     b'>' => result.push_str("&gt;"),
                     b'"' => result.push_str("&quot;"),
                     b'\'' => result.push_str("&apos;"),
-                    _ => {}, // position() guarantees only matched bytes reach here
+                    _ => {}
                 }
                 pos += offset + 1;
-            },
+            }
             None => {
-                // No more special chars — copy the rest and done.
                 result.push_str(&text[pos..]);
                 break;
-            },
+            }
         }
     }
 
