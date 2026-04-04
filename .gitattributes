@@ -1,0 +1,30 @@
+# Ebook binary formats — no text diff, no CRLF normalization
+*.epub binary
+*.mobi binary
+*.azw  binary
+*.azw3 binary
+*.prc  binary
+*.kfx  binary
+*.chm  binary
+*.lit  binary
+*.lrf  binary
+*.djvu binary
+*.djv  binary
+*.pdb  binary
+*.snb  binary
+*.rb   binary
+
+# Compressed ebook containers (ZIP-based)
+*.cbz  binary
+*.cbr  binary
+*.cb7  binary
+*.cbc  binary
+*.cbt  binary
+*.fbz  binary
+*.htmlz binary
+*.pmlz binary
+*.txtz binary
+*.kepub binary
+
+# Test data — exclude from GitHub language statistics
+test-data/** linguist-vendored
