@@ -105,11 +105,22 @@ fn read_from_archive<R: Read + Seek>(
         .map_err(|_| EruditioError::Format(format!("File not found in EPUB: {}", path)))?;
 
     if as_text {
-        let mut text = String::new();
-        file.read_to_string(&mut text)?;
+        // Read as raw bytes first, then validate UTF-8 once. This is faster
+        // than `read_to_string` which validates incrementally on each chunk.
+        let size_hint = (file.size() as usize).min(256 * 1024 * 1024);
+        let mut bytes = Vec::with_capacity(size_hint);
+        file.read_to_end(&mut bytes)?;
+        let text = match String::from_utf8(bytes) {
+            Ok(s) => s, // Fast path: valid UTF-8, wraps the Vec with zero copy.
+            Err(e) => {
+                // Fallback for EPUBs with Windows-1252 or other non-UTF-8 content.
+                String::from_utf8_lossy(e.as_bytes()).into_owned()
+            }
+        };
         Ok(ManifestData::Text(text))
     } else {
-        let mut data = Vec::new();
+        let size_hint = (file.size() as usize).min(256 * 1024 * 1024);
+        let mut data = Vec::with_capacity(size_hint);
         file.read_to_end(&mut data)?;
         Ok(ManifestData::Inline(data))
     }

@@ -72,10 +72,10 @@ fn test_all_html_files_parse() {
             Ok(_) => {
                 pass += 1;
                 eprintln!("[PASS] {}", name);
-            }
+            },
             Err(e) => {
                 eprintln!("[FAIL] {} — {}", name, e);
-            }
+            },
         }
     }
 
@@ -102,11 +102,7 @@ fn test_html_produces_content() {
         let count = book.chapter_count();
         eprintln!("{}: {} chapter(s)", name, count);
 
-        assert!(
-            count > 0,
-            "{} produced zero chapters",
-            name
-        );
+        assert!(count > 0, "{} produced zero chapters", name);
 
         let chapters = book.chapters();
         assert!(
@@ -137,10 +133,7 @@ fn test_html_content_not_empty() {
     );
 
     let first = &chapters[0];
-    assert!(
-        !first.content.is_empty(),
-        "First chapter content is empty"
-    );
+    assert!(!first.content.is_empty(), "First chapter content is empty");
     assert!(
         first.content.len() > 100,
         "First chapter content is suspiciously short ({} chars)",

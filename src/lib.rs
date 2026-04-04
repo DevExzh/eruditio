@@ -4,6 +4,10 @@
 //! and production-ready parsing and generation of ebook formats such as EPUB, MOBI,
 //! PDF, FB2, and others.
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 pub mod domain;
 pub mod error;
 pub mod formats;

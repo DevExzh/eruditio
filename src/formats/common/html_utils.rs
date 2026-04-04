@@ -1,11 +1,13 @@
+use std::borrow::Cow;
+
 /// Escapes text for safe embedding in HTML/XHTML content.
-pub fn escape_html(text: &str) -> String {
+pub fn escape_html(text: &str) -> Cow<'_, str> {
     super::text_utils::escape_html(text)
 }
 
 /// Strips all HTML tags from content, returning plain text.
-/// This is a simple implementation — not a full HTML parser.
-pub fn strip_tags(html: &str) -> String {
+/// This is a simple implementation -- not a full HTML parser.
+pub fn strip_tags(html: &str) -> Cow<'_, str> {
     super::text_utils::strip_tags(html)
 }
 

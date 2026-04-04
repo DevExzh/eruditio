@@ -1,6 +1,7 @@
 use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::html_utils::escape_html;
+use std::fmt::Write as FmtWrite;
 use std::io::{Seek, Write};
 use zip::CompressionMethod;
 use zip::ZipWriter;
@@ -64,14 +65,13 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     Ok(())
 }
 
-fn generate_container_xml() -> String {
+fn generate_container_xml() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
 </container>"#
-        .to_string()
 }
 
 /// Generates the OPF package document XML from a `Book`.
@@ -107,56 +107,48 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
     xml.push('\n');
 
     if let Some(ref title) = m.title {
-        xml.push_str(&format!(
-            "    <dc:title>{}</dc:title>\n",
-            escape_html(title)
-        ));
+        xml.push_str("    <dc:title>");
+        xml.push_str(&escape_html(title));
+        xml.push_str("</dc:title>\n");
     }
     for author in &m.authors {
-        xml.push_str(&format!(
-            "    <dc:creator>{}</dc:creator>\n",
-            escape_html(author)
-        ));
+        xml.push_str("    <dc:creator>");
+        xml.push_str(&escape_html(author));
+        xml.push_str("</dc:creator>\n");
     }
     if let Some(ref lang) = m.language {
-        xml.push_str(&format!(
-            "    <dc:language>{}</dc:language>\n",
-            escape_html(lang)
-        ));
+        xml.push_str("    <dc:language>");
+        xml.push_str(&escape_html(lang));
+        xml.push_str("</dc:language>\n");
     } else {
         xml.push_str("    <dc:language>en</dc:language>\n");
     }
     if let Some(ref publisher) = m.publisher {
-        xml.push_str(&format!(
-            "    <dc:publisher>{}</dc:publisher>\n",
-            escape_html(publisher)
-        ));
+        xml.push_str("    <dc:publisher>");
+        xml.push_str(&escape_html(publisher));
+        xml.push_str("</dc:publisher>\n");
     }
     if let Some(ref identifier) = m.identifier {
-        xml.push_str(&format!(
-            "    <dc:identifier id=\"uid\">{}</dc:identifier>\n",
-            escape_html(identifier)
-        ));
+        xml.push_str("    <dc:identifier id=\"uid\">");
+        xml.push_str(&escape_html(identifier));
+        xml.push_str("</dc:identifier>\n");
     } else {
         xml.push_str("    <dc:identifier id=\"uid\">urn:uuid:00000000-0000-0000-0000-000000000000</dc:identifier>\n");
     }
     if let Some(ref desc) = m.description {
-        xml.push_str(&format!(
-            "    <dc:description>{}</dc:description>\n",
-            escape_html(desc)
-        ));
+        xml.push_str("    <dc:description>");
+        xml.push_str(&escape_html(desc));
+        xml.push_str("</dc:description>\n");
     }
     for subject in &m.subjects {
-        xml.push_str(&format!(
-            "    <dc:subject>{}</dc:subject>\n",
-            escape_html(subject)
-        ));
+        xml.push_str("    <dc:subject>");
+        xml.push_str(&escape_html(subject));
+        xml.push_str("</dc:subject>\n");
     }
     if let Some(ref rights) = m.rights {
-        xml.push_str(&format!(
-            "    <dc:rights>{}</dc:rights>\n",
-            escape_html(rights)
-        ));
+        xml.push_str("    <dc:rights>");
+        xml.push_str(&escape_html(rights));
+        xml.push_str("</dc:rights>\n");
     }
     if let Some(ref date) = m.publication_date {
         xml.push_str(&format!(
@@ -165,16 +157,14 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
         ));
     }
     if let Some(ref cover_id) = m.cover_image_id {
-        xml.push_str(&format!(
-            "    <meta name=\"cover\" content=\"{}\"/>\n",
-            escape_html(cover_id)
-        ));
+        xml.push_str("    <meta name=\"cover\" content=\"");
+        xml.push_str(&escape_html(cover_id));
+        xml.push_str("\"/>\n");
     }
     if let Some(ref series) = m.series {
-        xml.push_str(&format!(
-            "    <meta name=\"calibre:series\" content=\"{}\"/>\n",
-            escape_html(series)
-        ));
+        xml.push_str("    <meta name=\"calibre:series\" content=\"");
+        xml.push_str(&escape_html(series));
+        xml.push_str("\"/>\n");
     }
     if let Some(idx) = m.series_index {
         xml.push_str(&format!(
@@ -199,17 +189,17 @@ fn generate_opf_manifest(book: &Book, xml: &mut String) {
         if item.href == "toc.ncx" || item.id == "ncx" {
             continue;
         }
-        xml.push_str(&format!(
-            "    <item id=\"{}\" href=\"{}\" media-type=\"{}\"",
-            escape_html(&item.id),
-            escape_html(&item.href),
-            escape_html(&item.media_type),
-        ));
+        xml.push_str("    <item id=\"");
+        xml.push_str(&escape_html(&item.id));
+        xml.push_str("\" href=\"");
+        xml.push_str(&escape_html(&item.href));
+        xml.push_str("\" media-type=\"");
+        xml.push_str(&escape_html(&item.media_type));
+        xml.push('"');
         if !item.properties.is_empty() {
-            xml.push_str(&format!(
-                " properties=\"{}\"",
-                escape_html(&item.properties.join(" "))
-            ));
+            xml.push_str(" properties=\"");
+            xml.push_str(&escape_html(&item.properties.join(" ")));
+            xml.push('"');
         }
         xml.push_str("/>\n");
     }
@@ -229,10 +219,9 @@ fn generate_opf_spine(book: &Book, xml: &mut String) {
     xml.push_str(">\n");
 
     for spine_item in book.spine.iter() {
-        xml.push_str(&format!(
-            "    <itemref idref=\"{}\"",
-            escape_html(&spine_item.manifest_id)
-        ));
+        xml.push_str("    <itemref idref=\"");
+        xml.push_str(&escape_html(&spine_item.manifest_id));
+        xml.push('"');
         if !spine_item.linear {
             xml.push_str(" linear=\"no\"");
         }
@@ -248,12 +237,13 @@ fn generate_opf_guide(book: &Book, xml: &mut String) {
     }
     xml.push_str("  <guide>\n");
     for r in &book.guide.references {
-        xml.push_str(&format!(
-            "    <reference type=\"{}\" title=\"{}\" href=\"{}\"/>\n",
-            escape_html(r.ref_type.as_str()),
-            escape_html(&r.title),
-            escape_html(&r.href),
-        ));
+        xml.push_str("    <reference type=\"");
+        xml.push_str(&escape_html(r.ref_type.as_str()));
+        xml.push_str("\" title=\"");
+        xml.push_str(&escape_html(&r.title));
+        xml.push_str("\" href=\"");
+        xml.push_str(&escape_html(&r.href));
+        xml.push_str("\"/>\n");
     }
     xml.push_str("  </guide>\n");
 }
@@ -273,18 +263,16 @@ fn generate_ncx(book: &Book) -> String {
     xml.push_str(r#"<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">"#);
     xml.push('\n');
     xml.push_str("  <head>\n");
-    xml.push_str(&format!(
-        "    <meta name=\"dtb:uid\" content=\"{}\"/>\n",
-        escape_html(uid)
-    ));
+    xml.push_str("    <meta name=\"dtb:uid\" content=\"");
+    xml.push_str(&escape_html(uid));
+    xml.push_str("\"/>\n");
     xml.push_str("    <meta name=\"dtb:depth\" content=\"1\"/>\n");
     xml.push_str("    <meta name=\"dtb:totalPageCount\" content=\"0\"/>\n");
     xml.push_str("    <meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n");
     xml.push_str("  </head>\n");
-    xml.push_str(&format!(
-        "  <docTitle><text>{}</text></docTitle>\n",
-        escape_html(title)
-    ));
+    xml.push_str("  <docTitle><text>");
+    xml.push_str(&escape_html(title));
+    xml.push_str("</text></docTitle>\n");
     xml.push_str("  <navMap>\n");
 
     let mut play_order = 1u32;
@@ -298,37 +286,41 @@ fn generate_ncx(book: &Book) -> String {
 }
 
 fn write_ncx_navpoint(item: &TocItem, xml: &mut String, play_order: &mut u32, indent: usize) {
-    let pad = "  ".repeat(indent);
+    // Use a fixed indentation buffer to avoid "  ".repeat() allocation per call.
+    const INDENT_BUF: &str = "                                ";
+    let pad_len = (indent * 2).min(INDENT_BUF.len());
+    let pad = &INDENT_BUF[..pad_len];
+
     let id = item
         .id
         .as_deref()
         .map(String::from)
         .unwrap_or_else(|| format!("navpoint-{}", *play_order));
 
-    xml.push_str(&format!(
-        "{}<navPoint id=\"{}\" playOrder=\"{}\">\n",
-        pad,
-        escape_html(&id),
-        *play_order,
-    ));
+    xml.push_str(pad);
+    xml.push_str("<navPoint id=\"");
+    xml.push_str(&escape_html(&id));
+    xml.push_str("\" playOrder=\"");
+    let _ = write!(xml, "{}", *play_order);
+    xml.push_str("\">\n");
     *play_order += 1;
 
-    xml.push_str(&format!(
-        "{}  <navLabel><text>{}</text></navLabel>\n",
-        pad,
-        escape_html(&item.title)
-    ));
-    xml.push_str(&format!(
-        "{}  <content src=\"{}\"/>\n",
-        pad,
-        escape_html(&item.href)
-    ));
+    xml.push_str(pad);
+    xml.push_str("  <navLabel><text>");
+    xml.push_str(&escape_html(&item.title));
+    xml.push_str("</text></navLabel>\n");
+
+    xml.push_str(pad);
+    xml.push_str("  <content src=\"");
+    xml.push_str(&escape_html(&item.href));
+    xml.push_str("\"/>\n");
 
     for child in &item.children {
         write_ncx_navpoint(child, xml, play_order, indent + 1);
     }
 
-    xml.push_str(&format!("{}</navPoint>\n", pad));
+    xml.push_str(pad);
+    xml.push_str("</navPoint>\n");
 }
 
 #[cfg(test)]

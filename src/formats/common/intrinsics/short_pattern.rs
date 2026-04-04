@@ -46,10 +46,7 @@ mod x86 {
     /// AVX2 implementation -- scans 32 bytes at a time for first-byte matches,
     /// then verifies remaining bytes at each candidate.
     #[target_feature(enable = "avx2")]
-    pub(super) unsafe fn find_short_pattern_avx2(
-        haystack: &[u8],
-        needle: &[u8],
-    ) -> Option<usize> {
+    pub(super) unsafe fn find_short_pattern_avx2(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         let len = haystack.len();
         let first = needle[0];
         let mut i: usize = 0;
@@ -109,10 +106,7 @@ mod x86 {
 
     /// SSE2 implementation -- scans 16 bytes at a time.
     #[target_feature(enable = "sse2")]
-    pub(super) unsafe fn find_short_pattern_sse2(
-        haystack: &[u8],
-        needle: &[u8],
-    ) -> Option<usize> {
+    pub(super) unsafe fn find_short_pattern_sse2(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         let len = haystack.len();
         let first = needle[0];
         let mut i: usize = 0;
@@ -166,10 +160,7 @@ mod aarch64 {
     ///
     /// Extracts match positions from 64-bit lane halves and verifies each
     /// candidate. Processes all candidates within one chunk before advancing.
-    pub(super) unsafe fn find_short_pattern_neon(
-        haystack: &[u8],
-        needle: &[u8],
-    ) -> Option<usize> {
+    pub(super) unsafe fn find_short_pattern_neon(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         let len = haystack.len();
         let first = needle[0];
         let mut i: usize = 0;

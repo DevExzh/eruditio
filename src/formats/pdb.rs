@@ -57,12 +57,13 @@ impl FormatWriter for PdbWriter {
         let text_bytes = text.as_bytes();
         let max_record_size = 4096usize;
 
-        // Split into records and compress.
+        // Split into records and compress (reuse compressor across records).
         let mut records: Vec<Vec<u8>> = Vec::new();
+        let mut compressor = palmdoc::PalmDocCompressor::new();
         let mut offset = 0;
         while offset < text_bytes.len() {
             let end = (offset + max_record_size).min(text_bytes.len());
-            records.push(palmdoc::compress(&text_bytes[offset..end]));
+            records.push(compressor.compress_record(&text_bytes[offset..end]));
             offset = end;
         }
         if records.is_empty() {
@@ -1201,7 +1202,7 @@ fn media_type_to_ext(media_type: &str) -> &str {
 /// Strips HTML tags from a string, returning plain text.
 fn strip_html(html: &str) -> String {
     let stripped = crate::formats::common::text_utils::strip_tags(html);
-    crate::formats::common::text_utils::unescape_basic_entities(&stripped)
+    crate::formats::common::text_utils::unescape_basic_entities(&stripped).into_owned()
 }
 
 // ---------------------------------------------------------------------------

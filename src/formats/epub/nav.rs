@@ -1,5 +1,6 @@
 use crate::domain::TocItem;
 use crate::error::{EruditioError, Result};
+use crate::formats::common::xml_utils;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 
@@ -26,8 +27,9 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let tag = local_tag(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "nav" if !in_toc_nav => {
                         if is_toc_nav(e) {
                             in_toc_nav = true;
@@ -52,7 +54,7 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                         item_pushed = false;
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"href" {
-                                current_href = String::from_utf8_lossy(&attr.value).into_owned();
+                                current_href = xml_utils::bytes_to_string(&attr.value);
                             }
                         }
                     },
@@ -61,12 +63,16 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
             },
             Ok(Event::Text(ref e)) => {
                 if in_anchor {
-                    current_title.push_str(&String::from_utf8_lossy(&e.clone().into_inner()));
+                    match std::str::from_utf8(e.as_ref()) {
+                        Ok(s) => current_title.push_str(s),
+                        Err(_) => current_title.push_str(&String::from_utf8_lossy(e.as_ref())),
+                    }
                 }
             },
             Ok(Event::End(ref e)) => {
-                let tag = local_tag(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "nav" if in_toc_nav => {
                         in_toc_nav = false;
                     },
@@ -124,23 +130,15 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
 /// Checks if a `<nav>` element has `epub:type="toc"`.
 fn is_toc_nav(e: &quick_xml::events::BytesStart<'_>) -> bool {
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        let val = String::from_utf8_lossy(&attr.value);
-        // Match both "epub:type" and just "type" with value containing "toc".
-        if (key == "epub:type" || key.ends_with(":type")) && val.contains("toc") {
+        let key = attr.key.as_ref();
+        // Match both "epub:type" and any namespaced ":type" suffix.
+        if (key == b"epub:type" || key.ends_with(b":type")) && attr.value.as_ref().windows(3).any(|w| w == b"toc") {
             return true;
         }
     }
     false
 }
 
-fn local_tag(raw: &[u8]) -> String {
-    let full = String::from_utf8_lossy(raw);
-    match full.rfind(':') {
-        Some(pos) => full[pos + 1..].to_string(),
-        None => full.into_owned(),
-    }
-}
 
 #[cfg(test)]
 mod tests {

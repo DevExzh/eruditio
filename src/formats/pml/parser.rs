@@ -479,8 +479,8 @@ pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
             }
             // Extract title.
             let tag_end = html[pos..].find('>').map(|e| pos + e + 1).unwrap_or(pos);
-            let close = text_utils::find_case_insensitive(&bytes[tag_end..], b"</h1>")
-                .map(|e| tag_end + e);
+            let close =
+                text_utils::find_case_insensitive(&bytes[tag_end..], b"</h1>").map(|e| tag_end + e);
             if let Some(close_pos) = close {
                 current_title = Some(strip_tags(&html[tag_end..close_pos]).trim().to_string());
                 pos = close_pos + 5; // skip </h1>

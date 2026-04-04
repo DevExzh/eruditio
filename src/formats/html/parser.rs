@@ -121,25 +121,24 @@ pub(crate) fn build_html_document(title: &str, meta: &Metadata, body: &str) -> S
 
     html.push_str("<!DOCTYPE html>\n<html>\n<head>\n");
     html.push_str("<meta charset=\"UTF-8\">\n");
-    html.push_str(&format!("<title>{}</title>\n", escape_html(title)));
+    html.push_str("<title>");
+    html.push_str(&escape_html(title));
+    html.push_str("</title>\n");
 
     for author in &meta.authors {
-        html.push_str(&format!(
-            "<meta name=\"author\" content=\"{}\">\n",
-            escape_html(author)
-        ));
+        html.push_str("<meta name=\"author\" content=\"");
+        html.push_str(&escape_html(author));
+        html.push_str("\">\n");
     }
     if let Some(ref desc) = meta.description {
-        html.push_str(&format!(
-            "<meta name=\"description\" content=\"{}\">\n",
-            escape_html(desc)
-        ));
+        html.push_str("<meta name=\"description\" content=\"");
+        html.push_str(&escape_html(desc));
+        html.push_str("\">\n");
     }
     if let Some(ref lang) = meta.language {
-        html.push_str(&format!(
-            "<meta name=\"language\" content=\"{}\">\n",
-            escape_html(lang)
-        ));
+        html.push_str("<meta name=\"language\" content=\"");
+        html.push_str(&escape_html(lang));
+        html.push_str("\">\n");
     }
 
     html.push_str("</head>\n<body>\n");
@@ -158,9 +157,8 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
     let start = text_utils::find_case_insensitive(bytes, open.as_bytes())?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
-    let content_end =
-        text_utils::find_case_insensitive(&bytes[content_start..], close.as_bytes())?
-            + content_start;
+    let content_end = text_utils::find_case_insensitive(&bytes[content_start..], close.as_bytes())?
+        + content_start;
 
     let text = html[content_start..content_end].trim().to_string();
     if text.is_empty() { None } else { Some(text) }
@@ -184,9 +182,7 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
     let bytes = head.as_bytes();
     let mut search_from = 0;
 
-    while let Some(pos) =
-        text_utils::find_case_insensitive(&bytes[search_from..], b"<meta")
-    {
+    while let Some(pos) = text_utils::find_case_insensitive(&bytes[search_from..], b"<meta") {
         let abs_pos = search_from + pos;
         let tag_end = match head[abs_pos..].find('>') {
             Some(e) => abs_pos + e,
@@ -258,7 +254,7 @@ fn extract_attribute_ci(tag_lower: &str, tag_orig: &str, attr_name: &str) -> Opt
 
 /// Strips HTML tags from a string.
 fn strip_html_tags(html: &str) -> String {
-    crate::formats::common::text_utils::strip_tags(html)
+    crate::formats::common::text_utils::strip_tags(html).into_owned()
 }
 
 /// Strips outer HTML structure tags (html, head, body) leaving content.
@@ -395,7 +391,8 @@ mod tests {
 
     #[test]
     fn strip_outer_tags_case_insensitive() {
-        let html = "<HTML><HEAD><title>T</title></HEAD><BODY class=\"x\"><p>Content</p></BODY></HTML>";
+        let html =
+            "<HTML><HEAD><title>T</title></HEAD><BODY class=\"x\"><p>Content</p></BODY></HTML>";
         let result = strip_outer_tags(html);
         assert_eq!(result, "<p>Content</p>");
     }

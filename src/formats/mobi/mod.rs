@@ -195,8 +195,7 @@ fn decompress_text(
                 text.extend_from_slice(record_data);
             },
             COMPRESSION_PALMDOC => {
-                let decompressed = palmdoc::decompress(record_data)?;
-                text.extend_from_slice(&decompressed);
+                palmdoc::decompress_into(record_data, &mut text)?;
                 if text.len() > MAX_TEXT_OUTPUT {
                     return Err(EruditioError::Format(
                         "Decompressed text exceeds maximum allowed size".into(),
@@ -444,9 +443,7 @@ fn split_on_pagebreaks(html: &str) -> Vec<&str> {
     let mut last = 0;
 
     let mut search_from = 0;
-    while let Some(offset) =
-        text_utils::find_case_insensitive(&bytes[search_from..], needle)
-    {
+    while let Some(offset) = text_utils::find_case_insensitive(&bytes[search_from..], needle) {
         let idx = search_from + offset;
         if idx > last {
             parts.push(&html[last..idx]);
@@ -484,10 +481,9 @@ fn extract_first_heading(html: &str) -> Option<String> {
             // Find end of opening tag.
             let content_start = html[start_idx..].find('>')? + start_idx + 1;
             // Find closing tag.
-            let content_end = text_utils::find_case_insensitive(
-                &bytes[content_start..],
-                close_needle,
-            )? + content_start;
+            let content_end =
+                text_utils::find_case_insensitive(&bytes[content_start..], close_needle)?
+                    + content_start;
 
             let heading_html = &html[content_start..content_end];
             let text = strip_html_tags(heading_html).trim().to_string();
@@ -502,7 +498,7 @@ fn extract_first_heading(html: &str) -> Option<String> {
 
 /// Very simple HTML tag stripper for heading extraction.
 fn strip_html_tags(html: &str) -> String {
-    crate::formats::common::text_utils::strip_tags(html)
+    crate::formats::common::text_utils::strip_tags(html).into_owned()
 }
 
 /// Decodes CP-1252 bytes to a UTF-8 string.
@@ -522,11 +518,12 @@ mod tests {
 
         // Compress text into records of up to 4096 bytes.
         let mut text_records: Vec<Vec<u8>> = Vec::new();
+        let mut compressor = palmdoc::PalmDocCompressor::new();
         let mut offset = 0;
         while offset < text_bytes.len() {
             let end = (offset + palmdoc::RECORD_SIZE).min(text_bytes.len());
             let chunk = &text_bytes[offset..end];
-            text_records.push(palmdoc::compress(chunk));
+            text_records.push(compressor.compress_record(chunk));
             offset = end;
         }
 

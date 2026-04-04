@@ -116,14 +116,18 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
 }
 
 /// Compresses text into PalmDoc-compressed records.
+///
+/// Uses a reusable `PalmDocCompressor` to amortise the 16 KB hash-chain
+/// initialisation cost across all records (instead of re-creating it per record).
 fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
     let mut records = Vec::new();
+    let mut compressor = palmdoc::PalmDocCompressor::new();
     let mut offset = 0;
 
     while offset < text.len() {
         let end = (offset + RECORD_SIZE).min(text.len());
         let chunk = &text[offset..end];
-        records.push(palmdoc::compress(chunk));
+        records.push(compressor.compress_record(chunk));
         offset = end;
     }
 
@@ -295,7 +299,13 @@ fn build_image_records(book: &Book) -> Vec<Vec<u8>> {
 
 /// Converts Book content to MOBI-compatible HTML.
 fn book_to_mobi_html(book: &Book) -> String {
-    let mut html = String::with_capacity(4096);
+    let estimated: usize = book
+        .chapters()
+        .iter()
+        .map(|c| c.content.len() + 200)
+        .sum::<usize>()
+        + 256;
+    let mut html = String::with_capacity(estimated.max(4096));
     html.push_str("<html><head><title>");
 
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
@@ -339,7 +349,7 @@ fn book_to_mobi_html(book: &Book) -> String {
 
 /// Basic HTML entity escaping.
 fn html_escape(s: &str) -> String {
-    crate::formats::common::text_utils::escape_html(s)
+    crate::formats::common::text_utils::escape_html(s).into_owned()
 }
 
 /// Truncates a title to fit the 31-character PDB name field.

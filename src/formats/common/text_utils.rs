@@ -2,6 +2,8 @@
 //! byte scanning. Consolidates duplicate escape, strip, decode functions from
 //! format-specific modules.
 
+use std::borrow::Cow;
+
 use memchr::{memchr, memchr2};
 
 // ---------------------------------------------------------------------------
@@ -13,28 +15,29 @@ use memchr::{memchr, memchr2};
 /// Single-pass implementation using `memchr` to skip over runs of safe bytes
 /// in bulk, replacing the chained `.replace()` pattern (which allocates 3
 /// intermediate `String`s) with a single allocation.
-pub fn escape_html(text: &str) -> String {
+///
+/// Returns `Cow::Borrowed` when the input contains no special characters,
+/// avoiding allocation entirely in the common case.
+pub fn escape_html(text: &str) -> Cow<'_, str> {
     escape_impl(text, false)
 }
 
 /// Escapes `&`, `<`, `>`, `"`, `'` for safe embedding in XML/HTML attributes.
-pub fn escape_xml(text: &str) -> String {
+///
+/// Returns `Cow::Borrowed` when the input contains no special characters.
+pub fn escape_xml(text: &str) -> Cow<'_, str> {
     escape_impl(text, true)
 }
 
-fn escape_impl(text: &str, xml_mode: bool) -> String {
+fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     let bytes = text.as_bytes();
     let len = bytes.len();
 
-    let set: &[u8] = if xml_mode {
-        b"&<>\"'"
-    } else {
-        b"&<>"
-    };
+    let set: &[u8] = if xml_mode { b"&<>\"'" } else { b"&<>" };
 
-    // Fast path: no special characters found.
+    // Fast path: no special characters found -- zero allocation.
     if !super::intrinsics::byte_scan::has_any_in_set(bytes, set) {
-        return text.to_string();
+        return Cow::Borrowed(text);
     }
 
     let mut result = String::with_capacity(len + len / 8);
@@ -54,18 +57,18 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
                     b'>' => result.push_str("&gt;"),
                     b'"' => result.push_str("&quot;"),
                     b'\'' => result.push_str("&apos;"),
-                    _ => {}
+                    _ => {},
                 }
                 pos += offset + 1;
-            }
+            },
             None => {
                 result.push_str(&text[pos..]);
                 break;
-            }
+            },
         }
     }
 
-    result
+    Cow::Owned(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -76,8 +79,17 @@ fn escape_impl(text: &str, xml_mode: bool) -> String {
 ///
 /// Uses `memchr` to jump between `<` and `>` delimiters instead of scanning
 /// character by character.
-pub fn strip_tags(html: &str) -> String {
+///
+/// Returns `Cow::Borrowed` when the input contains no tags, avoiding
+/// allocation entirely.
+pub fn strip_tags(html: &str) -> Cow<'_, str> {
     let bytes = html.as_bytes();
+
+    // Fast path: no tags at all -- zero allocation.
+    if memchr(b'<', bytes).is_none() {
+        return Cow::Borrowed(html);
+    }
+
     let len = bytes.len();
     let mut result = String::with_capacity(len);
     let mut pos = 0;
@@ -97,20 +109,20 @@ pub fn strip_tags(html: &str) -> String {
                         pos = tag_start + end_offset + 1;
                     },
                     None => {
-                        // Unclosed tag — skip the rest.
+                        // Unclosed tag -- skip the rest.
                         break;
                     },
                 }
             },
             None => {
-                // No more tags — copy remaining text.
+                // No more tags -- copy remaining text.
                 result.push_str(&html[pos..]);
                 break;
             },
         }
     }
 
-    result
+    Cow::Owned(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -118,13 +130,16 @@ pub fn strip_tags(html: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Decodes the most common HTML/XML character entities.
-pub fn unescape_basic_entities(text: &str) -> String {
+///
+/// Returns `Cow::Borrowed` when the input contains no entities, avoiding
+/// allocation entirely.
+pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
     let bytes = text.as_bytes();
     let len = bytes.len();
 
     // Fast path: no ampersands means nothing to unescape.
     if memchr(b'&', bytes).is_none() {
-        return text.to_string();
+        return Cow::Borrowed(text);
     }
 
     let mut result = String::with_capacity(len);
@@ -146,11 +161,11 @@ pub fn unescape_basic_entities(text: &str) -> String {
                         "&quot;" => result.push('"'),
                         "&apos;" => result.push('\''),
                         "&nbsp;" => result.push('\u{00A0}'),
-                        _ => result.push_str(entity), // unknown — keep as-is
+                        _ => result.push_str(entity), // unknown -- keep as-is
                     }
                     pos = entity_start + semi + 1;
                 } else {
-                    // No semicolon found — copy the '&' literally.
+                    // No semicolon found -- copy the '&' literally.
                     result.push('&');
                     pos = entity_start + 1;
                 }
@@ -162,7 +177,7 @@ pub fn unescape_basic_entities(text: &str) -> String {
         }
     }
 
-    result
+    Cow::Owned(result)
 }
 
 // ---------------------------------------------------------------------------

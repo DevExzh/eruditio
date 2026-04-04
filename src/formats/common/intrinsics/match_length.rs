@@ -25,11 +25,7 @@ mod x86 {
     /// AVX2 implementation -- processes 32 bytes at a time, then a 16-byte
     /// SSE2 tail, then a scalar tail.
     #[target_feature(enable = "avx2")]
-    pub(super) unsafe fn common_prefix_length_avx2(
-        a: &[u8],
-        b: &[u8],
-        max_len: usize,
-    ) -> usize {
+    pub(super) unsafe fn common_prefix_length_avx2(a: &[u8], b: &[u8], max_len: usize) -> usize {
         let limit = max_len.min(a.len()).min(b.len());
         let mut i: usize = 0;
 
@@ -75,11 +71,7 @@ mod x86 {
 
     /// SSE2 implementation -- processes 16 bytes at a time, then a scalar tail.
     #[target_feature(enable = "sse2")]
-    pub(super) unsafe fn common_prefix_length_sse2(
-        a: &[u8],
-        b: &[u8],
-        max_len: usize,
-    ) -> usize {
+    pub(super) unsafe fn common_prefix_length_sse2(a: &[u8], b: &[u8], max_len: usize) -> usize {
         let limit = max_len.min(a.len()).min(b.len());
         let mut i: usize = 0;
 
@@ -120,11 +112,7 @@ mod aarch64 {
     /// NEON lacks a `movemask` equivalent, so we detect mismatches via
     /// `vminvq_u8` and locate the first one by extracting 64-bit halves and
     /// counting trailing zeros.
-    pub(super) unsafe fn common_prefix_length_neon(
-        a: &[u8],
-        b: &[u8],
-        max_len: usize,
-    ) -> usize {
+    pub(super) unsafe fn common_prefix_length_neon(a: &[u8], b: &[u8], max_len: usize) -> usize {
         let limit = max_len.min(a.len()).min(b.len());
         let mut i: usize = 0;
 
@@ -173,11 +161,7 @@ mod wasm {
     /// tail.
     #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
-    pub(super) unsafe fn common_prefix_length_simd128(
-        a: &[u8],
-        b: &[u8],
-        max_len: usize,
-    ) -> usize {
+    pub(super) unsafe fn common_prefix_length_simd128(a: &[u8], b: &[u8], max_len: usize) -> usize {
         let limit = max_len.min(a.len()).min(b.len());
         let mut i: usize = 0;
 
@@ -379,7 +363,11 @@ mod tests {
                     rng ^= rng << 13;
                     rng ^= rng >> 7;
                     rng ^= rng << 17;
-                    if i < common { (rng & 0x7F) as u8 } else { (rng & 0xFF) as u8 }
+                    if i < common {
+                        (rng & 0x7F) as u8
+                    } else {
+                        (rng & 0xFF) as u8
+                    }
                 })
                 .collect();
 

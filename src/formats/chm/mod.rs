@@ -324,8 +324,7 @@ fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
 
     // Find each <object type="text/sitemap"> ... </object> block
     let mut search_pos = 0;
-    while let Some(obj_offset) =
-        text_utils::find_case_insensitive(&bytes[search_pos..], b"<object")
+    while let Some(obj_offset) = text_utils::find_case_insensitive(&bytes[search_pos..], b"<object")
     {
         let abs_start = search_pos + obj_offset;
         let tag_end = match text[abs_start..].find('>') {
@@ -334,9 +333,11 @@ fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
         };
         let tag = &text[abs_start..=tag_end];
 
-        if !tag.as_bytes().windows(b"text/sitemap".len()).any(|w| {
-            w.eq_ignore_ascii_case(b"text/sitemap")
-        }) {
+        if !tag
+            .as_bytes()
+            .windows(b"text/sitemap".len())
+            .any(|w| w.eq_ignore_ascii_case(b"text/sitemap"))
+        {
             search_pos = tag_end + 1;
             continue;
         }
@@ -354,8 +355,7 @@ fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
 
         // Extract <param> values
         let mut param_pos = 0;
-        while let Some(p) =
-            text_utils::find_case_insensitive(&block_bytes[param_pos..], b"<param")
+        while let Some(p) = text_utils::find_case_insensitive(&block_bytes[param_pos..], b"<param")
         {
             let param_start = param_pos + p;
             let param_end = match block[param_start..].find('>') {

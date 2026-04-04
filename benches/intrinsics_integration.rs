@@ -1,7 +1,7 @@
 // benches/intrinsics_integration.rs — End-to-end benchmarks measuring
 // the impact of SIMD intrinsic wiring on format-level operations.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use eruditio::formats::common::text_utils;
 
 // ---------------------------------------------------------------------------
@@ -18,16 +18,12 @@ fn bench_find_ci_in_html(c: &mut Criterion) {
     let bytes = html.as_bytes();
 
     c.bench_function("find_ci/script_in_50k_html", |bench| {
-        bench.iter(|| {
-            text_utils::find_case_insensitive(black_box(bytes), black_box(b"<script"))
-        })
+        bench.iter(|| text_utils::find_case_insensitive(black_box(bytes), black_box(b"<script")))
     });
 
     // Search for something that doesn't exist in the document.
     c.bench_function("find_ci/missing_in_50k_html", |bench| {
-        bench.iter(|| {
-            text_utils::find_case_insensitive(black_box(bytes), black_box(b"<FRAMESET"))
-        })
+        bench.iter(|| text_utils::find_case_insensitive(black_box(bytes), black_box(b"<FRAMESET")))
     });
 }
 
@@ -41,8 +37,8 @@ fn bench_html_reader_50k(c: &mut Criterion) {
     use eruditio::formats::html::HtmlReader;
     use std::io::Cursor;
 
-    let body_content = "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. </p>\n"
-        .repeat(500);
+    let body_content =
+        "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. </p>\n".repeat(500);
     let html_50k = format!(
         "<HTML><HEAD><TITLE>Test Book</TITLE>\
          <META NAME=\"author\" CONTENT=\"Test Author\">\
@@ -66,8 +62,8 @@ fn bench_html_reader_50k(c: &mut Criterion) {
 
 fn bench_escape_xml_realistic(c: &mut Criterion) {
     // Realistic ebook chapter with some entities
-    let chapter = "<p>He said, \"Hello &amp; welcome!\" — it's a <em>wonderful</em> day.</p>\n"
-        .repeat(200);
+    let chapter =
+        "<p>He said, \"Hello &amp; welcome!\" — it's a <em>wonderful</em> day.</p>\n".repeat(200);
 
     c.bench_function("escape_xml/chapter_14k", |bench| {
         bench.iter(|| text_utils::escape_xml(black_box(&chapter)))

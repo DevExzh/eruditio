@@ -31,7 +31,7 @@ const MAX_TOKENS: usize = 10_000_000;
 ///
 /// Returns an error if the token count exceeds `MAX_TOKENS`.
 pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str> {
-    let mut tokens = Vec::new();
+    let mut tokens = Vec::with_capacity(input.len() / 8);
     let mut pos = 0;
     let len = input.len();
 
@@ -129,8 +129,13 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                 let nl_end =
                     memchr::memchr2(b'\n', b'\r', &remaining[..struct_end]).unwrap_or(struct_end);
                 pos += struct_end.min(nl_end);
-                let text = String::from_utf8_lossy(&input[start..pos]).into_owned();
-                if !text.is_empty() {
+                let slice = &input[start..pos];
+                if !slice.is_empty() {
+                    // Fast path: if the text is valid UTF-8, avoid the lossy overhead.
+                    let text = match std::str::from_utf8(slice) {
+                        Ok(s) => s.to_string(),
+                        Err(_) => String::from_utf8_lossy(slice).into_owned(),
+                    };
                     tokens.push(RtfToken::Text(text));
                 }
             },
@@ -142,6 +147,10 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
 
 /// Reads a control word starting at `pos` (which points to the first letter).
 /// Returns (name, optional_param, new_position).
+///
+/// Control word names are always ASCII letters, so `str::from_utf8` is used
+/// instead of the more expensive `from_utf8_lossy`. Numeric parameters are
+/// parsed directly from bytes to avoid an intermediate String allocation.
 fn read_control_word(input: &[u8], mut pos: usize) -> (String, Option<i32>, usize) {
     let len = input.len();
     let start = pos;
@@ -150,19 +159,23 @@ fn read_control_word(input: &[u8], mut pos: usize) -> (String, Option<i32>, usiz
     while pos < len && input[pos].is_ascii_alphabetic() {
         pos += 1;
     }
-    let name = String::from_utf8_lossy(&input[start..pos]).into_owned();
+    // Control word names are pure ASCII — from_utf8 always succeeds here.
+    let name = std::str::from_utf8(&input[start..pos])
+        .unwrap_or("")
+        .to_string();
 
-    // Read optional numeric parameter (may start with '-').
+    // Read optional numeric parameter (may start with '-') directly from bytes.
     let param = if pos < len && (input[pos].is_ascii_digit() || input[pos] == b'-') {
-        let param_start = pos;
-        if input[pos] == b'-' {
+        let negative = input[pos] == b'-';
+        if negative {
             pos += 1;
         }
+        let mut val: i32 = 0;
         while pos < len && input[pos].is_ascii_digit() {
+            val = val.wrapping_mul(10).wrapping_add((input[pos] - b'0') as i32);
             pos += 1;
         }
-        let param_str = String::from_utf8_lossy(&input[param_start..pos]);
-        param_str.parse::<i32>().ok()
+        Some(if negative { -val } else { val })
     } else {
         None
     };

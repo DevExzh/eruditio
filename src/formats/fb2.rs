@@ -31,8 +31,8 @@ impl FormatReader for Fb2Reader {
         let mut book = Book::new();
         let mut buf = Vec::new();
 
-        // State tracking
-        let mut current_path = Vec::new();
+        // State tracking -- incremental path buffer avoids join("/") allocation per element.
+        let mut path_buf = String::with_capacity(128);
         let mut current_text = String::new();
         let mut in_body = false;
         let mut current_section_title = None;
@@ -45,31 +45,39 @@ impl FormatReader for Fb2Reader {
         loop {
             match xml_reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
-                    if name == "body" {
+                    let name_raw = e.name();
+                    let tag = std::str::from_utf8(name_raw.as_ref()).unwrap_or("");
+                    if tag == "body" {
                         in_body = true;
-                    } else if name == "binary" {
+                    } else if tag == "binary" {
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
-                            let val = String::from_utf8_lossy(&attr.value).into_owned();
-                            if key == "id" {
-                                current_binary_id = Some(val);
-                            } else if key == "content-type" {
-                                current_binary_ctype = Some(val);
+                            match attr.key.as_ref() {
+                                b"id" => {
+                                    current_binary_id =
+                                        Some(String::from_utf8_lossy(&attr.value).into_owned());
+                                },
+                                b"content-type" => {
+                                    current_binary_ctype =
+                                        Some(String::from_utf8_lossy(&attr.value).into_owned());
+                                },
+                                _ => {},
                             }
                         }
                     }
-                    current_path.push(name);
+                    if !path_buf.is_empty() {
+                        path_buf.push('/');
+                    }
+                    path_buf.push_str(tag);
                     current_text.clear();
                 },
                 Ok(Event::Text(ref e)) => {
-                    current_text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                    current_text = String::from_utf8_lossy(e.as_ref()).into_owned();
                 },
                 Ok(Event::End(ref e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
-                    let path_str = current_path.join("/");
+                    let name_raw = e.name();
+                    let tag = std::str::from_utf8(name_raw.as_ref()).unwrap_or("");
 
-                    if name == "binary" {
+                    if tag == "binary" {
                         if let Some(id) = current_binary_id.take() {
                             let decoded = base64::engine::general_purpose::STANDARD
                                 .decode(current_text.trim().replace(['\n', '\r'], ""))
@@ -84,24 +92,29 @@ impl FormatReader for Fb2Reader {
                         }
                     } else if !in_body {
                         // Parse metadata
-                        if path_str == "FictionBook/description/title-info/book-title" {
+                        if path_buf == "FictionBook/description/title-info/book-title" {
                             book.metadata.title = Some(current_text.clone());
-                        } else if path_str == "FictionBook/description/title-info/author/first-name"
-                            || path_str == "FictionBook/description/title-info/author/last-name"
-                            || path_str == "FictionBook/description/title-info/author/middle-name"
+                        } else if path_buf
+                            == "FictionBook/description/title-info/author/first-name"
+                            || path_buf
+                                == "FictionBook/description/title-info/author/last-name"
+                            || path_buf
+                                == "FictionBook/description/title-info/author/middle-name"
                         {
-                            if name == "first-name" {
+                            if tag == "first-name" {
                                 book.metadata.authors.push(current_text.clone());
-                            } else if name == "last-name" || name == "middle-name" {
+                            } else if tag == "last-name" || tag == "middle-name" {
                                 if let Some(last) = book.metadata.authors.last_mut() {
                                     *last = format!("{} {}", last, current_text);
                                 } else {
                                     book.metadata.authors.push(current_text.clone());
                                 }
                             }
-                        } else if path_str == "FictionBook/description/title-info/lang" {
+                        } else if path_buf == "FictionBook/description/title-info/lang" {
                             book.metadata.language = Some(current_text.clone());
-                        } else if path_str == "FictionBook/description/title-info/annotation/p" {
+                        } else if path_buf
+                            == "FictionBook/description/title-info/annotation/p"
+                        {
                             let desc = book.metadata.description.get_or_insert_with(String::new);
                             if !desc.is_empty() {
                                 desc.push('\n');
@@ -110,13 +123,13 @@ impl FormatReader for Fb2Reader {
                         }
                     } else {
                         // Parse content
-                        if path_str == "FictionBook/body/section/title/p" {
+                        if path_buf == "FictionBook/body/section/title/p" {
                             current_section_title = Some(current_text.clone());
-                        } else if path_str.starts_with("FictionBook/body/section") && name == "p" {
+                        } else if path_buf.starts_with("FictionBook/body/section") && tag == "p" {
                             current_section_content.push_str("<p>");
                             current_section_content.push_str(&current_text);
                             current_section_content.push_str("</p>\n");
-                        } else if path_str == "FictionBook/body/section" && name == "section" {
+                        } else if path_buf == "FictionBook/body/section" && tag == "section" {
                             section_counter += 1;
                             book.add_chapter(&Chapter {
                                 title: current_section_title.take(),
@@ -124,17 +137,21 @@ impl FormatReader for Fb2Reader {
                                 id: Some(format!("section_{}", section_counter)),
                             });
                             current_section_content.clear();
-                        } else if name == "body" {
+                        } else if tag == "body" {
                             in_body = false;
                         }
                     }
 
-                    current_path.pop();
+                    // Truncate path_buf back to parent.
+                    if let Some(pos) = path_buf.rfind('/') {
+                        path_buf.truncate(pos);
+                    } else {
+                        path_buf.clear();
+                    }
                     current_text.clear();
                 },
                 Ok(Event::Empty(ref e)) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
-                    if in_body && name == "empty-line" {
+                    if in_body && e.name().as_ref() == b"empty-line" {
                         current_section_content.push_str("<br/>\n");
                     }
                 },
@@ -184,19 +201,16 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("      <author>\n");
         let parts: Vec<&str> = author.splitn(2, ' ').collect();
         if parts.len() == 2 {
-            xml.push_str(&format!(
-                "        <first-name>{}</first-name>\n",
-                escape_html(parts[0])
-            ));
-            xml.push_str(&format!(
-                "        <last-name>{}</last-name>\n",
-                escape_html(parts[1])
-            ));
+            xml.push_str("        <first-name>");
+            xml.push_str(&escape_html(parts[0]));
+            xml.push_str("</first-name>\n");
+            xml.push_str("        <last-name>");
+            xml.push_str(&escape_html(parts[1]));
+            xml.push_str("</last-name>\n");
         } else {
-            xml.push_str(&format!(
-                "        <first-name>{}</first-name>\n",
-                escape_html(author)
-            ));
+            xml.push_str("        <first-name>");
+            xml.push_str(&escape_html(author));
+            xml.push_str("</first-name>\n");
         }
         xml.push_str("      </author>\n");
     }
@@ -206,21 +220,24 @@ fn generate_fb2(book: &Book) -> String {
 
     // Title
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
-    xml.push_str(&format!(
-        "      <book-title>{}</book-title>\n",
-        escape_html(title)
-    ));
+    xml.push_str("      <book-title>");
+    xml.push_str(&escape_html(title));
+    xml.push_str("</book-title>\n");
 
     // Language
     if let Some(ref lang) = book.metadata.language {
-        xml.push_str(&format!("      <lang>{}</lang>\n", escape_html(lang)));
+        xml.push_str("      <lang>");
+        xml.push_str(&escape_html(lang));
+        xml.push_str("</lang>\n");
     }
 
     // Annotation (description)
     if let Some(ref desc) = book.metadata.description {
         xml.push_str("      <annotation>\n");
         for line in desc.lines() {
-            xml.push_str(&format!("        <p>{}</p>\n", escape_html(line)));
+            xml.push_str("        <p>");
+            xml.push_str(&escape_html(line));
+            xml.push_str("</p>\n");
         }
         xml.push_str("      </annotation>\n");
     }
@@ -233,10 +250,9 @@ fn generate_fb2(book: &Book) -> String {
     for chapter in &book.chapters() {
         xml.push_str("    <section>\n");
         if let Some(ref ch_title) = chapter.title {
-            xml.push_str(&format!(
-                "      <title><p>{}</p></title>\n",
-                escape_html(ch_title)
-            ));
+            xml.push_str("      <title><p>");
+            xml.push_str(&escape_html(ch_title));
+            xml.push_str("</p></title>\n");
         }
         // Convert HTML content to FB2 paragraphs.
         let plain = strip_tags(&chapter.content);
@@ -245,7 +261,9 @@ fn generate_fb2(book: &Book) -> String {
             if trimmed.is_empty() {
                 xml.push_str("      <empty-line/>\n");
             } else {
-                xml.push_str(&format!("      <p>{}</p>\n", escape_html(trimmed)));
+                xml.push_str("      <p>");
+                xml.push_str(&escape_html(trimmed));
+                xml.push_str("</p>\n");
             }
         }
         xml.push_str("    </section>\n");
@@ -254,11 +272,11 @@ fn generate_fb2(book: &Book) -> String {
 
     // Binary resources (base64-encoded)
     for resource in &book.resources() {
-        xml.push_str(&format!(
-            "  <binary id=\"{}\" content-type=\"{}\">",
-            escape_html(resource.id),
-            escape_html(resource.media_type),
-        ));
+        xml.push_str("  <binary id=\"");
+        xml.push_str(&escape_html(resource.id));
+        xml.push_str("\" content-type=\"");
+        xml.push_str(&escape_html(resource.media_type));
+        xml.push_str("\">");
         let b64 = base64::engine::general_purpose::STANDARD.encode(resource.data);
         xml.push_str(&b64);
         xml.push_str("</binary>\n");

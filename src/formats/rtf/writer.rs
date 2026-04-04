@@ -103,27 +103,50 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 None => break,
             };
 
-            let tag = &html[pos..tag_end].to_lowercase();
+            let tag_bytes = html[pos..tag_end].as_bytes();
 
-            // Handle known tags.
-            if tag.starts_with("<p") {
-                // Start of paragraph — already in paragraph mode.
-            } else if tag == "</p>" {
+            // Handle known tags using case-insensitive byte comparison
+            // to avoid per-tag to_lowercase() allocation.
+            if tag_bytes.len() >= 2
+                && tag_bytes[1].to_ascii_lowercase() == b'p'
+                && (tag_bytes.len() == 3 || tag_bytes[2] == b' ' || tag_bytes[2] == b'>')
+            {
+                // Start of paragraph -- already in paragraph mode.
+            } else if tag_bytes.eq_ignore_ascii_case(b"</p>") {
                 rtf.push_str("\\par\n");
-            } else if tag == "<br>" || tag == "<br/>" || tag == "<br />" {
+            } else if tag_bytes.eq_ignore_ascii_case(b"<br>")
+                || tag_bytes.eq_ignore_ascii_case(b"<br/>")
+                || tag_bytes.eq_ignore_ascii_case(b"<br />")
+            {
                 rtf.push_str("\\line\n");
-            } else if tag == "<b>" || tag == "<strong>" {
+            } else if tag_bytes.eq_ignore_ascii_case(b"<b>")
+                || tag_bytes.eq_ignore_ascii_case(b"<strong>")
+            {
                 rtf.push_str("{\\b ");
-            } else if tag == "</b>" || tag == "</strong>" {
+            } else if tag_bytes.eq_ignore_ascii_case(b"</b>")
+                || tag_bytes.eq_ignore_ascii_case(b"</strong>")
+            {
                 rtf.push('}');
-            } else if tag == "<i>" || tag == "<em>" {
+            } else if tag_bytes.eq_ignore_ascii_case(b"<i>")
+                || tag_bytes.eq_ignore_ascii_case(b"<em>")
+            {
                 rtf.push_str("{\\i ");
-            } else if tag == "</i>" || tag == "</em>" {
+            } else if tag_bytes.eq_ignore_ascii_case(b"</i>")
+                || tag_bytes.eq_ignore_ascii_case(b"</em>")
+            {
                 rtf.push('}');
-            } else if tag.starts_with("<h") && tag.len() >= 4 {
-                // Heading — bold, larger font.
+            } else if tag_bytes.len() >= 4
+                && tag_bytes[0] == b'<'
+                && tag_bytes[1].to_ascii_lowercase() == b'h'
+                && tag_bytes[2].is_ascii_digit()
+            {
+                // Heading -- bold, larger font.
                 rtf.push_str("{\\b\\fs32 ");
-            } else if tag.starts_with("</h") {
+            } else if tag_bytes.len() >= 5
+                && tag_bytes[0] == b'<'
+                && tag_bytes[1] == b'/'
+                && tag_bytes[2].to_ascii_lowercase() == b'h'
+            {
                 rtf.push_str("}\\par\\par\n");
             }
             // Other tags are silently skipped.
@@ -201,7 +224,9 @@ fn write_rtf_char(rtf: &mut String, ch: char) {
         '\n' => rtf.push_str("\\par\n"),
         c if c as u32 > 127 => {
             // Unicode character: \uN followed by ? as replacement.
-            rtf.push_str(&format!("\\u{}?", c as i32));
+            // Write directly to avoid format!() allocation per character.
+            use std::fmt::Write;
+            let _ = write!(rtf, "\\u{}?", c as i32);
         },
         c => rtf.push(c),
     }
@@ -218,7 +243,7 @@ fn write_rtf_text(rtf: &mut String, text: &str) {
 /// This is the inverse of book_to_rtf but simplified.
 pub fn rtf_to_plain_text(rtf: &str) -> String {
     // Simple approach: strip RTF control words and extract text.
-    strip_tags(rtf)
+    strip_tags(rtf).into_owned()
 }
 
 #[cfg(test)]

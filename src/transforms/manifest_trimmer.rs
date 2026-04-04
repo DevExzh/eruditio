@@ -36,6 +36,13 @@ impl Transform for ManifestTrimmer {
 fn collect_referenced_ids(book: &Book) -> HashSet<String> {
     let mut ids = HashSet::new();
 
+    // Build a href→id index once, replacing O(n) linear scans per lookup.
+    let href_to_id: std::collections::HashMap<&str, &str> = book
+        .manifest
+        .iter()
+        .map(|item| (item.href.as_str(), item.id.as_str()))
+        .collect();
+
     // Spine references.
     for spine_item in book.spine.iter() {
         ids.insert(spine_item.manifest_id.clone());
@@ -48,13 +55,13 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
 
     // Guide references (resolve href → manifest ID).
     for guide_ref in &book.guide.references {
-        if let Some(item) = book.manifest.iter().find(|i| i.href == guide_ref.href) {
-            ids.insert(item.id.clone());
+        if let Some(&id) = href_to_id.get(guide_ref.href.as_str()) {
+            ids.insert(id.to_string());
         }
     }
 
     // TOC references (resolve href → manifest ID).
-    collect_toc_refs(&book.toc, book, &mut ids);
+    collect_toc_refs(&book.toc, &href_to_id, &mut ids);
 
     // Content references: scan XHTML content for hrefs to other manifest items.
     let content_ids: Vec<String> = ids.iter().cloned().collect();
@@ -62,7 +69,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
         if let Some(item) = book.manifest.get(id)
             && let Some(text) = item.data.as_text()
         {
-            collect_href_references(text, book, &mut ids);
+            collect_href_references(text, &href_to_id, book, &mut ids);
         }
     }
 
@@ -70,19 +77,28 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
 }
 
 /// Recursively collects manifest IDs referenced by TOC entries.
-fn collect_toc_refs(items: &[crate::domain::toc::TocItem], book: &Book, ids: &mut HashSet<String>) {
+fn collect_toc_refs(
+    items: &[crate::domain::toc::TocItem],
+    href_to_id: &std::collections::HashMap<&str, &str>,
+    ids: &mut HashSet<String>,
+) {
     for toc_item in items {
         // Strip fragment from href for matching.
         let href = toc_item.href.split('#').next().unwrap_or(&toc_item.href);
-        if let Some(item) = book.manifest.iter().find(|i| i.href == href) {
-            ids.insert(item.id.clone());
+        if let Some(&id) = href_to_id.get(href) {
+            ids.insert(id.to_string());
         }
-        collect_toc_refs(&toc_item.children, book, ids);
+        collect_toc_refs(&toc_item.children, href_to_id, ids);
     }
 }
 
 /// Scans HTML/XHTML text for href and src attributes pointing to manifest items.
-fn collect_href_references(text: &str, book: &Book, ids: &mut HashSet<String>) {
+fn collect_href_references(
+    text: &str,
+    href_to_id: &std::collections::HashMap<&str, &str>,
+    book: &Book,
+    ids: &mut HashSet<String>,
+) {
     // Simple attribute extraction — look for href="..." and src="..." patterns.
     for attr in &["href=\"", "src=\""] {
         let mut search_from = 0;
@@ -92,13 +108,14 @@ fn collect_href_references(text: &str, book: &Book, ids: &mut HashSet<String>) {
                 let value = &text[value_start..value_start + end];
                 // Strip fragment.
                 let path = value.split('#').next().unwrap_or(value);
-                // Match against manifest hrefs.
-                if let Some(item) = book
-                    .manifest
-                    .iter()
-                    .find(|i| i.href == path || i.href.ends_with(path))
-                {
-                    ids.insert(item.id.clone());
+                // Fast O(1) lookup by exact href match.
+                if let Some(&id) = href_to_id.get(path) {
+                    ids.insert(id.to_string());
+                } else {
+                    // Fallback: suffix match for relative paths.
+                    if let Some(item) = book.manifest.iter().find(|i| i.href.ends_with(path)) {
+                        ids.insert(item.id.clone());
+                    }
                 }
                 search_from = value_start + end;
             } else {

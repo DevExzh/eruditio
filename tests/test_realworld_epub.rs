@@ -76,17 +76,20 @@ fn test_gutenberg_epubs_all_parse() {
                 let name = path.file_name().unwrap().to_string_lossy().to_string();
                 eprintln!("FAIL: {} — {}", name, e);
                 failures.push(name);
-            }
+            },
         }
     }
 
     eprintln!(
         "Gutenberg EPUBs: {}/{} parsed ({} known-corrupt skipped)",
-        pass, total, KNOWN_CORRUPT_EPUBS.len()
+        pass,
+        total,
+        KNOWN_CORRUPT_EPUBS.len()
     );
 
     assert_eq!(
-        pass, total,
+        pass,
+        total,
         "Expected all {} valid Gutenberg EPUBs to parse, but {} failed: {:?}",
         total,
         failures.len(),
@@ -228,10 +231,8 @@ fn test_specific_gutenberg_metadata() {
             continue;
         }
 
-        let book =
-            EruditioParser::parse_file(&path).unwrap_or_else(|e| {
-                panic!("Failed to parse {}: {}", filename, e)
-            });
+        let book = EruditioParser::parse_file(&path)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {}", filename, e));
 
         let title = book
             .metadata
@@ -284,13 +285,13 @@ fn test_medium_epubs_parse() {
         match result {
             Ok(Ok(book)) => {
                 eprintln!("{}: parsed OK, {} chapters", filename, book.chapter_count());
-            }
+            },
             Ok(Err(e)) => {
                 eprintln!("{}: returned error (expected): {}", filename, e);
-            }
+            },
             Err(_) => {
                 panic!("{} caused a panic instead of returning an error", filename);
-            }
+            },
         }
     }
 }
@@ -302,14 +303,11 @@ fn test_medium_epubs_parse() {
 fn test_leaves_epub() {
     let path = Path::new("test-data/real-world/small/leaves.epub");
     if !path.exists() {
-        eprintln!(
-            "WARNING: leaves.epub not found; skipping Leaves of Grass test"
-        );
+        eprintln!("WARNING: leaves.epub not found; skipping Leaves of Grass test");
         return;
     }
 
-    let book = EruditioParser::parse_file(path)
-        .expect("Failed to parse leaves.epub");
+    let book = EruditioParser::parse_file(path).expect("Failed to parse leaves.epub");
 
     eprintln!(
         "leaves.epub: title = {:?}, chapters = {}",

@@ -111,8 +111,7 @@ mod x86 {
                     // All 32 bytes are ASCII (high bit clear) -- bulk copy.
                     // SAFETY: All bytes in range are 0x00-0x7F, which is valid
                     // UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + 32]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 32]);
                     result.push_str(ascii_slice);
                     i += 32;
                     continue;
@@ -132,8 +131,7 @@ mod x86 {
                 if high_bits == 0 {
                     // All 16 bytes are ASCII -- bulk copy.
                     // SAFETY: All bytes in range are 0x00-0x7F, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 16]);
                     result.push_str(ascii_slice);
                     i += 16;
                     continue;
@@ -142,8 +140,7 @@ mod x86 {
                 let ascii_prefix = high_bits.trailing_zeros() as usize;
                 if ascii_prefix > 0 {
                     // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
                     result.push_str(ascii_slice);
                 }
                 // Push the non-ASCII byte through the lookup table.
@@ -182,8 +179,7 @@ mod x86 {
                 if high_bits == 0 {
                     // All 16 bytes are ASCII -- bulk copy.
                     // SAFETY: All bytes in range are 0x00-0x7F, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 16]);
                     result.push_str(ascii_slice);
                     i += 16;
                     continue;
@@ -192,8 +188,7 @@ mod x86 {
                 let ascii_prefix = high_bits.trailing_zeros() as usize;
                 if ascii_prefix > 0 {
                     // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
                     result.push_str(ascii_slice);
                 }
                 // Push the non-ASCII byte through the lookup table.
@@ -243,8 +238,7 @@ mod aarch64 {
                 if vminvq_s8(as_signed) >= 0 {
                     // All 16 bytes are ASCII -- bulk copy.
                     // SAFETY: All bytes in range are 0x00-0x7F, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 16]);
                     result.push_str(ascii_slice);
                     i += 16;
                     continue;
@@ -262,8 +256,7 @@ mod aarch64 {
                 };
                 if ascii_prefix > 0 {
                     // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
                     result.push_str(ascii_slice);
                 }
                 // Push the non-ASCII byte through the lookup table.
@@ -314,8 +307,7 @@ mod wasm {
                 if high_bits == 0 {
                     // All 16 bytes are ASCII -- bulk copy.
                     // SAFETY: All bytes in range are 0x00-0x7F, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 16]);
                     result.push_str(ascii_slice);
                     i += 16;
                     continue;
@@ -324,8 +316,7 @@ mod wasm {
                 let ascii_prefix = high_bits.trailing_zeros() as usize;
                 if ascii_prefix > 0 {
                     // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
                     result.push_str(ascii_slice);
                 }
                 // Push the non-ASCII byte through the lookup table.
@@ -485,10 +476,7 @@ mod tests {
 
             let expected = decode_cp1252_scalar(&data);
             let got = decode_cp1252(&data);
-            assert_eq!(
-                got, expected,
-                "mismatch for len={len}, data={data:?}"
-            );
+            assert_eq!(got, expected, "mismatch for len={len}, data={data:?}");
         }
     }
 }

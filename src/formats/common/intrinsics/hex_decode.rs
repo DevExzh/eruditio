@@ -138,11 +138,11 @@ mod x86 {
                 Some(decoded) => {
                     out.extend_from_slice(&decoded);
                     i += 32;
-                }
+                },
                 None => {
                     // Non-hex byte encountered — fall back to scalar for the rest.
                     break;
-                }
+                },
             }
         }
 
@@ -273,10 +273,7 @@ mod tests {
 
             let expected = decode_hex_pairs_scalar(&input);
             let got = decode_hex_pairs(&input);
-            assert_eq!(
-                got, expected,
-                "mismatch for input of length {len}"
-            );
+            assert_eq!(got, expected, "mismatch for input of length {len}");
         }
     }
 }

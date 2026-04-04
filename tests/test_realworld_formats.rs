@@ -27,14 +27,17 @@ fn test_mobi_no_panic() {
     let result = std::panic::catch_unwind(|| EruditioParser::parse_file(&path));
     match result {
         Ok(Ok(book)) => {
-            eprintln!("[MOBI] surprisingly parsed OK: {} chapters", book.chapter_count());
-        }
+            eprintln!(
+                "[MOBI] surprisingly parsed OK: {} chapters",
+                book.chapter_count()
+            );
+        },
         Ok(Err(e)) => {
             eprintln!("[MOBI] returned error (expected for corrupt file): {}", e);
-        }
+        },
         Err(_) => {
             panic!("MOBI file caused a panic instead of returning an error");
-        }
+        },
     }
 }
 
@@ -45,7 +48,8 @@ fn test_mobi_no_panic() {
 #[test]
 fn test_cbz_parse() {
     // Known-good CBZ
-    let good_path = test_data_path("test-data/real-world/medium/Elf_Receiver_Radio-Craft_August_1936.cbz");
+    let good_path =
+        test_data_path("test-data/real-world/medium/Elf_Receiver_Radio-Craft_August_1936.cbz");
     if good_path.exists() {
         let book = EruditioParser::parse_file(&good_path)
             .expect("Failed to parse known-good CBZ (Elf_Receiver)");
@@ -63,8 +67,14 @@ fn test_cbz_parse() {
     let suspect_path = test_data_path("test-data/real-world/medium/sample_comic_book.cbz");
     if suspect_path.exists() {
         match EruditioParser::parse_file(&suspect_path) {
-            Ok(book) => eprintln!("[CBZ] sample_comic_book -> {} chapters", book.chapter_count()),
-            Err(e) => eprintln!("[CBZ] sample_comic_book returned error (unusual compression): {}", e),
+            Ok(book) => eprintln!(
+                "[CBZ] sample_comic_book -> {} chapters",
+                book.chapter_count()
+            ),
+            Err(e) => eprintln!(
+                "[CBZ] sample_comic_book returned error (unusual compression): {}",
+                e
+            ),
         }
     }
 }
@@ -86,13 +96,13 @@ fn test_cbr_no_panic() {
     match result {
         Ok(Ok(book)) => {
             eprintln!("[CBR] parsed OK: {} chapters", book.chapter_count());
-        }
+        },
         Ok(Err(e)) => {
             eprintln!("[CBR] returned error (expected for mislabeled file): {}", e);
-        }
+        },
         Err(_) => {
             panic!("CBR file caused a panic instead of returning an error");
-        }
+        },
     }
 }
 
@@ -113,13 +123,13 @@ fn test_cb7_no_panic() {
     match result {
         Ok(Ok(book)) => {
             eprintln!("[CB7] parsed OK: {} chapters", book.chapter_count());
-        }
+        },
         Ok(Err(e)) => {
             eprintln!("[CB7] returned error (expected for mislabeled file): {}", e);
-        }
+        },
         Err(_) => {
             panic!("CB7 file caused a panic instead of returning an error");
-        }
+        },
     }
 }
 
@@ -145,13 +155,16 @@ fn test_cbc_no_panic() {
         match result {
             Ok(Ok(book)) => {
                 eprintln!("[CBC] {} -> {} chapters", rel, book.chapter_count());
-            }
+            },
             Ok(Err(e)) => {
                 eprintln!("[CBC] {} returned error: {}", rel, e);
-            }
+            },
             Err(_) => {
-                panic!("CBC file {} caused a panic instead of returning an error", rel);
-            }
+                panic!(
+                    "CBC file {} caused a panic instead of returning an error",
+                    rel
+                );
+            },
         }
     }
 }
@@ -171,11 +184,7 @@ fn test_all_medium_formats_no_panics() {
     let entries: Vec<_> = std::fs::read_dir(&dir)
         .expect("Failed to read medium directory")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map_or(false, |ext| !ext.is_empty())
-        })
+        .filter(|e| e.path().extension().map_or(false, |ext| !ext.is_empty()))
         .collect();
 
     let total = entries.len();
@@ -197,15 +206,15 @@ fn test_all_medium_formats_no_panics() {
                     book.chapter_count()
                 );
                 pass += 1;
-            }
+            },
             Ok(Err(err)) => {
                 eprintln!("  [ERR]   {} -> {}", filename, err);
                 fail += 1;
-            }
+            },
             Err(_) => {
                 eprintln!("  [PANIC] {}", filename);
                 panics += 1;
-            }
+            },
         }
     }
 

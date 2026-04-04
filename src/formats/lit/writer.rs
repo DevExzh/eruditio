@@ -1015,56 +1015,48 @@ fn generate_opf(
     opf.push_str("    <dc-metadata>\n");
 
     if let Some(ref title) = book.metadata.title {
-        opf.push_str(&format!(
-            "      <dc:Title>{}</dc:Title>\n",
-            escape_xml(title)
-        ));
+        opf.push_str("      <dc:Title>");
+        opf.push_str(&escape_xml(title));
+        opf.push_str("</dc:Title>\n");
     }
     for author in &book.metadata.authors {
-        opf.push_str(&format!(
-            "      <dc:Creator>{}</dc:Creator>\n",
-            escape_xml(author)
-        ));
+        opf.push_str("      <dc:Creator>");
+        opf.push_str(&escape_xml(author));
+        opf.push_str("</dc:Creator>\n");
     }
     if let Some(ref lang) = book.metadata.language {
-        opf.push_str(&format!(
-            "      <dc:Language>{}</dc:Language>\n",
-            escape_xml(lang)
-        ));
+        opf.push_str("      <dc:Language>");
+        opf.push_str(&escape_xml(lang));
+        opf.push_str("</dc:Language>\n");
     }
     if let Some(ref publisher) = book.metadata.publisher {
-        opf.push_str(&format!(
-            "      <dc:Publisher>{}</dc:Publisher>\n",
-            escape_xml(publisher)
-        ));
+        opf.push_str("      <dc:Publisher>");
+        opf.push_str(&escape_xml(publisher));
+        opf.push_str("</dc:Publisher>\n");
     }
     if let Some(ref desc) = book.metadata.description {
-        opf.push_str(&format!(
-            "      <dc:Description>{}</dc:Description>\n",
-            escape_xml(desc)
-        ));
+        opf.push_str("      <dc:Description>");
+        opf.push_str(&escape_xml(desc));
+        opf.push_str("</dc:Description>\n");
     }
     if let Some(ref ident) = book.metadata.identifier {
-        opf.push_str(&format!(
-            "      <dc:Identifier id=\"bookid\">{}</dc:Identifier>\n",
-            escape_xml(ident)
-        ));
+        opf.push_str("      <dc:Identifier id=\"bookid\">");
+        opf.push_str(&escape_xml(ident));
+        opf.push_str("</dc:Identifier>\n");
     } else {
         opf.push_str(
             "      <dc:Identifier id=\"bookid\">urn:uuid:eruditio-generated</dc:Identifier>\n",
         );
     }
     for subject in &book.metadata.subjects {
-        opf.push_str(&format!(
-            "      <dc:Subject>{}</dc:Subject>\n",
-            escape_xml(subject)
-        ));
+        opf.push_str("      <dc:Subject>");
+        opf.push_str(&escape_xml(subject));
+        opf.push_str("</dc:Subject>\n");
     }
     if let Some(ref rights) = book.metadata.rights {
-        opf.push_str(&format!(
-            "      <dc:Rights>{}</dc:Rights>\n",
-            escape_xml(rights)
-        ));
+        opf.push_str("      <dc:Rights>");
+        opf.push_str(&escape_xml(rights));
+        opf.push_str("</dc:Rights>\n");
     }
 
     opf.push_str("    </dc-metadata>\n");
@@ -1073,19 +1065,22 @@ fn generate_opf(
     // Manifest
     opf.push_str("  <manifest>\n");
     for (id, href, media_type) in manifest_entries {
-        opf.push_str(&format!(
-            "    <item id=\"{}\" href=\"{}\" media-type=\"{}\" />\n",
-            escape_xml(id),
-            escape_xml(href),
-            escape_xml(media_type),
-        ));
+        opf.push_str("    <item id=\"");
+        opf.push_str(&escape_xml(id));
+        opf.push_str("\" href=\"");
+        opf.push_str(&escape_xml(href));
+        opf.push_str("\" media-type=\"");
+        opf.push_str(&escape_xml(media_type));
+        opf.push_str("\" />\n");
     }
     opf.push_str("  </manifest>\n");
 
     // Spine
     opf.push_str("  <spine>\n");
     for id in spine_ids {
-        opf.push_str(&format!("    <itemref idref=\"{}\" />\n", escape_xml(id)));
+        opf.push_str("    <itemref idref=\"");
+        opf.push_str(&escape_xml(id));
+        opf.push_str("\" />\n");
     }
     opf.push_str("  </spine>\n");
 

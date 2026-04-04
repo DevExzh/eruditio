@@ -440,10 +440,7 @@ mod tests {
 
             let expected = eq_ignore_ascii_case_scalar(&a, &b);
             let got = eq_ignore_ascii_case(&a, &b);
-            assert_eq!(
-                got, expected,
-                "mismatch for len={len}, a={a:?}, b={b:?}"
-            );
+            assert_eq!(got, expected, "mismatch for len={len}, a={a:?}, b={b:?}");
         }
     }
 }

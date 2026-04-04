@@ -229,7 +229,7 @@ fn decode_lrf_color(val: u32) -> (u8, u8, u8) {
 
 /// Escapes HTML special characters.
 fn html_escape(text: &str) -> String {
-    crate::formats::common::text_utils::escape_html(text)
+    crate::formats::common::text_utils::escape_html(text).into_owned()
 }
 
 #[cfg(test)]

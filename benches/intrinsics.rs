@@ -1,6 +1,6 @@
 // benches/intrinsics.rs — Direct benchmarks for all 6 intrinsic operations.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use eruditio::formats::common::text_utils;
 
 // ---------------------------------------------------------------------------
@@ -9,10 +9,10 @@ use eruditio::formats::common::text_utils;
 
 fn bench_case_fold(c: &mut Criterion) {
     // 64-byte equal slices with random case.
-    let a_64: Vec<u8> = b"The Quick Brown Fox Jumps Over The Lazy Dog! Hello World Boo!!OK"
-        .to_vec();
-    let b_64: Vec<u8> = b"tHE qUICK bROWN fOX jUMPS oVER tHE lAZY dOG! hELLO wORLD bOO!!ok"
-        .to_vec();
+    let a_64: Vec<u8> =
+        b"The Quick Brown Fox Jumps Over The Lazy Dog! Hello World Boo!!OK".to_vec();
+    let b_64: Vec<u8> =
+        b"tHE qUICK bROWN fOX jUMPS oVER tHE lAZY dOG! hELLO wORLD bOO!!ok".to_vec();
 
     c.bench_function("case_fold/eq_64", |bench| {
         bench.iter(|| {
@@ -26,9 +26,7 @@ fn bench_case_fold(c: &mut Criterion) {
     let b_1k: Vec<u8> = b_64.repeat(16);
 
     c.bench_function("case_fold/eq_1k", |bench| {
-        bench.iter(|| {
-            text_utils::find_case_insensitive(black_box(&a_1k), black_box(&b_1k))
-        })
+        bench.iter(|| text_utils::find_case_insensitive(black_box(&a_1k), black_box(&b_1k)))
     });
 }
 
@@ -58,9 +56,8 @@ fn bench_byte_scan(c: &mut Criterion) {
 
 fn bench_cp1252(c: &mut Criterion) {
     // 10K pure ASCII.
-    let ascii_10k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
-        .repeat(223)[..10_000]
-        .to_vec();
+    let ascii_10k: Vec<u8> =
+        b"The quick brown fox jumps over the lazy dog. ".repeat(223)[..10_000].to_vec();
 
     c.bench_function("cp1252/decode_10k_ascii", |bench| {
         bench.iter(|| text_utils::decode_cp1252(black_box(&ascii_10k)))
@@ -99,8 +96,7 @@ fn bench_hex_decode(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn bench_find_case_insensitive(c: &mut Criterion) {
-    let haystack_1k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
-        .repeat(23);
+    let haystack_1k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. ".repeat(23);
     let needle_short = b"LAZY DOG";
 
     c.bench_function("find_ci/short_needle_1k", |bench| {
@@ -109,8 +105,7 @@ fn bench_find_case_insensitive(c: &mut Criterion) {
         })
     });
 
-    let haystack_10k: Vec<u8> = b"abcdefghij klmnopqrst uvwxyz0123 456789ABCD "
-        .repeat(222);
+    let haystack_10k: Vec<u8> = b"abcdefghij klmnopqrst uvwxyz0123 456789ABCD ".repeat(222);
     let needle_mid = b"789ABCD";
 
     c.bench_function("find_ci/mid_needle_10k", |bench| {
@@ -133,9 +128,8 @@ fn bench_find_case_insensitive(c: &mut Criterion) {
 
 fn bench_is_ascii(c: &mut Criterion) {
     // 1024 pure ASCII bytes.
-    let ascii_1k: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
-        .repeat(23)[..1024]
-        .to_vec();
+    let ascii_1k: Vec<u8> =
+        b"The quick brown fox jumps over the lazy dog. ".repeat(23)[..1024].to_vec();
 
     c.bench_function("is_ascii/scalar_1k", |bench| {
         bench.iter(|| {
@@ -168,9 +162,8 @@ fn bench_is_ascii(c: &mut Criterion) {
     });
 
     // 64 bytes pure ASCII.
-    let ascii_64: Vec<u8> = b"The quick brown fox jumps over the lazy dog. Hello World!!!OK!!!"
-        [..64]
-        .to_vec();
+    let ascii_64: Vec<u8> =
+        b"The quick brown fox jumps over the lazy dog. Hello World!!!OK!!!"[..64].to_vec();
 
     c.bench_function("is_ascii/scalar_64", |bench| {
         bench.iter(|| {
@@ -261,9 +254,7 @@ fn bench_short_pattern(c: &mut Criterion) {
 
     c.bench_function("short_pat/scalar_2b_10k", |bench| {
         bench.iter(|| {
-            let result = black_box(html_bytes)
-                .windows(2)
-                .position(|w| w == b"</");
+            let result = black_box(html_bytes).windows(2).position(|w| w == b"</");
             black_box(result);
         })
     });
@@ -280,22 +271,22 @@ fn bench_short_pattern(c: &mut Criterion) {
 
     c.bench_function("short_pat/scalar_4b_10k", |bench| {
         bench.iter(|| {
-            let result = black_box(xml_bytes)
-                .windows(4)
-                .position(|w| w == b"<!--");
+            let result = black_box(xml_bytes).windows(4).position(|w| w == b"<!--");
             black_box(result);
         })
     });
 
     c.bench_function("short_pat/simd_4b_10k", |bench| {
         bench.iter(|| {
-            black_box(text_utils::find_short_pattern(black_box(xml_bytes), b"<!--"));
+            black_box(text_utils::find_short_pattern(
+                black_box(xml_bytes),
+                b"<!--",
+            ));
         })
     });
 
     // 10K with no match (full scan).
-    let no_match_10k: Vec<u8> = b"abcdefghij klmnopqrst uvwxyz0123 456789ABCD "
-        .repeat(222);
+    let no_match_10k: Vec<u8> = b"abcdefghij klmnopqrst uvwxyz0123 456789ABCD ".repeat(222);
 
     c.bench_function("short_pat/scalar_2b_miss_10k", |bench| {
         bench.iter(|| {
@@ -308,7 +299,10 @@ fn bench_short_pattern(c: &mut Criterion) {
 
     c.bench_function("short_pat/simd_2b_miss_10k", |bench| {
         bench.iter(|| {
-            black_box(text_utils::find_short_pattern(black_box(&no_match_10k), b"</"));
+            black_box(text_utils::find_short_pattern(
+                black_box(&no_match_10k),
+                b"</",
+            ));
         })
     });
 }

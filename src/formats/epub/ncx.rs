@@ -1,5 +1,6 @@
 use crate::domain::TocItem;
 use crate::error::{EruditioError, Result};
+use crate::formats::common::xml_utils;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 
@@ -24,20 +25,21 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let tag = local_tag(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "navMap" => in_nav_map = true,
                     "navPoint" if in_nav_map => {
                         let mut id = None;
                         let mut play_order = None;
 
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let val = String::from_utf8_lossy(&attr.value);
-                            match key.as_ref() {
-                                "id" => id = Some(val.into_owned()),
-                                "playOrder" => {
-                                    play_order = val.parse::<u32>().ok();
+                            match attr.key.as_ref() {
+                                b"id" => id = Some(xml_utils::bytes_to_string(&attr.value)),
+                                b"playOrder" => {
+                                    play_order = std::str::from_utf8(&attr.value)
+                                        .ok()
+                                        .and_then(|s| s.parse::<u32>().ok());
                                 },
                                 _ => {},
                             }
@@ -60,7 +62,7 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                     "content" if in_nav_map && !stack.is_empty() => {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"src" {
-                                let src = String::from_utf8_lossy(&attr.value).into_owned();
+                                let src = xml_utils::bytes_to_string(&attr.value);
                                 if let Some(item) = stack.last_mut() {
                                     item.href = src;
                                 }
@@ -71,11 +73,12 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                 }
             },
             Ok(Event::Empty(ref e)) => {
-                let tag = local_tag(e.name().as_ref());
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
                 if tag == "content" && in_nav_map && !stack.is_empty() {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"src" {
-                            let src = String::from_utf8_lossy(&attr.value).into_owned();
+                            let src = xml_utils::bytes_to_string(&attr.value);
                             if let Some(item) = stack.last_mut() {
                                 item.href = src;
                             }
@@ -85,12 +88,16 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
             },
             Ok(Event::Text(ref e)) => {
                 if collecting_text {
-                    current_text.push_str(&String::from_utf8_lossy(&e.clone().into_inner()));
+                    match std::str::from_utf8(e.as_ref()) {
+                        Ok(s) => current_text.push_str(s),
+                        Err(_) => current_text.push_str(&String::from_utf8_lossy(e.as_ref())),
+                    }
                 }
             },
             Ok(Event::End(ref e)) => {
-                let tag = local_tag(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "navMap" => in_nav_map = false,
                     "navPoint" if in_nav_map => {
                         if let Some(finished) = stack.pop() {
@@ -121,13 +128,6 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
     Ok(roots)
 }
 
-fn local_tag(raw: &[u8]) -> String {
-    let full = String::from_utf8_lossy(raw);
-    match full.rfind(':') {
-        Some(pos) => full[pos + 1..].to_string(),
-        None => full.into_owned(),
-    }
-}
 
 #[cfg(test)]
 mod tests {

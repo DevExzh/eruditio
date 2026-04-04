@@ -254,34 +254,31 @@ fn build_opf(
 
     // Metadata.
     opf.push_str("  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n");
-    opf.push_str(&format!("    <dc:title>{}</dc:title>\n", escape_xml(title)));
-    opf.push_str(&format!(
-        "    <dc:language>{}</dc:language>\n",
-        escape_xml(language)
-    ));
+    opf.push_str("    <dc:title>");
+    opf.push_str(&escape_xml(title));
+    opf.push_str("</dc:title>\n");
+    opf.push_str("    <dc:language>");
+    opf.push_str(&escape_xml(language));
+    opf.push_str("</dc:language>\n");
     for author in &book.metadata.authors {
-        opf.push_str(&format!(
-            "    <dc:creator>{}</dc:creator>\n",
-            escape_xml(author)
-        ));
+        opf.push_str("    <dc:creator>");
+        opf.push_str(&escape_xml(author));
+        opf.push_str("</dc:creator>\n");
     }
     if let Some(ref desc) = book.metadata.description {
-        opf.push_str(&format!(
-            "    <dc:description>{}</dc:description>\n",
-            escape_xml(desc)
-        ));
+        opf.push_str("    <dc:description>");
+        opf.push_str(&escape_xml(desc));
+        opf.push_str("</dc:description>\n");
     }
     if let Some(ref publisher) = book.metadata.publisher {
-        opf.push_str(&format!(
-            "    <dc:publisher>{}</dc:publisher>\n",
-            escape_xml(publisher)
-        ));
+        opf.push_str("    <dc:publisher>");
+        opf.push_str(&escape_xml(publisher));
+        opf.push_str("</dc:publisher>\n");
     }
     if let Some(ref isbn) = book.metadata.isbn {
-        opf.push_str(&format!(
-            "    <dc:identifier id=\"uid\">{}</dc:identifier>\n",
-            escape_xml(isbn)
-        ));
+        opf.push_str("    <dc:identifier id=\"uid\">");
+        opf.push_str(&escape_xml(isbn));
+        opf.push_str("</dc:identifier>\n");
     } else {
         opf.push_str("    <dc:identifier id=\"uid\">eruditio-oeb-export</dc:identifier>\n");
     }
@@ -290,26 +287,29 @@ fn build_opf(
     // Manifest.
     opf.push_str("  <manifest>\n");
     for (id, filename) in content_items {
-        opf.push_str(&format!(
-            "    <item id=\"{}\" href=\"{}\" media-type=\"application/xhtml+xml\" />\n",
-            escape_xml(id),
-            escape_xml(filename)
-        ));
+        opf.push_str("    <item id=\"");
+        opf.push_str(&escape_xml(id));
+        opf.push_str("\" href=\"");
+        opf.push_str(&escape_xml(filename));
+        opf.push_str("\" media-type=\"application/xhtml+xml\" />\n");
     }
     for (id, filename, media_type) in resource_items {
-        opf.push_str(&format!(
-            "    <item id=\"{}\" href=\"{}\" media-type=\"{}\" />\n",
-            escape_xml(id),
-            escape_xml(filename),
-            escape_xml(media_type)
-        ));
+        opf.push_str("    <item id=\"");
+        opf.push_str(&escape_xml(id));
+        opf.push_str("\" href=\"");
+        opf.push_str(&escape_xml(filename));
+        opf.push_str("\" media-type=\"");
+        opf.push_str(&escape_xml(media_type));
+        opf.push_str("\" />\n");
     }
     opf.push_str("  </manifest>\n");
 
     // Spine.
     opf.push_str("  <spine>\n");
     for (id, _) in content_items {
-        opf.push_str(&format!("    <itemref idref=\"{}\" />\n", escape_xml(id)));
+        opf.push_str("    <itemref idref=\"");
+        opf.push_str(&escape_xml(id));
+        opf.push_str("\" />\n");
     }
     opf.push_str("  </spine>\n");
 

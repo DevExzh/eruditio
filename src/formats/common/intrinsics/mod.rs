@@ -9,12 +9,12 @@
 //! All `unsafe` code is confined to architecture-specific inner modules.
 //! Public functions are safe to call from any context.
 
-pub(crate) mod match_length;
 pub(crate) mod byte_scan;
+pub(crate) mod case_fold;
 pub(crate) mod cp1252;
 pub(crate) mod hex_decode;
-pub(crate) mod case_fold;
 pub(crate) mod histogram;
 pub(crate) mod is_ascii;
-pub(crate) mod skip_ws;
+pub(crate) mod match_length;
 pub(crate) mod short_pattern;
+pub(crate) mod skip_ws;

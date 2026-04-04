@@ -119,10 +119,7 @@ mod x86 {
                         _mm_cmpeq_epi8(chunk, ws_space),
                         _mm_cmpeq_epi8(chunk, ws_tab),
                     ),
-                    _mm_or_si128(
-                        _mm_cmpeq_epi8(chunk, ws_nl),
-                        _mm_cmpeq_epi8(chunk, ws_cr),
-                    ),
+                    _mm_or_si128(_mm_cmpeq_epi8(chunk, ws_nl), _mm_cmpeq_epi8(chunk, ws_cr)),
                 );
                 let mask = _mm_movemask_epi8(combined) as u32;
                 if mask != 0xFFFF {
@@ -167,14 +164,8 @@ mod aarch64 {
                 // SAFETY: `i + 16 <= len <= data.len()`.
                 let chunk = vld1q_u8(data.as_ptr().add(i));
                 let combined = vorrq_u8(
-                    vorrq_u8(
-                        vceqq_u8(chunk, ws_space),
-                        vceqq_u8(chunk, ws_tab),
-                    ),
-                    vorrq_u8(
-                        vceqq_u8(chunk, ws_nl),
-                        vceqq_u8(chunk, ws_cr),
-                    ),
+                    vorrq_u8(vceqq_u8(chunk, ws_space), vceqq_u8(chunk, ws_tab)),
+                    vorrq_u8(vceqq_u8(chunk, ws_nl), vceqq_u8(chunk, ws_cr)),
                 );
 
                 // Fast check: if all lanes are 0xFF, all 16 bytes are whitespace.
@@ -232,14 +223,8 @@ mod wasm {
                 // SAFETY: `i + 16 <= len <= data.len()`.
                 let chunk = v128_load(data.as_ptr().add(i) as *const v128);
                 let combined = v128_or(
-                    v128_or(
-                        i8x16_eq(chunk, ws_space),
-                        i8x16_eq(chunk, ws_tab),
-                    ),
-                    v128_or(
-                        i8x16_eq(chunk, ws_nl),
-                        i8x16_eq(chunk, ws_cr),
-                    ),
+                    v128_or(i8x16_eq(chunk, ws_space), i8x16_eq(chunk, ws_tab)),
+                    v128_or(i8x16_eq(chunk, ws_nl), i8x16_eq(chunk, ws_cr)),
                 );
                 // Bit N = 1 if byte N is whitespace.
                 let mask = i8x16_bitmask(combined) as u32;

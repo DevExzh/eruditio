@@ -3,6 +3,7 @@ use crate::domain::{
     SpineItem,
 };
 use crate::error::{EruditioError, Result};
+use crate::formats::common::xml_utils;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use std::io::{Read, Seek};
@@ -53,8 +54,9 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let tag = local_tag_name(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "metadata" => section = Section::Metadata,
                     "manifest" => section = Section::Manifest,
                     "spine" => {
@@ -72,15 +74,16 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         parse_guide_ref(e, &mut data.guide);
                     },
                     _ if section == Section::Metadata => {
-                        current_dc_tag = tag;
+                        current_dc_tag = tag.to_string();
                         current_text.clear();
                     },
                     _ => {},
                 }
             },
             Ok(Event::Empty(ref e)) => {
-                let tag = local_tag_name(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "item" if section == Section::Manifest => {
                         parse_manifest_item(e, &mut data.manifest);
                     },
@@ -98,12 +101,13 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
             },
             Ok(Event::Text(ref e)) => {
                 if section == Section::Metadata && !current_dc_tag.is_empty() {
-                    current_text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                    current_text = xml_utils::bytes_to_string(e.as_ref());
                 }
             },
             Ok(Event::End(ref e)) => {
-                let tag = local_tag_name(e.name().as_ref());
-                match tag.as_str() {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                match tag {
                     "metadata" | "manifest" | "spine" | "guide" => section = Section::None,
                     _ if section == Section::Metadata && !current_dc_tag.is_empty() => {
                         apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
@@ -148,26 +152,15 @@ enum Section {
     Guide,
 }
 
-/// Extracts the local name from a potentially namespace-prefixed tag.
-fn local_tag_name(raw: &[u8]) -> String {
-    let full = String::from_utf8_lossy(raw);
-    match full.rfind(':') {
-        Some(pos) => full[pos + 1..].to_string(),
-        None => full.into_owned(),
-    }
-}
-
 /// Reads attributes from a `<spine>` element.
 fn parse_spine_attrs(e: &quick_xml::events::BytesStart<'_>, data: &mut OpfData) {
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        let val = String::from_utf8_lossy(&attr.value);
-        match key.as_ref() {
-            "toc" => data.ncx_id = Some(val.into_owned()),
-            "page-progression-direction" => {
-                data.spine.page_progression_direction = match val.as_ref() {
-                    "rtl" => Some(PageProgression::Rtl),
-                    "ltr" => Some(PageProgression::Ltr),
+        match attr.key.as_ref() {
+            b"toc" => data.ncx_id = Some(xml_utils::bytes_to_string(&attr.value)),
+            b"page-progression-direction" => {
+                data.spine.page_progression_direction = match attr.value.as_ref() {
+                    b"rtl" => Some(PageProgression::Rtl),
+                    b"ltr" => Some(PageProgression::Ltr),
                     _ => None,
                 };
             },
@@ -185,14 +178,16 @@ fn parse_manifest_item(e: &quick_xml::events::BytesStart<'_>, manifest: &mut Man
     let mut properties = Vec::new();
 
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        let val = String::from_utf8_lossy(&attr.value);
-        match key.as_ref() {
-            "id" => id = val.into_owned(),
-            "href" => href = percent_decode(&val),
-            "media-type" => media_type = val.into_owned(),
-            "fallback" => fallback = Some(val.into_owned()),
-            "properties" => {
+        match attr.key.as_ref() {
+            b"id" => id = xml_utils::bytes_to_string(&attr.value),
+            b"href" => {
+                let raw = xml_utils::bytes_to_string(&attr.value);
+                href = percent_decode(&raw);
+            },
+            b"media-type" => media_type = xml_utils::bytes_to_string(&attr.value),
+            b"fallback" => fallback = Some(xml_utils::bytes_to_string(&attr.value)),
+            b"properties" => {
+                let val = xml_utils::bytes_to_string(&attr.value);
                 properties = val.split_whitespace().map(String::from).collect();
             },
             _ => {},
@@ -215,11 +210,9 @@ fn parse_spine_itemref(e: &quick_xml::events::BytesStart<'_>, spine: &mut Spine)
     let mut linear = true;
 
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        let val = String::from_utf8_lossy(&attr.value);
-        match key.as_ref() {
-            "idref" => idref = val.into_owned(),
-            "linear" => linear = val.as_ref() != "no",
+        match attr.key.as_ref() {
+            b"idref" => idref = xml_utils::bytes_to_string(&attr.value),
+            b"linear" => linear = attr.value.as_ref() != b"no",
             _ => {},
         }
     }
@@ -241,12 +234,13 @@ fn parse_guide_ref(e: &quick_xml::events::BytesStart<'_>, guide: &mut Guide) {
     let mut href = String::new();
 
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        let val = String::from_utf8_lossy(&attr.value);
-        match key.as_ref() {
-            "type" => ref_type = val.into_owned(),
-            "title" => title = val.into_owned(),
-            "href" => href = percent_decode(&val),
+        match attr.key.as_ref() {
+            b"type" => ref_type = xml_utils::bytes_to_string(&attr.value),
+            b"title" => title = xml_utils::bytes_to_string(&attr.value),
+            b"href" => {
+                let raw = xml_utils::bytes_to_string(&attr.value);
+                href = percent_decode(&raw);
+            },
             _ => {},
         }
     }
@@ -270,11 +264,9 @@ fn parse_meta_element(
     let mut content = String::new();
 
     for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref());
-        let val = String::from_utf8_lossy(&attr.value);
-        match key.as_ref() {
-            "name" => name = val.into_owned(),
-            "content" => content = val.into_owned(),
+        match attr.key.as_ref() {
+            b"name" => name = xml_utils::bytes_to_string(&attr.value),
+            b"content" => content = xml_utils::bytes_to_string(&attr.value),
             _ => {},
         }
     }

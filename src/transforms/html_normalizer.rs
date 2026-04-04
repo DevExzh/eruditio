@@ -39,61 +39,77 @@ impl Transform for HtmlNormalizer {
 /// Current implementation handles:
 /// - Self-closing void elements (br, hr, img, meta, link, input)
 /// - Unescaped ampersands in text content
+///
+/// Uses `memchr2` for bulk scanning — copies clean text spans in one shot
+/// instead of iterating char-by-char.
 fn normalize_xhtml(html: &str) -> String {
-    let mut output = String::with_capacity(html.len());
-    let mut chars = html.chars().peekable();
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+    let mut output = String::with_capacity(len);
+    let mut pos = 0;
 
-    while let Some(ch) = chars.next() {
-        if ch == '<' {
-            // Collect the tag.
-            let mut tag = String::from('<');
-            for c in chars.by_ref() {
-                tag.push(c);
-                if c == '>' {
-                    break;
-                }
+    while pos < len {
+        // Scan for next '<' or '&' using SIMD-accelerated memchr2.
+        match memchr::memchr2(b'<', b'&', &bytes[pos..]) {
+            None => {
+                // No more special chars — copy remainder in bulk.
+                output.push_str(&html[pos..]);
+                break;
             }
-            // Ensure void elements are self-closing.
-            let normalized_tag = ensure_self_closing_voids(&tag);
-            output.push_str(&normalized_tag);
-        } else if ch == '&' {
-            // Check if it's already a valid entity reference.
-            let mut lookahead = String::new();
-            let mut is_entity = false;
-            let mut peek_chars = chars.clone();
-            for _ in 0..10 {
-                if let Some(&c) = peek_chars.peek() {
-                    peek_chars.next();
-                    if c == ';' {
-                        is_entity = true;
-                        break;
-                    } else if c.is_alphanumeric() || c == '#' {
-                        lookahead.push(c);
-                    } else {
-                        break;
+            Some(offset) => {
+                let special_pos = pos + offset;
+                // Copy the clean span before the special character.
+                if special_pos > pos {
+                    output.push_str(&html[pos..special_pos]);
+                }
+
+                if bytes[special_pos] == b'<' {
+                    // Find closing '>' for this tag.
+                    match memchr::memchr(b'>', &bytes[special_pos..]) {
+                        Some(close_offset) => {
+                            let tag_end = special_pos + close_offset + 1;
+                            let tag_str = &html[special_pos..tag_end];
+                            let normalized = ensure_self_closing_voids(tag_str);
+                            output.push_str(&normalized);
+                            pos = tag_end;
+                        }
+                        None => {
+                            // Unclosed tag at end of input — copy as-is.
+                            output.push_str(&html[special_pos..]);
+                            break;
+                        }
                     }
                 } else {
-                    break;
-                }
-            }
-            if is_entity {
-                // Advance the real iterator past the entity body + semicolon,
-                // emitting the full entity verbatim.
-                output.push('&');
-                for _ in 0..lookahead.len() {
-                    if let Some(c) = chars.next() {
-                        output.push(c);
+                    // '&' — check if it's a valid entity reference.
+                    let after_amp = special_pos + 1;
+                    let mut scan = after_amp;
+                    let limit = (after_amp + 10).min(len);
+                    let mut found_semicolon = false;
+
+                    while scan < limit {
+                        let b = bytes[scan];
+                        if b == b';' {
+                            found_semicolon = true;
+                            break;
+                        } else if b.is_ascii_alphanumeric() || b == b'#' {
+                            scan += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if found_semicolon && scan > after_amp {
+                        // Valid entity — copy verbatim through the semicolon.
+                        let end = scan + 1;
+                        output.push_str(&html[special_pos..end]);
+                        pos = end;
+                    } else {
+                        // Bare ampersand — escape it.
+                        output.push_str("&amp;");
+                        pos = special_pos + 1;
                     }
                 }
-                // Consume the semicolon.
-                if let Some(c) = chars.next() {
-                    output.push(c);
-                }
-            } else {
-                output.push_str("&amp;");
             }
-        } else {
-            output.push(ch);
         }
     }
 

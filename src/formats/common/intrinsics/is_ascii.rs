@@ -342,7 +342,8 @@ mod tests {
             let expected = is_all_ascii_scalar(&data);
             let got = is_all_ascii(&data);
             assert_eq!(
-                got, expected,
+                got,
+                expected,
                 "mismatch for len={len}, data[..min(8,len)]={:?}",
                 &data[..len.min(8)]
             );

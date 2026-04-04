@@ -869,12 +869,12 @@ fn snb_bz2_compress(data: &[u8]) -> Result<Vec<u8>> {
 /// Simple HTML tag stripping for SNBC content.
 fn strip_html_simple(html: &str) -> String {
     let stripped = crate::formats::common::text_utils::strip_tags(html);
-    crate::formats::common::text_utils::unescape_basic_entities(&stripped)
+    crate::formats::common::text_utils::unescape_basic_entities(&stripped).into_owned()
 }
 
 /// Escapes special XML characters.
 fn xml_escape(text: &str) -> String {
-    crate::formats::common::text_utils::escape_xml(text)
+    crate::formats::common::text_utils::escape_xml(text).into_owned()
 }
 
 // -- Helpers --
@@ -933,7 +933,7 @@ fn read_cstring(data: &[u8], offset: usize) -> String {
 }
 
 fn html_escape(text: &str) -> String {
-    crate::formats::common::text_utils::escape_html(text)
+    crate::formats::common::text_utils::escape_html(text).into_owned()
 }
 
 #[cfg(test)]

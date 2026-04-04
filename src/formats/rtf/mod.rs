@@ -373,7 +373,10 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
             },
             RtfToken::HexByte(byte) => {
                 if in_pict {
-                    pict_hex.push_str(&format!("{:02x}", byte));
+                    // Push hex chars directly to avoid format!() allocation per byte.
+                    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+                    pict_hex.push(HEX_CHARS[(byte >> 4) as usize] as char);
+                    pict_hex.push(HEX_CHARS[(byte & 0x0f) as usize] as char);
                     continue;
                 }
                 // Treat as Windows-1252 (the default RTF encoding).

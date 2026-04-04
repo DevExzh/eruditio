@@ -26,9 +26,20 @@ default = ["native-fs", "cbr", "cb7"]
 native-fs = []
 cbr = ["dep:unrar", "native-fs"]
 cb7 = ["dep:sevenz-rust2"]
+dhat-heap = ["dep:dhat"]
+
+[dependencies.dhat]
+version = "0.3"
+optional = true
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+dhat = "0.3"
+
+[[bin]]
+name = "memory_profile"
+path = "src/bin/memory_profile.rs"
+required-features = []
 
 [[bench]]
 name = "palmdoc"
@@ -53,3 +64,11 @@ harness = false
 [[bench]]
 name = "intrinsics_integration"
 harness = false
+
+[[bench]]
+name = "conversion"
+harness = false
+
+[profile.bench]
+debug = true       # Required for meaningful flamegraphs
+lto = "thin"       # Match production build settings

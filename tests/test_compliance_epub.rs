@@ -58,11 +58,11 @@ fn test_w3c_epub33_all_parse_successfully() {
         match EruditioParser::parse_file(path) {
             Ok(_) => {
                 pass += 1;
-            }
+            },
             Err(e) => {
                 failures.push((file_name.clone(), format!("{e}")));
                 eprintln!("  FAIL: {file_name}: {e}");
-            }
+            },
         }
     }
 
@@ -111,11 +111,11 @@ fn test_idpf_epub30_all_parse_successfully() {
         match EruditioParser::parse_file(path) {
             Ok(_) => {
                 pass += 1;
-            }
+            },
             Err(e) => {
                 failures.push((file_name.clone(), format!("{e}")));
                 eprintln!("  FAIL: {file_name}: {e}");
-            }
+            },
         }
     }
 
@@ -176,17 +176,14 @@ fn test_w3c_epub33_parsed_books_have_content() {
             Ok(book) => {
                 let count = book.chapter_count();
                 eprintln!("  OK: {name} -- {count} chapter(s)");
-                assert!(
-                    count > 0,
-                    "{name}: expected at least one chapter, got 0"
-                );
+                assert!(count > 0, "{name}: expected at least one chapter, got 0");
                 checked += 1;
-            }
+            },
             Err(e) => {
                 eprintln!("  PARSE ERROR (non-fatal): {name}: {e}");
                 // Parse errors are acceptable -- the assertion only applies
                 // to books that parse successfully.
-            }
+            },
         }
     }
 
@@ -236,7 +233,10 @@ fn test_compliance_epubs_no_panics() {
     }
 
     eprintln!();
-    eprintln!("Panic check: {}/{total} files caused NO panic", total - panics.len());
+    eprintln!(
+        "Panic check: {}/{total} files caused NO panic",
+        total - panics.len()
+    );
 
     assert!(
         panics.is_empty(),
