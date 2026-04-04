@@ -1,7 +1,5 @@
 //! Normalizes HTML content to well-formed XHTML.
 
-use std::borrow::Cow;
-
 use crate::domain::Book;
 use crate::domain::traits::Transform;
 use crate::error::Result;
@@ -45,7 +43,9 @@ impl Transform for HtmlNormalizer {
 fn normalize_xhtml(html: &str) -> String {
     let bytes = html.as_bytes();
     let len = bytes.len();
-    let mut output = String::with_capacity(len);
+    // Pre-allocate to input length — normalization rarely increases size
+    // significantly (only bare `&` -> `&amp;` and void tags gain ` /`).
+    let mut output = String::with_capacity(len + len / 32);
     let mut pos = 0;
 
     while pos < len {
@@ -55,7 +55,7 @@ fn normalize_xhtml(html: &str) -> String {
                 // No more special chars — copy remainder in bulk.
                 output.push_str(&html[pos..]);
                 break;
-            }
+            },
             Some(offset) => {
                 let special_pos = pos + offset;
                 // Copy the clean span before the special character.
@@ -69,18 +69,18 @@ fn normalize_xhtml(html: &str) -> String {
                         Some(close_offset) => {
                             let tag_end = special_pos + close_offset + 1;
                             let tag_str = &html[special_pos..tag_end];
-                            let normalized = ensure_self_closing_voids(tag_str);
-                            output.push_str(&normalized);
+                            normalize_tag_into(&mut output, tag_str);
                             pos = tag_end;
-                        }
+                        },
                         None => {
                             // Unclosed tag at end of input — copy as-is.
                             output.push_str(&html[special_pos..]);
                             break;
-                        }
+                        },
                     }
                 } else {
                     // '&' — check if it's a valid entity reference.
+                    // Use a lookup table approach instead of per-byte method calls.
                     let after_amp = special_pos + 1;
                     let mut scan = after_amp;
                     let limit = (after_amp + 10).min(len);
@@ -91,7 +91,7 @@ fn normalize_xhtml(html: &str) -> String {
                         if b == b';' {
                             found_semicolon = true;
                             break;
-                        } else if b.is_ascii_alphanumeric() || b == b'#' {
+                        } else if is_entity_char(b) {
                             scan += 1;
                         } else {
                             break;
@@ -109,46 +109,76 @@ fn normalize_xhtml(html: &str) -> String {
                         pos = special_pos + 1;
                     }
                 }
-            }
+            },
         }
     }
 
     output
 }
 
-/// If the tag is a void element without a self-closing slash, add one.
-fn ensure_self_closing_voids(tag: &str) -> Cow<'_, str> {
-    const VOID_ELEMENTS: &[&str] = &[
-        "br", "hr", "img", "meta", "link", "input", "area", "base", "col", "embed", "source",
-        "track", "wbr",
-    ];
+/// Returns `true` if the byte is valid inside an HTML entity name (alphanumeric or `#`).
+#[inline(always)]
+fn is_entity_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'#'
+}
 
-    // Skip closing tags and already self-closing tags.
-    if tag.starts_with("</") || tag.ends_with("/>") {
-        return Cow::Borrowed(tag);
+/// Normalizes a tag and appends it directly to the output buffer.
+///
+/// If the tag is a void element without a self-closing slash, appends with ` />`
+/// instead of `>`. Otherwise appends the tag as-is. This avoids the intermediate
+/// `Cow`/`String` allocation that `ensure_self_closing_voids` + `push_str` created.
+fn normalize_tag_into(output: &mut String, tag: &str) {
+    let tag_bytes = tag.as_bytes();
+    let tag_len = tag_bytes.len();
+
+    // Closing tags and already self-closing tags pass through unchanged.
+    if tag_len >= 2 && (tag_bytes[1] == b'/' || tag_bytes[tag_len - 2] == b'/') {
+        output.push_str(tag);
+        return;
     }
 
     // Extract the element name (after '<', before space or '>').
-    let inner = &tag[1..tag.len() - 1]; // strip < and >
-    let name_bytes = inner.as_bytes();
-    let name_end = name_bytes
+    // tag_bytes[0] == b'<', tag_bytes[tag_len-1] == b'>'
+    if tag_len < 3 {
+        output.push_str(tag);
+        return;
+    }
+
+    let inner = &tag_bytes[1..tag_len - 1]; // strip < and >
+    let name_end = inner
         .iter()
         .position(|&b| b.is_ascii_whitespace() || b == b'/')
-        .unwrap_or(name_bytes.len());
-    let name_slice = &inner[..name_end];
+        .unwrap_or(inner.len());
+    let name_bytes = &inner[..name_end];
 
-    // Check if the lowercased name matches a void element without allocating
-    // when it doesn't match.
-    let is_void = VOID_ELEMENTS
-        .iter()
-        .any(|&ve| name_slice.eq_ignore_ascii_case(ve));
-
-    if is_void {
-        // Insert self-closing slash.
-        Cow::Owned(format!("{} />", &tag[..tag.len() - 1]))
+    // Check if the lowercased name matches a void element.
+    if is_void_element(name_bytes) {
+        // Write `<...attrs />`  (replace trailing `>` with ` />`)
+        output.push_str(&tag[..tag_len - 1]);
+        output.push_str(" />");
     } else {
-        Cow::Borrowed(tag)
+        output.push_str(tag);
     }
+}
+
+/// Returns `true` if `name` (case-insensitive) is an HTML void element.
+#[inline]
+fn is_void_element(name: &[u8]) -> bool {
+    // Short-circuit on length: void element names are 2-6 bytes.
+    let n = name.len();
+    if !(2..=6).contains(&n) {
+        return false;
+    }
+
+    // Compare case-insensitively using a small lookup.
+    const VOID_ELEMENTS: &[&[u8]] = &[
+        b"br", b"hr", b"img", b"meta", b"link", b"input", b"area", b"base", b"col", b"embed",
+        b"source", b"track", b"wbr",
+    ];
+
+    VOID_ELEMENTS
+        .iter()
+        .any(|ve| ve.len() == n && name.eq_ignore_ascii_case(ve))
 }
 
 #[cfg(test)]

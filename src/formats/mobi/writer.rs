@@ -58,9 +58,9 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     let text_records = compress_text_records(text_bytes);
     let text_record_count = text_records.len();
 
-    // Build image records.
-    let image_records = build_image_records(book);
-    let has_images = !image_records.is_empty();
+    // Collect image data references (borrow from book, avoid cloning).
+    let image_refs = collect_image_refs(book);
+    let has_images = !image_refs.is_empty();
 
     // Build EXTH.
     let exth_data = build_metadata_exth(book, has_images);
@@ -79,38 +79,60 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     // Structural records: FLIS, FCIS, EOF.
     let fcis = build_fcis(text_bytes.len() as u32);
 
-    // Collect all records: record0, text records, image records, FLIS, FCIS, EOF.
-    let mut all_records: Vec<&[u8]> = Vec::new();
-    all_records.push(&record0);
-    for tr in &text_records {
-        all_records.push(tr);
-    }
-    for ir in &image_records {
-        all_records.push(ir);
-    }
-    all_records.push(FLIS_RECORD);
-    all_records.push(&fcis);
-    all_records.push(EOF_RECORD);
+    // Calculate total number of records and pre-compute total output size.
+    let num_records = 1 + text_record_count + image_refs.len() + 3; // record0 + text + images + FLIS + FCIS + EOF
+    let header_table_size = 78 + num_records * 8 + 2;
 
-    let num_records = all_records.len() as u16;
-
-    // Calculate record offsets.
-    let header_table_size = 78 + (num_records as usize) * 8 + 2;
-    let mut offsets = Vec::with_capacity(all_records.len());
+    // Calculate record offsets and total data size in a single pass.
+    let mut offsets = Vec::with_capacity(num_records);
     let mut pos = header_table_size as u32;
-    for rec in &all_records {
+
+    // Record 0
+    offsets.push(pos);
+    pos += record0.len() as u32;
+
+    // Text records
+    for tr in &text_records {
         offsets.push(pos);
-        pos += rec.len() as u32;
+        pos += tr.len() as u32;
     }
+
+    // Image records
+    for ir in &image_refs {
+        offsets.push(pos);
+        pos += ir.len() as u32;
+    }
+
+    // FLIS
+    offsets.push(pos);
+    pos += FLIS_RECORD.len() as u32;
+
+    // FCIS
+    offsets.push(pos);
+    pos += fcis.len() as u32;
+
+    // EOF
+    offsets.push(pos);
+    pos += EOF_RECORD.len() as u32;
+
+    let total_size = pos as usize;
 
     // Build PDB header.
     let pdb_name = truncate_pdb_name(title);
-    let mut output = build_pdb_header(&pdb_name, b"BOOK", b"MOBI", num_records, &offsets);
+    let mut output = build_pdb_header(&pdb_name, b"BOOK", b"MOBI", num_records as u16, &offsets);
+    output.reserve(total_size - output.len());
 
-    // Append all records.
-    for rec in &all_records {
-        output.extend_from_slice(rec);
+    // Append all records in order.
+    output.extend_from_slice(&record0);
+    for tr in &text_records {
+        output.extend_from_slice(tr);
     }
+    for ir in &image_refs {
+        output.extend_from_slice(ir);
+    }
+    output.extend_from_slice(FLIS_RECORD);
+    output.extend_from_slice(&fcis);
+    output.extend_from_slice(EOF_RECORD);
 
     Ok(output)
 }
@@ -120,7 +142,8 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
 /// Uses a reusable `PalmDocCompressor` to amortise the 16 KB hash-chain
 /// initialisation cost across all records (instead of re-creating it per record).
 fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
-    let mut records = Vec::new();
+    let num_records = (text.len() + RECORD_SIZE - 1) / RECORD_SIZE.max(1);
+    let mut records = Vec::with_capacity(num_records.max(1));
     let mut compressor = palmdoc::PalmDocCompressor::new();
     let mut offset = 0;
 
@@ -199,7 +222,7 @@ fn build_record0(
     };
     write_u32_be(&mut data, 108, img_idx);
 
-    // Huffman offsets (not used — PalmDoc compression).
+    // Huffman offsets (not used -- PalmDoc compression).
     write_u32_be(&mut data, 112, 0);
     write_u32_be(&mut data, 116, 0);
 
@@ -233,99 +256,118 @@ fn build_record0(
     data
 }
 
-/// Builds EXTH header from Book metadata.
+/// Builds EXTH header from Book metadata, writing directly into a single buffer.
 fn build_metadata_exth(book: &Book, has_cover: bool) -> Vec<u8> {
-    let mut items: Vec<(u32, Vec<u8>)> = Vec::new();
+    // Collect (type, data_slice) pairs without cloning the data.
+    // We need to be careful about the cover offset bytes lifetime.
+    let cover_offset_bytes = 0u32.to_be_bytes();
+
+    let mut refs: Vec<(u32, &[u8])> = Vec::with_capacity(12);
 
     // Title.
     if let Some(ref title) = book.metadata.title {
-        items.push((EXTH_UPDATED_TITLE, title.as_bytes().to_vec()));
+        refs.push((EXTH_UPDATED_TITLE, title.as_bytes()));
     }
 
     // Authors.
     for author in &book.metadata.authors {
-        items.push((EXTH_AUTHOR, author.as_bytes().to_vec()));
+        refs.push((EXTH_AUTHOR, author.as_bytes()));
     }
 
     // Publisher.
     if let Some(ref publisher) = book.metadata.publisher {
-        items.push((EXTH_PUBLISHER, publisher.as_bytes().to_vec()));
+        refs.push((EXTH_PUBLISHER, publisher.as_bytes()));
     }
 
     // Description.
     if let Some(ref desc) = book.metadata.description {
-        items.push((EXTH_DESCRIPTION, desc.as_bytes().to_vec()));
+        refs.push((EXTH_DESCRIPTION, desc.as_bytes()));
     }
 
     // ISBN.
     if let Some(ref isbn) = book.metadata.isbn {
-        items.push((EXTH_ISBN, isbn.as_bytes().to_vec()));
+        refs.push((EXTH_ISBN, isbn.as_bytes()));
     }
 
     // Subjects.
     for subject in &book.metadata.subjects {
-        items.push((EXTH_SUBJECT, subject.as_bytes().to_vec()));
+        refs.push((EXTH_SUBJECT, subject.as_bytes()));
     }
 
     // Language.
     if let Some(ref lang) = book.metadata.language {
-        items.push((EXTH_LANGUAGE, lang.as_bytes().to_vec()));
+        refs.push((EXTH_LANGUAGE, lang.as_bytes()));
     }
 
     // Cover offset (first image = index 0).
     if has_cover {
-        items.push((EXTH_COVER_OFFSET, 0u32.to_be_bytes().to_vec()));
+        refs.push((EXTH_COVER_OFFSET, &cover_offset_bytes));
     }
 
     // CDE type = EBOK (ebook).
-    items.push((EXTH_CDE_TYPE, b"EBOK".to_vec()));
+    refs.push((EXTH_CDE_TYPE, b"EBOK"));
 
-    let refs: Vec<(u32, &[u8])> = items.iter().map(|(t, d)| (*t, d.as_slice())).collect();
     exth::build_exth(&refs)
 }
 
-/// Builds image records from Book resources.
-fn build_image_records(book: &Book) -> Vec<Vec<u8>> {
-    let mut records = Vec::new();
-
-    for resource in &book.resources() {
+/// Collects references to image data from Book resources without cloning.
+fn collect_image_refs(book: &Book) -> Vec<&[u8]> {
+    let resources = book.resources();
+    let mut refs = Vec::with_capacity(resources.len());
+    for resource in &resources {
         if resource.media_type.starts_with("image/") {
-            records.push(resource.data.to_vec());
+            refs.push(resource.data);
         }
     }
-
-    records
+    refs
 }
 
 /// Converts Book content to MOBI-compatible HTML.
+///
+/// Iterates the book's spine/manifest directly to avoid cloning chapter content
+/// strings through the `chapters()` API.
 fn book_to_mobi_html(book: &Book) -> String {
+    // Estimate total size from manifest data (avoiding chapters() clone).
     let estimated: usize = book
-        .chapters()
+        .spine
         .iter()
-        .map(|c| c.content.len() + 200)
+        .filter_map(|si| {
+            let item = book.manifest.get(&si.manifest_id)?;
+            Some(item.data.as_text()?.len() + 200)
+        })
         .sum::<usize>()
         + 256;
     let mut html = String::with_capacity(estimated.max(4096));
     html.push_str("<html><head><title>");
 
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
-    html.push_str(&html_escape(title));
+    push_html_escaped(&mut html, title);
     html.push_str("</title></head><body>\n");
 
-    let chapters = book.chapters();
-    for (i, chapter) in chapters.iter().enumerate() {
+    // Build a quick href -> title lookup from the TOC.
+    let toc = &book.toc;
+
+    for (i, spine_item) in book.spine.iter().enumerate() {
+        let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) else {
+            continue;
+        };
+        let Some(content) = manifest_item.data.as_text() else {
+            continue;
+        };
+
         if i > 0 {
             html.push_str("<mbp:pagebreak />\n");
         }
 
-        if let Some(ref ch_title) = chapter.title {
+        // Look up title from TOC.
+        let ch_title = find_toc_title(toc, &manifest_item.href);
+        if let Some(ref title) = ch_title {
             html.push_str("<h2>");
-            html.push_str(&html_escape(ch_title));
+            push_html_escaped(&mut html, title);
             html.push_str("</h2>\n");
         }
 
         // If content already has HTML tags, use as-is; otherwise wrap in <p>.
-        let content = &chapter.content;
         if content.contains('<') {
             html.push_str(content);
         } else {
@@ -334,7 +376,7 @@ fn book_to_mobi_html(book: &Book) -> String {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
                     html.push_str("<p>");
-                    html.push_str(&html_escape(trimmed));
+                    push_html_escaped(&mut html, trimmed);
                     html.push_str("</p>\n");
                 }
             }
@@ -347,13 +389,40 @@ fn book_to_mobi_html(book: &Book) -> String {
     html
 }
 
-/// Basic HTML entity escaping.
-fn html_escape(s: &str) -> String {
-    crate::formats::common::text_utils::escape_html(s).into_owned()
+/// Searches the TOC for an entry whose href matches (prefix match).
+fn find_toc_title(items: &[crate::domain::toc::TocItem], href: &str) -> Option<String> {
+    for item in items {
+        if item.href == href || href.starts_with(&item.href) {
+            return Some(item.title.clone());
+        }
+        if let Some(title) = find_toc_title(&item.children, href) {
+            return Some(title);
+        }
+    }
+    None
+}
+
+/// Pushes HTML-escaped text directly into an existing String buffer,
+/// avoiding allocation when no escaping is needed (the common case).
+#[inline]
+fn push_html_escaped(buf: &mut String, text: &str) {
+    let escaped = crate::formats::common::text_utils::escape_html(text);
+    buf.push_str(&escaped);
 }
 
 /// Truncates a title to fit the 31-character PDB name field.
+/// Avoids allocation when the title is already clean ASCII and <= 31 chars.
 fn truncate_pdb_name(title: &str) -> String {
+    // Fast path: check if title is already valid (all ASCII graphic or space, len <= 31).
+    if title.len() <= 31
+        && !title.is_empty()
+        && title
+            .bytes()
+            .all(|b| b.is_ascii_graphic() || b == b' ')
+    {
+        return title.to_string();
+    }
+
     let clean: String = title
         .chars()
         .filter(|c| c.is_ascii_graphic() || *c == ' ')
@@ -458,6 +527,8 @@ mod tests {
 
     #[test]
     fn html_escape_works() {
-        assert_eq!(html_escape("a & b < c > d"), "a &amp; b &lt; c &gt; d");
+        let mut buf = String::new();
+        push_html_escaped(&mut buf, "a & b < c > d");
+        assert_eq!(buf, "a &amp; b &lt; c &gt; d");
     }
 }

@@ -177,7 +177,7 @@ fn parse_pdb_header(data: &[u8]) -> Result<PdbHeader> {
     // Name: 32 bytes, null-terminated.
     let name_bytes = &data[0..32];
     let name_end = name_bytes.iter().position(|&b| b == 0).unwrap_or(32);
-    let name = String::from_utf8_lossy(&name_bytes[..name_end]).into_owned();
+    let name = crate::formats::common::text_utils::bytes_to_string(&name_bytes[..name_end]);
 
     let mut db_type = [0u8; 4];
     db_type.copy_from_slice(&data[60..64]);

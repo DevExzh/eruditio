@@ -25,7 +25,7 @@ impl FormatReader for PmlReader {
         let mut data = Vec::new();
         reader.read_to_end(&mut data)?;
 
-        let text = String::from_utf8_lossy(&data);
+        let text = crate::formats::common::text_utils::bytes_to_cow_str(&data);
         let html = parser::pml_to_html(&text);
         let chapters = parser::split_pml_chapters(&html);
 

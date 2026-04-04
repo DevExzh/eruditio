@@ -295,7 +295,7 @@ fn parse_system_file(data: &[u8]) -> ChmSystemInfo {
 
 fn extract_cstring(data: &[u8]) -> String {
     let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-    String::from_utf8_lossy(&data[..end]).into_owned()
+    crate::formats::common::text_utils::bytes_to_string(&data[..end])
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ struct HhcEntry {
 /// </OBJECT>
 /// ```
 fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
-    let text = String::from_utf8_lossy(data);
+    let text = crate::formats::common::text_utils::bytes_to_cow_str(data);
     let bytes = text.as_bytes();
     let mut entries = Vec::new();
 

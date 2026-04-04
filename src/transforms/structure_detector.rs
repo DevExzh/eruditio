@@ -44,38 +44,50 @@ impl Transform for StructureDetector {
 /// Extracts heading text and level from HTML content.
 ///
 /// Performs a single linear scan of the document so headings are returned
-/// in document order (not grouped by level).
+/// in document order (not grouped by level). Uses `memchr` for byte-level
+/// scanning of `<h` tags and pre-computed close-tag patterns to avoid
+/// allocations in the inner loop.
 fn extract_headings(html: &str) -> Vec<(String, u8)> {
+    let bytes = html.as_bytes();
     let mut headings = Vec::new();
     let mut search_from = 0;
 
-    while search_from < html.len() {
-        // Find the next "<h" which could be h1, h2, or h3.
-        let pos = match html[search_from..].find("<h") {
+    // Pre-computed close tags to avoid format! allocation per heading.
+    const CLOSE_TAGS: [&str; 3] = ["</h1>", "</h2>", "</h3>"];
+
+    while search_from < bytes.len() {
+        // Find the next "<h" using memchr for the '<', then verify 'h'.
+        let pos = match memchr::memchr(b'<', &bytes[search_from..]) {
             Some(p) => search_from + p,
             None => break,
         };
+        let after_lt = pos + 1;
+        if after_lt >= bytes.len() || bytes[after_lt] != b'h' {
+            search_from = pos + 1;
+            continue;
+        }
+
         let after_h = pos + 2;
-        if after_h >= html.len() {
+        if after_h >= bytes.len() {
             break;
         }
 
-        let level_byte = html.as_bytes()[after_h];
+        let level_byte = bytes[after_h];
         if !matches!(level_byte, b'1' | b'2' | b'3') {
             search_from = pos + 1;
             continue;
         }
         let level = level_byte - b'0';
-        let close_tag = format!("</h{}>", level);
+        let close_tag = CLOSE_TAGS[(level - 1) as usize];
 
-        // Find the end of the opening tag.
-        let content_start = match html[pos..].find('>') {
+        // Find the end of the opening tag using memchr.
+        let content_start = match memchr::memchr(b'>', &bytes[pos..]) {
             Some(gt) => pos + gt + 1,
             None => break,
         };
 
         // Find the closing tag.
-        let content_end = match html[content_start..].find(&close_tag) {
+        let content_end = match html[content_start..].find(close_tag) {
             Some(ct) => content_start + ct,
             None => {
                 search_from = content_start;

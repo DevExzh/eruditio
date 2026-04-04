@@ -47,13 +47,13 @@ pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
     // Find all h1/h2 positions.
     let mut split_points: Vec<(usize, String)> = Vec::new();
 
-    for level in 1..=2u8 {
-        let open_tag = format!("<h{}", level);
-        let close_tag = format!("</h{}>", level);
+    // Pre-computed tag strings — avoids `format!()` allocation in the loop.
+    const HEADING_TAGS: [(&[u8], &[u8]); 2] = [(b"<h1", b"</h1>"), (b"<h2", b"</h2>")];
 
+    for &(open_tag, close_tag) in &HEADING_TAGS {
         let mut search_from = 0;
         while let Some(pos) =
-            text_utils::find_case_insensitive(&body.as_bytes()[search_from..], open_tag.as_bytes())
+            text_utils::find_case_insensitive(&body.as_bytes()[search_from..], open_tag)
         {
             let abs_pos = search_from + pos;
 
@@ -61,10 +61,9 @@ pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
             let after_open = &body[abs_pos..];
             if let Some(gt) = after_open.find('>') {
                 let content_start = abs_pos + gt + 1;
-                if let Some(close_pos) = text_utils::find_case_insensitive(
-                    &body.as_bytes()[content_start..],
-                    close_tag.as_bytes(),
-                ) {
+                if let Some(close_pos) =
+                    text_utils::find_case_insensitive(&body.as_bytes()[content_start..], close_tag)
+                {
                     let heading_text =
                         strip_html_tags(&body[content_start..content_start + close_pos])
                             .trim()

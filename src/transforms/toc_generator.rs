@@ -50,14 +50,19 @@ impl Transform for TocGenerator {
 }
 
 /// Extracts the text of the first heading (h1-h3) found in HTML content.
+///
+/// Uses byte-level scanning to avoid `format!` allocations for tag patterns
+/// on each heading level.
 fn extract_first_heading(html: &str) -> Option<String> {
-    for level in 1..=3u8 {
-        let open_tag = format!("<h{}", level);
-        let close_tag = format!("</h{}>", level);
+    let bytes = html.as_bytes();
+    // Pre-computed open/close patterns for h1, h2, h3.
+    const OPEN_TAGS: [&[u8]; 3] = [b"<h1", b"<h2", b"<h3"];
+    const CLOSE_TAGS: [&str; 3] = ["</h1>", "</h2>", "</h3>"];
 
-        if let Some(start) = html.find(&open_tag) {
-            let content_start = html[start..].find('>')? + start + 1;
-            let content_end = html[content_start..].find(&close_tag)? + content_start;
+    for (open_tag, close_tag) in OPEN_TAGS.iter().zip(CLOSE_TAGS.iter()) {
+        if let Some(start) = memchr::memmem::find(bytes, open_tag) {
+            let content_start = memchr::memchr(b'>', &bytes[start..])? + start + 1;
+            let content_end = html[content_start..].find(close_tag)? + content_start;
             let inner = &html[content_start..content_end];
             let text = strip_inner_tags(inner).trim().to_string();
             if !text.is_empty() {
@@ -68,16 +73,37 @@ fn extract_first_heading(html: &str) -> Option<String> {
     None
 }
 
-/// Strips HTML tags from inner content.
+/// Strips HTML tags from inner content using `memchr` for fast scanning.
 fn strip_inner_tags(html: &str) -> String {
+    let bytes = html.as_bytes();
+    // Fast path: no tags at all.
+    if memchr::memchr(b'<', bytes).is_none() {
+        return html.to_string();
+    }
+
     let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(ch),
-            _ => {},
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        match memchr::memchr(b'<', &bytes[pos..]) {
+            Some(offset) => {
+                // Copy text before the tag.
+                if offset > 0 {
+                    result.push_str(&html[pos..pos + offset]);
+                }
+                let tag_start = pos + offset;
+                // Find the closing '>'.
+                match memchr::memchr(b'>', &bytes[tag_start..]) {
+                    Some(end_offset) => {
+                        pos = tag_start + end_offset + 1;
+                    },
+                    None => break, // Unclosed tag -- stop.
+                }
+            },
+            None => {
+                result.push_str(&html[pos..]);
+                break;
+            },
         }
     }
     result

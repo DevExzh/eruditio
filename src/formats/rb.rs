@@ -103,7 +103,7 @@ impl FormatReader for RbReader {
 
         for (idx, entry) in html_entries.iter().enumerate() {
             let content = decompress_entry(&data, entry)?;
-            let html = String::from_utf8_lossy(&content).into_owned();
+            let html = crate::formats::common::text_utils::bytes_to_string(&content);
 
             book.add_chapter(&Chapter {
                 title: if entry.name == body_name {

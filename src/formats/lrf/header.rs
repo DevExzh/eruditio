@@ -136,9 +136,9 @@ pub(crate) fn parse_metadata(data: &[u8], header: &LrfHeader) -> Result<LrfMetad
 
     // Strip UTF-8 BOM if present.
     let xml_str = if xml_bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        String::from_utf8_lossy(&xml_bytes[3..])
+        crate::formats::common::text_utils::bytes_to_cow_str(&xml_bytes[3..])
     } else {
-        String::from_utf8_lossy(&xml_bytes)
+        crate::formats::common::text_utils::bytes_to_cow_str(&xml_bytes)
     };
 
     parse_metadata_xml(&xml_str)
@@ -160,7 +160,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let name = crate::formats::common::text_utils::bytes_to_string(e.name().as_ref());
                 match name.as_str() {
                     "BookInfo" => in_book_info = true,
                     "DocInfo" => in_doc_info = true,
@@ -171,7 +171,9 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"reading" {
                                     pending_reading =
-                                        Some(String::from_utf8_lossy(&attr.value).into_owned());
+                                        Some(crate::formats::common::text_utils::bytes_to_string(
+                                            &attr.value,
+                                        ));
                                 }
                             }
                         }
@@ -179,7 +181,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                 }
             },
             Ok(Event::End(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                let name = crate::formats::common::text_utils::bytes_to_string(e.name().as_ref());
                 match name.as_str() {
                     "BookInfo" => in_book_info = false,
                     "DocInfo" => in_doc_info = false,
@@ -189,7 +191,8 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                 pending_reading = None;
             },
             Ok(Event::Text(ref e)) => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                let text =
+                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
                 if text.trim().is_empty() {
                     continue;
                 }

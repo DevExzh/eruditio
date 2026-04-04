@@ -36,32 +36,66 @@ fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     let set: &[u8] = if xml_mode { b"&<>\"'" } else { b"&<>" };
 
     // Fast path: no special characters found -- zero allocation.
-    if !super::intrinsics::byte_scan::has_any_in_set(bytes, set) {
-        return Cow::Borrowed(text);
+    let first_special = super::intrinsics::byte_scan::find_first_in_set(bytes, set);
+    let first_special = match first_special {
+        Some(idx) => idx,
+        None => return Cow::Borrowed(text),
+    };
+
+    // Estimate capacity: each special char expands by at most 4 bytes (& -> &amp;).
+    // For sparse input the default is fine; for dense input we need much more.
+    // Sample the first 256 bytes to estimate density.
+    let sample_end = len.min(256);
+    let mut sample_count = 0u32;
+    for &b in &bytes[..sample_end] {
+        sample_count += is_html_special(b, xml_mode) as u32;
+    }
+    let estimated_extra = if sample_end > 0 {
+        // Average expansion ~4 bytes per special char, scaled to full length.
+        ((sample_count as usize) * 4 * len).div_ceil(sample_end)
+    } else {
+        len / 8
+    };
+    let mut result = String::with_capacity(len + estimated_extra);
+
+    // Copy everything before the first special char in bulk.
+    if first_special > 0 {
+        result.push_str(&text[..first_special]);
     }
 
-    let mut result = String::with_capacity(len + len / 8);
-    let mut pos = 0;
+    let mut pos = first_special;
 
-    while pos < len {
-        let next = super::intrinsics::byte_scan::find_first_in_set(&bytes[pos..], set);
+    // Process the first (already-found) special char, then enter the main loop.
+    loop {
+        // At this point, bytes[pos] is a special character. Process a run of
+        // special chars with a tight scalar loop to avoid SIMD dispatch overhead
+        // when specials are clustered.
+        while pos < len && is_html_special(bytes[pos], xml_mode) {
+            match bytes[pos] {
+                b'&' => result.push_str("&amp;"),
+                b'<' => result.push_str("&lt;"),
+                b'>' => result.push_str("&gt;"),
+                b'"' => result.push_str("&quot;"),
+                b'\'' => result.push_str("&apos;"),
+                _ => {},
+            }
+            pos += 1;
+        }
 
-        match next {
+        if pos >= len {
+            break;
+        }
+
+        // Now bytes[pos] is safe. Use SIMD to find the next special char.
+        match super::intrinsics::byte_scan::find_first_in_set(&bytes[pos..], set) {
             Some(offset) => {
                 // Copy safe prefix in bulk.
                 result.push_str(&text[pos..pos + offset]);
-                let ch = bytes[pos + offset];
-                match ch {
-                    b'&' => result.push_str("&amp;"),
-                    b'<' => result.push_str("&lt;"),
-                    b'>' => result.push_str("&gt;"),
-                    b'"' => result.push_str("&quot;"),
-                    b'\'' => result.push_str("&apos;"),
-                    _ => {},
-                }
-                pos += offset + 1;
+                pos += offset;
+                // Loop back to handle the special char(s).
             },
             None => {
+                // No more specials -- copy remainder.
                 result.push_str(&text[pos..]);
                 break;
             },
@@ -69,6 +103,16 @@ fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     }
 
     Cow::Owned(result)
+}
+
+/// Returns `true` if the byte is an HTML/XML special character that needs escaping.
+#[inline(always)]
+fn is_html_special(b: u8, xml_mode: bool) -> bool {
+    match b {
+        b'&' | b'<' | b'>' => true,
+        b'"' | b'\'' => xml_mode,
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +323,34 @@ pub fn find_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         }
 
         pos = candidate + 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fast UTF-8 conversion with SIMD-accelerated ASCII fast path
+// ---------------------------------------------------------------------------
+
+/// Converts a byte slice to an owned `String`, avoiding the expensive
+/// `Utf8Chunks` iterator when the content is valid UTF-8 (the common case).
+///
+/// Three-tier strategy:
+/// 1. **ASCII fast path** (SIMD-accelerated): if every byte is < 0x80, wraps
+///    the bytes directly without any UTF-8 validation.
+/// 2. **UTF-8 fast path**: `str::from_utf8` validates in bulk; on success,
+///    wraps with a single allocation.
+/// 3. **Lossy fallback**: only for genuinely malformed input.
+pub fn bytes_to_string(bytes: &[u8]) -> String {
+    super::xml_utils::bytes_to_string(bytes)
+}
+
+/// Converts a byte slice to a `Cow<str>`, borrowing when possible.
+///
+/// Unlike [`bytes_to_string`], this avoids allocation when the input is
+/// already valid UTF-8 by returning a `Cow::Borrowed`.
+pub fn bytes_to_cow_str(bytes: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => Cow::Borrowed(s),
+        Err(_) => Cow::Owned(String::from_utf8_lossy(bytes).into_owned()),
     }
 }
 

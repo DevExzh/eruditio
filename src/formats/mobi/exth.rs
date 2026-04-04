@@ -144,38 +144,38 @@ impl ExthHeader {
 }
 
 /// Builds a serialized EXTH header block from a list of (type, data) pairs.
+///
+/// Writes directly into a single pre-sized buffer, avoiding per-entry `Vec`
+/// allocations and the intermediate `record_bytes` buffer.
 pub(crate) fn build_exth(records: &[(u32, &[u8])]) -> Vec<u8> {
     if records.is_empty() {
         return Vec::new();
     }
 
-    let mut record_bytes = Vec::new();
-    for &(record_type, data) in records {
-        let length = (data.len() + 8) as u32;
-        let mut entry = vec![0u8; 8 + data.len()];
-        write_u32_be(&mut entry, 0, record_type);
-        write_u32_be(&mut entry, 4, length);
-        entry[8..].copy_from_slice(data);
-        record_bytes.extend_from_slice(&entry);
-    }
-
-    let total_length = 12 + record_bytes.len();
-    // Pad to 4-byte alignment.
+    // Calculate total size up front: 12 (header) + sum of (8 + data.len()) per record + padding.
+    let record_bytes_len: usize = records.iter().map(|(_, d)| 8 + d.len()).sum();
+    let total_length = 12 + record_bytes_len;
     let padding = (4 - (total_length % 4)) % 4;
 
-    let mut exth = Vec::with_capacity(total_length + padding);
-    exth.extend_from_slice(b"EXTH");
+    let mut exth = vec![0u8; total_length + padding];
 
-    let mut len_bytes = [0u8; 4];
-    write_u32_be(&mut len_bytes, 0, (total_length + padding) as u32);
-    exth.extend_from_slice(&len_bytes);
+    // EXTH magic.
+    exth[0..4].copy_from_slice(b"EXTH");
+    // Total length (including padding).
+    write_u32_be(&mut exth, 4, (total_length + padding) as u32);
+    // Record count.
+    write_u32_be(&mut exth, 8, records.len() as u32);
 
-    let mut count_bytes = [0u8; 4];
-    write_u32_be(&mut count_bytes, 0, records.len() as u32);
-    exth.extend_from_slice(&count_bytes);
-
-    exth.extend_from_slice(&record_bytes);
-    exth.extend(std::iter::repeat_n(0u8, padding));
+    // Write records directly into the buffer.
+    let mut pos = 12;
+    for &(record_type, data) in records {
+        let length = (data.len() + 8) as u32;
+        write_u32_be(&mut exth, pos, record_type);
+        write_u32_be(&mut exth, pos + 4, length);
+        exth[pos + 8..pos + 8 + data.len()].copy_from_slice(data);
+        pos += 8 + data.len();
+    }
+    // Padding bytes are already zero from vec![0u8; ...].
 
     exth
 }

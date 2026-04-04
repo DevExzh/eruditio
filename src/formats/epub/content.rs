@@ -115,7 +115,7 @@ fn read_from_archive<R: Read + Seek>(
             Err(e) => {
                 // Fallback for EPUBs with Windows-1252 or other non-UTF-8 content.
                 String::from_utf8_lossy(e.as_bytes()).into_owned()
-            }
+            },
         };
         Ok(ManifestData::Text(text))
     } else {

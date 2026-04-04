@@ -14,7 +14,7 @@ use std::io::Write;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::formats::common::text_utils::escape_xml;
+use crate::formats::common::text_utils::{bytes_to_cow_str, escape_xml};
 
 use crate::domain::{Book, FormatWriter};
 use crate::error::{EruditioError, Result};
@@ -287,23 +287,29 @@ impl BinaryEncoder {
                 },
                 Ok(Event::Text(ref e)) => {
                     let bytes = e.clone().into_inner();
-                    let text = String::from_utf8_lossy(&bytes);
-                    for c in text.chars() {
-                        if c == '\0' {
-                            // Can't emit raw zero bytes (they signal tag start).
-                            // Emit as vertical tab (0x0B) which the decoder maps
-                            // back to newline.
-                            output.push(0x0B);
-                        } else {
-                            let mut tmp = [0u8; 4];
-                            let s = c.encode_utf8(&mut tmp);
-                            output.extend_from_slice(s.as_bytes());
+                    // Fast path: if all bytes are valid UTF-8, scan for NUL
+                    // directly in the byte buffer instead of iterating chars.
+                    if memchr::memchr(0, &bytes).is_none() {
+                        // No NUL bytes -- emit raw bytes directly.
+                        // For valid UTF-8, bytes_to_cow_str avoids allocation.
+                        output.extend_from_slice(&bytes);
+                    } else {
+                        // Rare path: contains NUL bytes that need replacement.
+                        let text = bytes_to_cow_str(&bytes);
+                        for c in text.chars() {
+                            if c == '\0' {
+                                output.push(0x0B);
+                            } else {
+                                let mut tmp = [0u8; 4];
+                                let s = c.encode_utf8(&mut tmp);
+                                output.extend_from_slice(s.as_bytes());
+                            }
                         }
                     }
                 },
                 Ok(Event::CData(ref e)) => {
-                    let text = String::from_utf8_lossy(e.as_ref());
-                    output.extend_from_slice(text.as_bytes());
+                    // CData content is raw bytes -- copy directly.
+                    output.extend_from_slice(e.as_ref());
                 },
                 Ok(Event::Eof) => break,
                 Err(e) => {
@@ -326,7 +332,7 @@ impl BinaryEncoder {
         output: &mut Vec<u8>,
     ) -> Result<()> {
         let tag_name_raw = e.name();
-        let tag_name = String::from_utf8_lossy(tag_name_raw.as_ref());
+        let tag_name = bytes_to_cow_str(tag_name_raw.as_ref());
         let tag_name_lower = tag_name.to_lowercase();
 
         // Look up tag index
@@ -351,9 +357,9 @@ impl BinaryEncoder {
 
             // Encode attributes
             for attr in e.attributes().flatten() {
-                let attr_name = String::from_utf8_lossy(attr.key.as_ref());
+                let attr_name = bytes_to_cow_str(attr.key.as_ref());
                 let attr_name_lower = attr_name.to_lowercase();
-                let attr_value = String::from_utf8_lossy(&attr.value);
+                let attr_value = bytes_to_cow_str(&attr.value);
 
                 let attr_code = self.find_attr_code(idx, &attr_name, &attr_name_lower);
 
@@ -399,8 +405,8 @@ impl BinaryEncoder {
 
             // Encode attributes (all as custom since we don't know the tag)
             for attr in e.attributes().flatten() {
-                let attr_name = String::from_utf8_lossy(attr.key.as_ref());
-                let attr_value = String::from_utf8_lossy(&attr.value);
+                let attr_name = bytes_to_cow_str(attr.key.as_ref());
+                let attr_value = bytes_to_cow_str(&attr.value);
 
                 // Try global attr lookup first
                 let attr_name_lower = attr_name.to_lowercase();

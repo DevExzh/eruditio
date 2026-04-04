@@ -25,7 +25,9 @@ pub(crate) fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Resu
                 if e.name().as_ref() == b"rootfile" {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"full-path" {
-                            opf_path = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                            opf_path = Some(crate::formats::common::text_utils::bytes_to_string(
+                                &attr.value,
+                            ));
                             break;
                         }
                     }

@@ -254,9 +254,10 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
             },
             RtfToken::ControlWord { name, param } => {
                 // Check if this starts a known skip destination.
-                if (saw_star || skip_destinations.contains(&name.as_str()))
+                let name_ref: &str = name;
+                if (saw_star || skip_destinations.contains(&name_ref))
                     && group_depth > 0
-                    && skip_destinations.contains(&name.as_str())
+                    && skip_destinations.contains(&name_ref)
                 {
                     skip_depth = Some(1);
                     saw_star = false;
@@ -264,13 +265,13 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                 }
                 saw_star = false;
 
-                match name.as_str() {
+                match name_ref {
                     "info" => {
                         in_info = true;
                         info_depth = 1;
                     },
                     "title" | "author" | "subject" | "keywords" if in_info => {
-                        current_info_field = Some(name.clone());
+                        current_info_field = Some(name.to_string());
                         info_text.clear();
                     },
                     "par" | "pard" if !in_info => {

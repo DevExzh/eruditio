@@ -273,6 +273,7 @@ pub(crate) fn find_first_in_set(haystack: &[u8], set: &[u8]) -> Option<usize> {
 }
 
 /// Returns `true` if any byte in `haystack` belongs to `set`.
+#[cfg(test)]
 pub(crate) fn has_any_in_set(haystack: &[u8], set: &[u8]) -> bool {
     find_first_in_set(haystack, set).is_some()
 }

@@ -271,7 +271,7 @@ fn extract_full_title(record0: &[u8], offset: u32, length: u32) -> String {
     };
 
     if start < record0.len() && end <= record0.len() && start < end {
-        String::from_utf8_lossy(&record0[start..end])
+        crate::formats::common::text_utils::bytes_to_cow_str(&record0[start..end])
             .trim_end_matches('\0')
             .to_string()
     } else {

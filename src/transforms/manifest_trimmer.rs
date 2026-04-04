@@ -93,18 +93,41 @@ fn collect_toc_refs(
 }
 
 /// Scans HTML/XHTML text for href and src attributes pointing to manifest items.
+///
+/// Uses byte-level scanning via `memchr` to avoid the overhead of Rust's
+/// `str::pattern` machinery on every iteration.
 fn collect_href_references(
     text: &str,
     href_to_id: &std::collections::HashMap<&str, &str>,
     book: &Book,
     ids: &mut HashSet<String>,
 ) {
-    // Simple attribute extraction — look for href="..." and src="..." patterns.
-    for attr in &["href=\"", "src=\""] {
+    let bytes = text.as_bytes();
+    // Attribute patterns to search for, with their byte representations.
+    let patterns: &[&[u8]] = &[b"href=\"", b"src=\""];
+
+    for &pattern in patterns {
+        let pat_len = pattern.len();
         let mut search_from = 0;
-        while let Some(start) = text[search_from..].find(attr) {
-            let value_start = search_from + start + attr.len();
-            if let Some(end) = text[value_start..].find('"') {
+        while search_from + pat_len <= bytes.len() {
+            // Use memchr to find the first byte of the pattern quickly,
+            // then verify the remaining bytes.
+            let haystack = &bytes[search_from..];
+            let start = match memchr::memchr(pattern[0], haystack) {
+                Some(pos) => pos,
+                None => break,
+            };
+            // Check if the full pattern matches at this position.
+            let abs_start = search_from + start;
+            if abs_start + pat_len > bytes.len()
+                || bytes[abs_start..abs_start + pat_len] != *pattern
+            {
+                search_from = abs_start + 1;
+                continue;
+            }
+            let value_start = abs_start + pat_len;
+            // Find closing quote using memchr (single byte search).
+            if let Some(end) = memchr::memchr(b'"', &bytes[value_start..]) {
                 let value = &text[value_start..value_start + end];
                 // Strip fragment.
                 let path = value.split('#').next().unwrap_or(value);

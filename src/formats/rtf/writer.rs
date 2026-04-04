@@ -103,12 +103,12 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 None => break,
             };
 
-            let tag_bytes = html[pos..tag_end].as_bytes();
+            let tag_bytes = &html.as_bytes()[pos..tag_end];
 
             // Handle known tags using case-insensitive byte comparison
             // to avoid per-tag to_lowercase() allocation.
             if tag_bytes.len() >= 2
-                && tag_bytes[1].to_ascii_lowercase() == b'p'
+                && tag_bytes[1].eq_ignore_ascii_case(&b'p')
                 && (tag_bytes.len() == 3 || tag_bytes[2] == b' ' || tag_bytes[2] == b'>')
             {
                 // Start of paragraph -- already in paragraph mode.
@@ -137,7 +137,7 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 rtf.push('}');
             } else if tag_bytes.len() >= 4
                 && tag_bytes[0] == b'<'
-                && tag_bytes[1].to_ascii_lowercase() == b'h'
+                && tag_bytes[1].eq_ignore_ascii_case(&b'h')
                 && tag_bytes[2].is_ascii_digit()
             {
                 // Heading -- bold, larger font.
@@ -145,7 +145,7 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
             } else if tag_bytes.len() >= 5
                 && tag_bytes[0] == b'<'
                 && tag_bytes[1] == b'/'
-                && tag_bytes[2].to_ascii_lowercase() == b'h'
+                && tag_bytes[2].eq_ignore_ascii_case(&b'h')
             {
                 rtf.push_str("}\\par\\par\n");
             }

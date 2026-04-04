@@ -147,7 +147,7 @@ fn decode_manifest_text(data: &[u8]) -> String {
             .map(|r| r.unwrap_or('\u{FFFD}'))
             .collect()
     } else {
-        String::from_utf8_lossy(data).into_owned()
+        crate::formats::common::text_utils::bytes_to_string(data)
     }
 }
 

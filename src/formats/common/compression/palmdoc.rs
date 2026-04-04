@@ -51,24 +51,29 @@ const NO_ENTRY: u16 = 0xFFFF;
 ///
 /// `head[hash]` stores the most recent position with that hash value.
 /// `prev[pos % RECORD_SIZE]` chains earlier positions with the same hash.
+///
+/// This struct is 16 KB. To avoid placing it on the stack, the
+/// [`PalmDocCompressor`] wraps it in a `Box` for heap allocation and reuse.
 struct HashChain {
     head: [u16; HASH_SIZE],
     prev: [u16; RECORD_SIZE],
 }
 
 impl HashChain {
-    /// Creates a new, empty hash chain.
-    fn new() -> Self {
-        Self {
-            head: [NO_ENTRY; HASH_SIZE],
-            prev: [NO_ENTRY; RECORD_SIZE],
-        }
-    }
-
     /// Resets the hash chain for reuse without reallocating.
     fn reset(&mut self) {
         self.head.fill(NO_ENTRY);
         self.prev.fill(NO_ENTRY);
+    }
+
+    /// Creates a new, heap-allocated hash chain.
+    fn new_boxed() -> Box<Self> {
+        let mut chain = Box::new(Self {
+            head: [0u16; HASH_SIZE],
+            prev: [0u16; RECORD_SIZE],
+        });
+        chain.reset();
+        chain
     }
 
     /// Computes a fast 12-bit hash of three consecutive bytes.
@@ -230,12 +235,38 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
                     let byte = output[output.len() - 1];
                     output.extend(std::iter::repeat_n(byte, length));
                 } else {
-                    // Overlapping: byte-by-byte copy (needed for run-length
-                    // style references where distance < length).
+                    // Overlapping: the source pattern of `distance` bytes
+                    // repeats to fill `length` bytes. Copy in doubling chunks
+                    // to amortise the per-byte overhead.
                     output.reserve(length);
-                    for j in 0..length {
+                    let base_len = output.len();
+                    // Seed: copy the initial `distance` bytes one by one
+                    // (they overlap with the source being built).
+                    let seed = distance.min(length);
+                    for j in 0..seed {
                         let byte = output[start + j];
                         output.push(byte);
+                    }
+                    // Double up: memcpy from already-written output in
+                    // power-of-two chunks until we reach `length`.
+                    let mut written = seed;
+                    while written < length {
+                        let chunk = (length - written).min(written);
+                        let src_start = base_len;
+                        // SAFETY: `src_start + chunk <= output.len()` because
+                        // we have already pushed `written >= chunk` bytes
+                        // starting at `base_len`. `output.len() + chunk` is
+                        // within the reserved capacity.
+                        unsafe {
+                            let ptr = output.as_mut_ptr();
+                            std::ptr::copy_nonoverlapping(
+                                ptr.add(src_start),
+                                ptr.add(base_len + written),
+                                chunk,
+                            );
+                            output.set_len(base_len + written + chunk);
+                        }
+                        written += chunk;
                     }
                 }
             },
@@ -257,85 +288,11 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
 /// Compresses a single text record using PalmDoc LZ77.
 ///
 /// Input should be at most `RECORD_SIZE` (4096) bytes.
+///
+/// For compressing multiple records, prefer [`PalmDocCompressor`] which
+/// amortises the 16 KB `HashChain` allocation and initialisation cost.
 pub fn compress(input: &[u8]) -> Vec<u8> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
-    let mut output = Vec::with_capacity(input.len());
-    let mut chain = HashChain::new();
-    let mut i = 0;
-
-    while i < input.len() {
-        // Try LZ77 back-reference.
-        if i >= MIN_MATCH
-            && input.len() - i >= MIN_MATCH
-            && let Some((distance, length)) = chain.find_best_match(input, i)
-        {
-            // Update the hash chain for every position consumed by this match.
-            for p in i..i + length {
-                chain.insert(input, p);
-            }
-
-            let compound = ((distance << 3) | (length - 3)) as u16;
-            output.push(0x80 | ((compound >> 8) as u8));
-            output.push((compound & 0xFF) as u8);
-            i += length;
-            continue;
-        }
-
-        // Update the hash chain for the current position (even if we don't
-        // emit a back-reference).
-        chain.insert(input, i);
-
-        // Try space + character optimization.
-        if input[i] == b' ' && i + 1 < input.len() {
-            let next = input[i + 1];
-            if (0x40..=0x7F).contains(&next) {
-                // Also insert the position we're about to skip.
-                chain.insert(input, i + 1);
-                output.push(next ^ 0x80);
-                i += 2;
-                continue;
-            }
-        }
-
-        // Self-representing byte.
-        if input[i] == 0x00 || (0x09..=0x7F).contains(&input[i]) {
-            output.push(input[i]);
-            i += 1;
-            continue;
-        }
-
-        // Binary literal: collect up to 8 bytes that aren't self-representing.
-        let start = i;
-        let mut count = 0;
-        while i < input.len()
-            && count < 8
-            && !(input[i] == 0x00 || (0x09..=0x7F).contains(&input[i]))
-        {
-            // Also stop if the next sequence could be a space optimization.
-            if input[i] == b' ' && i + 1 < input.len() && (0x40..=0x7F).contains(&input[i + 1]) {
-                break;
-            }
-            // Insert every position we skip past into the hash chain.
-            chain.insert(input, i);
-            count += 1;
-            i += 1;
-        }
-
-        if count > 0 {
-            output.push(count as u8);
-            output.extend_from_slice(&input[start..start + count]);
-        } else {
-            // Single byte that doesn't fit other categories -- emit as 1-byte literal.
-            output.push(1);
-            output.push(input[i]);
-            i += 1;
-        }
-    }
-
-    output
+    PalmDocCompressor::new().compress_record(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -344,16 +301,25 @@ pub fn compress(input: &[u8]) -> Vec<u8> {
 
 /// A reusable PalmDoc compressor that amortises the 16 KB `HashChain`
 /// initialisation cost across multiple records.  For a typical MOBI book
-/// with 50 text records, this eliminates 50 × 16 KB = 800 KB of memset.
+/// with 50 text records, this eliminates 50 x 16 KB = 800 KB of memset.
+///
+/// The `HashChain` is heap-allocated via `Box` to avoid placing 16 KB on
+/// the stack.
 pub struct PalmDocCompressor {
-    chain: HashChain,
+    chain: Box<HashChain>,
+}
+
+impl Default for PalmDocCompressor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PalmDocCompressor {
     /// Creates a new compressor with an initialized hash chain.
     pub fn new() -> Self {
         Self {
-            chain: HashChain::new(),
+            chain: HashChain::new_boxed(),
         }
     }
 
@@ -630,6 +596,50 @@ mod tests {
         assert_eq!(decompressed, original);
         // " W" compresses to 1 byte (0x57 ^ 0x80 = 0xD7), so output should be shorter.
         assert!(compressed.len() < original.len());
+    }
+
+    #[test]
+    fn decompress_overlapping_backref() {
+        // Craft input that exercises the overlapping back-reference path
+        // (distance > 1 but distance < length). We'll build compressed data
+        // that, when decoded, produces a pattern like "abcabcabc..." via a
+        // back-reference with distance=3, length=9.
+        //
+        // First emit "abc" as literal bytes, then a back-reference:
+        //   distance=3, length=9 => encoded length = 9-3 = 6
+        //   compound = (3 << 3) | 6 = 24 | 6 = 30 = 0x001E
+        //   high byte = 0x80 | (0x001E >> 8) = 0x80
+        //   low byte  = 0x1E
+        let input = &[b'a', b'b', b'c', 0x80, 0x1E];
+        let result = decompress(input).unwrap();
+        assert_eq!(result, b"abcabcabcabc"); // 3 original + 9 from backref = 12
+    }
+
+    #[test]
+    fn palmdoc_compressor_reuse() {
+        let mut compressor = PalmDocCompressor::new();
+
+        // Compress multiple records and verify they all round-trip.
+        let phrases: &[&[u8]] = &[
+            b"The quick brown fox jumps over the lazy dog. ",
+            b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ",
+            b"abcabc abcabc abcabc abcabc abcabc",
+        ];
+
+        for phrase in phrases {
+            let compressed = compressor.compress_record(phrase);
+            let decompressed = decompress(&compressed).unwrap();
+            assert_eq!(&decompressed, phrase);
+        }
+
+        // Also test a full-size record.
+        let mut record = Vec::with_capacity(RECORD_SIZE);
+        while record.len() + phrases[0].len() <= RECORD_SIZE {
+            record.extend_from_slice(phrases[0]);
+        }
+        let compressed = compressor.compress_record(&record);
+        let decompressed = decompress(&compressed).unwrap();
+        assert_eq!(decompressed, record);
     }
 
     #[test]

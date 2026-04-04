@@ -360,7 +360,7 @@ fn read_palmdoc(pdb: &PdbFile) -> Result<Book> {
     let compression = read_u16_be(header_rec, 0);
     let num_text_records = read_u16_be(header_rec, 8) as usize;
 
-    let mut text = String::new();
+    let mut raw_bytes = Vec::new();
     let record_limit = num_text_records.min(pdb.record_count() - 1);
 
     for i in 1..=record_limit {
@@ -375,8 +375,12 @@ fn read_palmdoc(pdb: &PdbFile) -> Result<Book> {
                 )));
             },
         };
-        text.push_str(&String::from_utf8_lossy(&decompressed));
+        raw_bytes.extend_from_slice(&decompressed);
     }
+
+    // Single UTF-8 conversion after accumulating all records, avoiding
+    // per-record Utf8Chunks iteration overhead.
+    let text = crate::formats::common::text_utils::bytes_to_string(&raw_bytes);
 
     let mut book = Book::new();
     book.metadata.title = Some(pdb.header.name.clone());
@@ -442,7 +446,7 @@ fn read_ztxt(pdb: &PdbFile) -> Result<Book> {
         text.extend_from_slice(&decompressed);
     }
 
-    let text_str = String::from_utf8_lossy(&text);
+    let text_str = crate::formats::common::text_utils::bytes_to_cow_str(&text);
 
     let mut book = Book::new();
     book.metadata.title = Some(pdb.header.name.clone());

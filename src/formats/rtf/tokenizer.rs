@@ -1,21 +1,29 @@
 //! RTF tokenizer — lexes an RTF byte stream into tokens.
 
+use std::borrow::Cow;
+
 /// A token produced by the RTF lexer.
+///
+/// Lifetime `'a` ties borrowed string data back to the input byte slice,
+/// enabling zero-copy tokenization for the common ASCII/UTF-8 case.
 #[derive(Debug, Clone, PartialEq)]
-pub enum RtfToken {
+pub enum RtfToken<'a> {
     /// `{` — opens a group.
     GroupStart,
     /// `}` — closes a group.
     GroupEnd,
     /// A control word like `\par`, `\b`, `\fs24`.
     /// The parameter is optional (e.g., `\b` has no param, `\fs24` has param 24).
-    ControlWord { name: String, param: Option<i32> },
+    ControlWord {
+        name: Cow<'a, str>,
+        param: Option<i32>,
+    },
     /// A control symbol like `\\`, `\{`, `\}`, `\~`, `\-`, `\_`.
     ControlSymbol(char),
     /// A hex-encoded byte: `\'HH`.
     HexByte(u8),
     /// Plain text content.
-    Text(String),
+    Text(Cow<'a, str>),
     /// A Unicode escape: `\uN` (signed 16-bit value).
     Unicode(i32),
 }
@@ -30,7 +38,13 @@ const MAX_TOKENS: usize = 10_000_000;
 /// the RTF source are ignored (they're not meaningful in RTF).
 ///
 /// Returns an error if the token count exceeds `MAX_TOKENS`.
-pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str> {
+///
+/// This implementation is zero-copy: token string data borrows directly
+/// from the input slice when the bytes are valid UTF-8 (the common case
+/// for RTF, which is predominantly ASCII). Heap allocation only occurs
+/// for the rare lossy-UTF-8 fallback path.
+pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static str> {
+    // Pre-allocate: ~1 token per 8 bytes is a reasonable estimate for RTF.
     let mut tokens = Vec::with_capacity(input.len() / 8);
     let mut pos = 0;
     let len = input.len();
@@ -44,11 +58,11 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
             b'{' => {
                 tokens.push(RtfToken::GroupStart);
                 pos += 1;
-            },
+            }
             b'}' => {
                 tokens.push(RtfToken::GroupEnd);
                 pos += 1;
-            },
+            }
             b'\\' => {
                 pos += 1;
                 if pos >= len {
@@ -66,16 +80,16 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                             }
                             pos += 2;
                         }
-                    },
+                    }
                     // Control symbols: \\ \{ \} \~ \- \_
                     c @ (b'\\' | b'{' | b'}' | b'~' | b'-' | b'_' | b'*') => {
                         tokens.push(RtfToken::ControlSymbol(c as char));
                         pos += 1;
-                    },
+                    }
                     // Newline after backslash = \par equivalent
                     b'\n' | b'\r' => {
                         tokens.push(RtfToken::ControlWord {
-                            name: "par".into(),
+                            name: Cow::Borrowed("par"),
                             param: None,
                         });
                         pos += 1;
@@ -83,7 +97,7 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                         if pos < len && input[pos] == b'\n' {
                             pos += 1;
                         }
-                    },
+                    }
                     // Control word: letters followed by optional numeric parameter.
                     c if c.is_ascii_alphabetic() => {
                         let (name, param, new_pos) = read_control_word(input, pos);
@@ -96,28 +110,34 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                                 let skip_pos = skip_unicode_replacement(input, new_pos);
                                 pos = skip_pos;
                             } else {
-                                tokens.push(RtfToken::ControlWord { name, param });
+                                tokens.push(RtfToken::ControlWord {
+                                    name: Cow::Borrowed(name),
+                                    param,
+                                });
                                 pos = new_pos;
                             }
                         } else {
-                            tokens.push(RtfToken::ControlWord { name, param });
+                            tokens.push(RtfToken::ControlWord {
+                                name: Cow::Borrowed(name),
+                                param,
+                            });
                             pos = new_pos;
                         }
-                    },
+                    }
                     _ => {
                         // Unknown control symbol — treat as symbol.
                         tokens.push(RtfToken::ControlSymbol(input[pos] as char));
                         pos += 1;
-                    },
+                    }
                 }
-            },
+            }
             b'\n' | b'\r' => {
                 // Bare newlines and carriage returns are ignored in RTF.
                 // Skip consecutive newlines/CRs but NOT spaces/tabs (those are text).
                 while pos < len && matches!(input[pos], b'\n' | b'\r') {
                     pos += 1;
                 }
-            },
+            }
             _ => {
                 // Plain text — collect until we hit a control character.
                 let start = pos;
@@ -131,14 +151,15 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
                 pos += struct_end.min(nl_end);
                 let slice = &input[start..pos];
                 if !slice.is_empty() {
-                    // Fast path: if the text is valid UTF-8, avoid the lossy overhead.
+                    // Fast path: if the text is valid UTF-8, borrow directly (zero-copy).
+                    // RTF is predominantly ASCII, so this almost always succeeds.
                     let text = match std::str::from_utf8(slice) {
-                        Ok(s) => s.to_string(),
-                        Err(_) => String::from_utf8_lossy(slice).into_owned(),
+                        Ok(s) => Cow::Borrowed(s),
+                        Err(_) => Cow::Owned(String::from_utf8_lossy(slice).into_owned()),
                     };
                     tokens.push(RtfToken::Text(text));
                 }
-            },
+            }
         }
     }
 
@@ -149,9 +170,9 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken>, &'static str
 /// Returns (name, optional_param, new_position).
 ///
 /// Control word names are always ASCII letters, so `str::from_utf8` is used
-/// instead of the more expensive `from_utf8_lossy`. Numeric parameters are
-/// parsed directly from bytes to avoid an intermediate String allocation.
-fn read_control_word(input: &[u8], mut pos: usize) -> (String, Option<i32>, usize) {
+/// instead of the more expensive `from_utf8_lossy`. The returned `&str` borrows
+/// directly from the input slice — no heap allocation.
+fn read_control_word(input: &[u8], mut pos: usize) -> (&str, Option<i32>, usize) {
     let len = input.len();
     let start = pos;
 
@@ -160,9 +181,7 @@ fn read_control_word(input: &[u8], mut pos: usize) -> (String, Option<i32>, usiz
         pos += 1;
     }
     // Control word names are pure ASCII — from_utf8 always succeeds here.
-    let name = std::str::from_utf8(&input[start..pos])
-        .unwrap_or("")
-        .to_string();
+    let name = std::str::from_utf8(&input[start..pos]).unwrap_or("");
 
     // Read optional numeric parameter (may start with '-') directly from bytes.
     let param = if pos < len && (input[pos].is_ascii_digit() || input[pos] == b'-') {

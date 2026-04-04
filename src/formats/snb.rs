@@ -120,12 +120,17 @@ impl FormatReader for SnbReader {
             }
         }
         if let Some(meta_xml) = files.get("snbf/book.snbf") {
-            parse_book_metadata(&String::from_utf8_lossy(meta_xml), &mut book);
+            parse_book_metadata(
+                &crate::formats::common::text_utils::bytes_to_cow_str(meta_xml),
+                &mut book,
+            );
         }
 
         // Parse TOC.
         let chapters = if let Some(toc_xml) = files.get("snbf/toc.snbf") {
-            parse_toc(&String::from_utf8_lossy(toc_xml))
+            parse_toc(&crate::formats::common::text_utils::bytes_to_cow_str(
+                toc_xml,
+            ))
         } else {
             Vec::new()
         };
@@ -138,7 +143,9 @@ impl FormatReader for SnbReader {
             snbc_files.sort_by(|a, b| a.0.cmp(b.0));
 
             for (idx, (name, content)) in snbc_files.iter().enumerate() {
-                let html = snbc_to_html(&String::from_utf8_lossy(content));
+                let html = snbc_to_html(&crate::formats::common::text_utils::bytes_to_cow_str(
+                    content,
+                ));
                 book.add_chapter(&Chapter {
                     title: Some(name.to_string()),
                     content: html,
@@ -152,7 +159,9 @@ impl FormatReader for SnbReader {
                     .or_else(|| files.get(&format!("snbc/{}", ch.src)));
 
                 let html = match content {
-                    Some(data) => snbc_to_html(&String::from_utf8_lossy(data)),
+                    Some(data) => {
+                        snbc_to_html(&crate::formats::common::text_utils::bytes_to_cow_str(data))
+                    },
                     None => format!("<p>{}</p>", html_escape(&ch.title)),
                 };
 
@@ -460,10 +469,12 @@ fn parse_book_metadata(xml: &str, book: &mut Book) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                current_tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                current_tag =
+                    crate::formats::common::text_utils::bytes_to_string(e.name().as_ref());
             },
             Ok(Event::Text(ref e)) => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                let text =
+                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -498,13 +509,15 @@ fn parse_toc(xml: &str) -> Vec<TocChapter> {
                     in_chapter = true;
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"src" {
-                            current_src = String::from_utf8_lossy(&attr.value).into_owned();
+                            current_src =
+                                crate::formats::common::text_utils::bytes_to_string(&attr.value);
                         }
                     }
                 }
             },
             Ok(Event::Text(ref e)) if in_chapter => {
-                let title = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                let title =
+                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
                 if !title.trim().is_empty() {
                     chapters.push(TocChapter {
                         src: current_src.clone(),
@@ -551,10 +564,12 @@ fn snbc_to_html(xml: &str) -> String {
                 if e.name().as_ref() == b"body" {
                     in_body = true;
                 }
-                current_tag = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                current_tag =
+                    crate::formats::common::text_utils::bytes_to_string(e.name().as_ref());
             },
             Ok(Event::Text(ref e)) if in_body => {
-                let text = String::from_utf8_lossy(&e.clone().into_inner()).into_owned();
+                let text =
+                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -929,7 +944,7 @@ fn read_cstring(data: &[u8], offset: usize) -> String {
         .position(|&b| b == 0)
         .map(|p| offset + p)
         .unwrap_or(data.len());
-    String::from_utf8_lossy(&data[offset..end]).into_owned()
+    crate::formats::common::text_utils::bytes_to_string(&data[offset..end])
 }
 
 fn html_escape(text: &str) -> String {

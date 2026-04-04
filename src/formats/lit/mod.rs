@@ -19,6 +19,7 @@ use quick_xml::events::Event;
 use crate::domain::{Book, Chapter, FormatReader, Metadata};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::itss::{self, DirectoryEntry};
+use crate::formats::common::text_utils::bytes_to_cow_str;
 
 use unbinary::{AtomTable, ManifestPath, consume_sized_utf8_string};
 
@@ -745,10 +746,10 @@ fn parse_opf_metadata(opf_xml: &str, metadata: &mut Metadata) {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                current_tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                current_tag = bytes_to_cow_str(e.name().as_ref()).to_lowercase();
             },
             Ok(Event::Text(e)) => {
-                let text = String::from_utf8_lossy(&e.into_inner()).trim().to_string();
+                let text = bytes_to_cow_str(&e.into_inner()).trim().to_string();
                 if !text.is_empty() {
                     match current_tag.as_str() {
                         "dc:title" if metadata.title.is_none() => {

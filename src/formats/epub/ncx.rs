@@ -128,7 +128,6 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
     Ok(roots)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

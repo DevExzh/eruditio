@@ -54,11 +54,15 @@ impl FormatReader for Fb2Reader {
                             match attr.key.as_ref() {
                                 b"id" => {
                                     current_binary_id =
-                                        Some(String::from_utf8_lossy(&attr.value).into_owned());
+                                        Some(crate::formats::common::text_utils::bytes_to_string(
+                                            &attr.value,
+                                        ));
                                 },
                                 b"content-type" => {
                                     current_binary_ctype =
-                                        Some(String::from_utf8_lossy(&attr.value).into_owned());
+                                        Some(crate::formats::common::text_utils::bytes_to_string(
+                                            &attr.value,
+                                        ));
                                 },
                                 _ => {},
                             }
@@ -71,7 +75,7 @@ impl FormatReader for Fb2Reader {
                     current_text.clear();
                 },
                 Ok(Event::Text(ref e)) => {
-                    current_text = String::from_utf8_lossy(e.as_ref()).into_owned();
+                    current_text = crate::formats::common::text_utils::bytes_to_string(e.as_ref());
                 },
                 Ok(Event::End(ref e)) => {
                     let name_raw = e.name();
@@ -94,12 +98,9 @@ impl FormatReader for Fb2Reader {
                         // Parse metadata
                         if path_buf == "FictionBook/description/title-info/book-title" {
                             book.metadata.title = Some(current_text.clone());
-                        } else if path_buf
-                            == "FictionBook/description/title-info/author/first-name"
-                            || path_buf
-                                == "FictionBook/description/title-info/author/last-name"
-                            || path_buf
-                                == "FictionBook/description/title-info/author/middle-name"
+                        } else if path_buf == "FictionBook/description/title-info/author/first-name"
+                            || path_buf == "FictionBook/description/title-info/author/last-name"
+                            || path_buf == "FictionBook/description/title-info/author/middle-name"
                         {
                             if tag == "first-name" {
                                 book.metadata.authors.push(current_text.clone());
@@ -112,9 +113,7 @@ impl FormatReader for Fb2Reader {
                             }
                         } else if path_buf == "FictionBook/description/title-info/lang" {
                             book.metadata.language = Some(current_text.clone());
-                        } else if path_buf
-                            == "FictionBook/description/title-info/annotation/p"
-                        {
+                        } else if path_buf == "FictionBook/description/title-info/annotation/p" {
                             let desc = book.metadata.description.get_or_insert_with(String::new);
                             if !desc.is_empty() {
                                 desc.push('\n');

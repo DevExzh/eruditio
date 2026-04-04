@@ -27,12 +27,22 @@ pub(crate) fn get_all_attributes(element: &BytesStart<'_>) -> Vec<(String, Strin
         .collect()
 }
 
-/// Converts a byte slice to an owned String using the fast path when valid UTF-8.
+/// Converts a byte slice to an owned String using the fastest available path.
 ///
-/// Most XML content is valid UTF-8. `str::from_utf8` is cheaper than
-/// `from_utf8_lossy` for valid input because it avoids the `Utf8Chunks`
-/// iterator overhead.
+/// Three-tier strategy:
+/// 1. **ASCII fast path** (SIMD-accelerated): if every byte is < 0x80 we can
+///    skip UTF-8 validation entirely and wrap the bytes directly.
+/// 2. **UTF-8 fast path**: `str::from_utf8` validates without allocating; if
+///    valid we just `.to_string()` once.
+/// 3. **Lossy fallback**: only reached for genuinely malformed input, using
+///    `Utf8Chunks` internally.
 pub(crate) fn bytes_to_string(bytes: &[u8]) -> String {
+    // Tier 1: SIMD ASCII check -- skips UTF-8 validation entirely.
+    if super::intrinsics::is_ascii::is_all_ascii(bytes) {
+        // SAFETY: all bytes are < 0x80, which is valid UTF-8.
+        return unsafe { String::from_utf8_unchecked(bytes.to_vec()) };
+    }
+    // Tier 2: full UTF-8 validation (still cheaper than lossy for valid input).
     match std::str::from_utf8(bytes) {
         Ok(s) => s.to_string(),
         Err(_) => String::from_utf8_lossy(bytes).into_owned(),

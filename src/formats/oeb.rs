@@ -38,7 +38,7 @@ impl FormatReader for OebReader {
 
         // Read and parse the OPF.
         let opf_content = read_zip_entry(&mut archive, &opf_name)?;
-        let opf_str = String::from_utf8_lossy(&opf_content);
+        let opf_str = crate::formats::common::text_utils::bytes_to_cow_str(&opf_content);
 
         let mut book = Book::new();
 
@@ -79,7 +79,8 @@ impl FormatReader for OebReader {
             let full_path = format!("{}{}", opf_base, href);
             match read_zip_entry(&mut archive, &full_path) {
                 Ok(content_bytes) => {
-                    let content = String::from_utf8_lossy(&content_bytes).into_owned();
+                    let content =
+                        crate::formats::common::text_utils::bytes_to_string(&content_bytes);
                     // Extract <body> content if present, else use full content.
                     let body = extract_body(&content).unwrap_or_else(|| content.clone());
                     let title = extract_title(&content);

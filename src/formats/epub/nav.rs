@@ -132,13 +132,14 @@ fn is_toc_nav(e: &quick_xml::events::BytesStart<'_>) -> bool {
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
         // Match both "epub:type" and any namespaced ":type" suffix.
-        if (key == b"epub:type" || key.ends_with(b":type")) && attr.value.as_ref().windows(3).any(|w| w == b"toc") {
+        if (key == b"epub:type" || key.ends_with(b":type"))
+            && attr.value.as_ref().windows(3).any(|w| w == b"toc")
+        {
             return true;
         }
     }
     false
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -114,7 +114,7 @@ impl FormatReader for MobiReader {
         // Content: treat the decompressed text as a single HTML chapter.
         // MOBI content is typically HTML with inline formatting.
         let content = if mobi_header.as_ref().is_some_and(|h| h.is_utf8()) {
-            String::from_utf8_lossy(&text).into_owned()
+            crate::formats::common::text_utils::bytes_to_string(&text)
         } else {
             // CP-1252 fallback: decode common characters, lossy for others.
             decode_cp1252(&text)

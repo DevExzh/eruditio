@@ -20,6 +20,14 @@ fn bench_compress(c: &mut Criterion) {
     });
 }
 
+fn bench_compress_reuse(c: &mut Criterion) {
+    let record = make_text_record();
+    let mut compressor = palmdoc::PalmDocCompressor::new();
+    c.bench_function("palmdoc/compress_4k_reuse", |b| {
+        b.iter(|| compressor.compress_record(black_box(&record)))
+    });
+}
+
 fn bench_decompress(c: &mut Criterion) {
     let record = make_text_record();
     let compressed = palmdoc::compress(&record);
@@ -39,10 +47,47 @@ fn bench_compress_random(c: &mut Criterion) {
     });
 }
 
+fn bench_compress_random_reuse(c: &mut Criterion) {
+    let mut data = vec![0u8; 4096];
+    for (i, b) in data.iter_mut().enumerate() {
+        *b = ((i * 7 + 13) % 256) as u8;
+    }
+    let mut compressor = palmdoc::PalmDocCompressor::new();
+    c.bench_function("palmdoc/compress_4k_random_reuse", |b| {
+        b.iter(|| compressor.compress_record(black_box(&data)))
+    });
+}
+
+fn bench_compress_multi_record(c: &mut Criterion) {
+    // Simulate compressing a 200 KB book (50 records).
+    let phrase = b"The quick brown fox jumps over the lazy dog. ";
+    let mut book = Vec::with_capacity(200 * 1024);
+    while book.len() + phrase.len() <= 200 * 1024 {
+        book.extend_from_slice(phrase);
+    }
+    while book.len() < 200 * 1024 {
+        book.push(b'.');
+    }
+
+    c.bench_function("palmdoc/compress_200k_book_reuse", |b| {
+        b.iter(|| {
+            let mut compressor = palmdoc::PalmDocCompressor::new();
+            let mut records = Vec::new();
+            for chunk in black_box(&book).chunks(4096) {
+                records.push(compressor.compress_record(chunk));
+            }
+            records
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_compress,
+    bench_compress_reuse,
     bench_decompress,
-    bench_compress_random
+    bench_compress_random,
+    bench_compress_random_reuse,
+    bench_compress_multi_record,
 );
 criterion_main!(benches);
