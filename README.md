@@ -150,6 +150,31 @@ cargo +nightly test chm
 
 The test suite includes 400+ tests covering unit tests within each format module and integration tests in `tests/`.
 
+## Test Data Management
+
+Curated test data lives in `test-data/` (committed to git):
+
+```
+test-data/
+├── compliance/           # Official specification test suites
+│   ├── w3c-epub33/      # W3C EPUB 3.3 Reading System Tests (178 EPUBs)
+│   └── idpf-epub30/     # IDPF EPUB 3.0 Conformance Tests (21 EPUBs)
+├── real-world/           # Public domain ebooks (Project Gutenberg)
+│   ├── small/           # <1MB — 52 files (EPUBs + HTML)
+│   ├── medium/          # 1-10MB — 10 files (MOBI, CBZ, CBR, CB7, CBC, EPUB)
+│   └── large/           # >10MB — gitignored, download on demand
+├── adversarial/          # Security/DoS test cases (handcrafted)
+└── generated/            # Ephemeral golden files (gitignored)
+```
+
+Large test assets (`assets/`) and third-party reference code (`3rdparty/`) are gitignored. These are used for local development only and are not required for the standard test suite.
+
+### Contributing Test Data
+
+- All committed test files must have a clear license (public domain or permissive).
+- Binary test files must be listed in `test-data/real-world/MANIFEST.md` with SHA256 checksums.
+- Files >10MB should not be committed directly — add them to `test-data/real-world/large/` (gitignored).
+
 ## License
 
 This project is licensed under the MIT License.

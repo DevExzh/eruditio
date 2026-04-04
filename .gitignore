@@ -1,3 +1,35 @@
+# Build artifacts
 /target
+fuzz/target/
+
+# Test data (local-only, not committed)
 assets/
+
+# Third-party dependencies (local clones)
 3rdparty/
+
+# Profiling artifacts
+perf.data*
+flamegraph.svg
+massif.out.*
+
+# Python
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Backup bundles
+*.bundle
+
+# Large test files (>10MB) - download on demand, not committed
+test-data/real-world/large/*
+!test-data/real-world/large/.gitkeep
+
+# Generated test output
+test-data/generated/*
+!test-data/generated/.gitkeep
+!test-data/generated/.gitignore
