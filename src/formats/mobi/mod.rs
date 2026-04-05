@@ -12,7 +12,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::compression::huffcdic::HuffCdicReader;
 use crate::formats::common::compression::palmdoc;
-use crate::formats::common::palm_db::PdbFile;
+use crate::formats::common::palm_db::{read_u32_be, PdbFile};
 use crate::formats::common::text_utils;
 use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
@@ -40,6 +40,190 @@ const NON_IMAGE_SIGS: &[&[u8]] = &[
     b"\xe9\x8e\r\n",
     b"BOUNDARY",
 ];
+
+/// Parsed FDST (Flow Descriptor Table) entry.
+#[derive(Debug, Clone)]
+struct FdstEntry {
+    start: usize,
+    end: usize,
+}
+
+/// Parses the FDST record to get flow byte ranges within the decompressed text.
+fn parse_fdst(pdb: &PdbFile, fdst_record_index: usize) -> Option<Vec<FdstEntry>> {
+    let data = pdb.record_data(fdst_record_index).ok()?;
+    if data.len() < 12 || &data[..4] != b"FDST" {
+        return None;
+    }
+    let num_flows = read_u32_be(data, 8) as usize;
+    let mut entries = Vec::with_capacity(num_flows);
+    for i in 0..num_flows {
+        let pos = 12 + i * 8;
+        if pos + 8 > data.len() {
+            break;
+        }
+        let start = read_u32_be(data, pos) as usize;
+        let end = read_u32_be(data, pos + 4) as usize;
+        entries.push(FdstEntry { start, end });
+    }
+    Some(entries)
+}
+
+/// Finds the FDST record index by scanning PDB records for the "FDST" magic signature.
+fn find_fdst_record(pdb: &PdbFile, first_image: usize) -> Option<usize> {
+    // Scan records after the image records for the FDST signature.
+    // Start from the first image record and look forward.
+    for i in first_image..pdb.record_count() {
+        if let Ok(data) = pdb.record_data(i) {
+            if data.len() >= 4 && &data[..4] == b"FDST" {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Decodes a Kindle base-32 encoded number.
+/// Characters: 0-9 -> 0-9, A-V (case-insensitive) -> 10-31.
+fn decode_kindle_base32(s: &str) -> Option<usize> {
+    let mut result: usize = 0;
+    for ch in s.chars() {
+        let digit = match ch {
+            '0'..='9' => ch as usize - '0' as usize,
+            'A'..='V' => ch as usize - 'A' as usize + 10,
+            'a'..='v' => ch as usize - 'a' as usize + 10,
+            _ => return None,
+        };
+        result = result.checked_mul(32)?.checked_add(digit)?;
+    }
+    Some(result)
+}
+
+/// Resolves kindle:embed and kindle:flow references in HTML content.
+/// Returns the HTML with references replaced by actual resource paths.
+///
+/// - `image_paths`: indexed by 0-based image record number
+/// - `flow_paths`: indexed by flow number (flow 0 = None since it's the main content)
+fn resolve_kindle_references(
+    html: &str,
+    image_paths: &[String],
+    flow_paths: &[Option<String>],
+) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut remaining = html;
+
+    while let Some(pos) = remaining.find("kindle:") {
+        result.push_str(&remaining[..pos]);
+        let after_kindle = &remaining[pos + 7..]; // skip "kindle:"
+
+        if let Some(replacement) = try_resolve_embed(after_kindle, image_paths) {
+            result.push_str(&replacement.0);
+            remaining = &remaining[pos + 7 + replacement.1..];
+        } else if let Some(replacement) = try_resolve_flow(after_kindle, flow_paths) {
+            result.push_str(&replacement.0);
+            remaining = &remaining[pos + 7 + replacement.1..];
+        } else {
+            // Unresolvable reference; keep the "kindle:" prefix and advance past it.
+            result.push_str("kindle:");
+            remaining = after_kindle;
+        }
+    }
+
+    result.push_str(remaining);
+    result
+}
+
+/// Tries to resolve a kindle:embed:XXXX reference.
+/// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
+///
+/// kindle:embed indices are 1-based: kindle:embed:0001 refers to the first image.
+fn try_resolve_embed(after_kindle: &str, image_paths: &[String]) -> Option<(String, usize)> {
+    let rest = after_kindle.strip_prefix("embed:")?;
+    let consumed_prefix = 6; // "embed:"
+
+    // Extract the base-32 code (alphanumeric characters).
+    let code_end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    if code_end == 0 {
+        return None;
+    }
+    let code = &rest[..code_end];
+    let raw_index = decode_kindle_base32(code)?;
+
+    // kindle:embed indices are 1-based.
+    let index = raw_index.checked_sub(1)?;
+
+    // Skip optional ?mime=... query string.
+    let mut total_consumed = consumed_prefix + code_end;
+    let after_code = &rest[code_end..];
+    if let Some(query_rest) = after_code.strip_prefix('?') {
+        // Consume until we hit a quote, >, or whitespace (typical attribute terminators).
+        let query_end = query_rest
+            .find(|c: char| c == '"' || c == '\'' || c == '>' || c.is_ascii_whitespace())
+            .unwrap_or(query_rest.len());
+        total_consumed += 1 + query_end; // +1 for the '?'
+    }
+
+    // Look up the image path.
+    let path = image_paths.get(index)?;
+    Some((path.clone(), total_consumed))
+}
+
+/// Tries to resolve a kindle:flow:NNNN reference.
+/// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
+fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option<(String, usize)> {
+    let rest = after_kindle.strip_prefix("flow:")?;
+    let consumed_prefix = 5; // "flow:"
+
+    // Extract the decimal index.
+    let code_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    if code_end == 0 {
+        return None;
+    }
+    let code = &rest[..code_end];
+    let index: usize = code.parse().ok()?;
+
+    // Skip optional ?mime=... query string.
+    let mut total_consumed = consumed_prefix + code_end;
+    let after_code = &rest[code_end..];
+    if let Some(query_rest) = after_code.strip_prefix('?') {
+        let query_end = query_rest
+            .find(|c: char| c == '"' || c == '\'' || c == '>' || c.is_ascii_whitespace())
+            .unwrap_or(query_rest.len());
+        total_consumed += 1 + query_end;
+    }
+
+    // Look up the flow path.
+    let path = flow_paths.get(index)?.as_ref()?;
+    Some((path.clone(), total_consumed))
+}
+
+/// Detects the content type and file extension of a KF8 flow resource.
+fn detect_flow_type(data: &[u8]) -> (&'static str, &'static str) {
+    let trimmed = trim_start_whitespace(data);
+    if trimmed.starts_with(b"<svg") || trimmed.starts_with(b"<SVG") || trimmed.starts_with(b"<?xml") {
+        // Could be SVG or XML; check for SVG indicators.
+        if data.windows(4).any(|w| w == b"<svg" || w == b"<SVG") {
+            ("svg", "image/svg+xml")
+        } else {
+            ("svg", "image/svg+xml") // default XML to SVG for KF8 flows
+        }
+    } else {
+        // Assume CSS for everything else.
+        ("css", "text/css")
+    }
+}
+
+/// Trims leading ASCII whitespace bytes.
+fn trim_start_whitespace(data: &[u8]) -> &[u8] {
+    let start = data
+        .iter()
+        .position(|&b| !b.is_ascii_whitespace())
+        .unwrap_or(data.len());
+    &data[start..]
+}
 
 /// MOBI format reader.
 #[derive(Default)]
@@ -112,13 +296,69 @@ impl FormatReader for MobiReader {
         // Metadata from MOBI header + EXTH.
         populate_metadata(&mut book, mobi_header.as_ref(), exth.as_ref());
 
-        // Content: treat the decompressed text as a single HTML chapter.
-        // MOBI content is typically HTML with inline formatting.
-        let content = if mobi_header.as_ref().is_some_and(|h| h.is_utf8()) {
-            crate::formats::common::text_utils::bytes_to_string(&text)
+        // Extract images and collect their paths for reference resolution.
+        let image_paths = extract_images_with_paths(&pdb, &mut book, mobi_header.as_ref());
+
+        // For KF8 files, split flows and resolve kindle: references.
+        let is_kf8 = mobi_header.as_ref().is_some_and(|h| h.is_kf8());
+
+        let content = if is_kf8 {
+            // Try to find and parse the FDST record for flow boundaries.
+            let first_image = mobi_header
+                .as_ref()
+                .map(|h| h.first_image_index as usize)
+                .filter(|&idx| idx != NULL_INDEX as usize)
+                .unwrap_or(pdb.record_count());
+
+            let fdst_entries = find_fdst_record(&pdb, first_image)
+                .and_then(|idx| parse_fdst(&pdb, idx));
+
+            let (main_html_bytes, flow_paths) = if let Some(ref entries) = fdst_entries {
+                // Extract flow 0 as main HTML, flows 1+ as resources.
+                let main_bytes = if !entries.is_empty() && entries[0].end <= text.len() {
+                    &text[entries[0].start..entries[0].end]
+                } else {
+                    &text[..]
+                };
+
+                let mut fpaths: Vec<Option<String>> = Vec::with_capacity(entries.len());
+                fpaths.push(None); // Flow 0 is the main content.
+
+                for (i, entry) in entries.iter().enumerate().skip(1) {
+                    if entry.start <= text.len() && entry.end <= text.len() && entry.start < entry.end {
+                        let flow_data = &text[entry.start..entry.end];
+                        let (ext, media_type) = detect_flow_type(flow_data);
+                        let flow_id = format!("flow_{}", i);
+                        let flow_href = format!("flows/flow_{}.{}", i, ext);
+                        book.add_resource(&flow_id, &flow_href, flow_data.to_vec(), media_type);
+                        fpaths.push(Some(flow_href));
+                    } else {
+                        fpaths.push(None);
+                    }
+                }
+
+                (main_bytes, fpaths)
+            } else {
+                // No FDST: use all text as HTML content.
+                (text.as_slice(), Vec::new())
+            };
+
+            // Decode main HTML bytes to string.
+            let html_string = if mobi_header.as_ref().is_some_and(|h| h.is_utf8()) {
+                crate::formats::common::text_utils::bytes_to_string(main_html_bytes)
+            } else {
+                decode_cp1252(main_html_bytes)
+            };
+
+            // Resolve kindle: references.
+            resolve_kindle_references(&html_string, &image_paths, &flow_paths)
         } else {
-            // CP-1252 fallback: decode common characters, lossy for others.
-            decode_cp1252(&text)
+            // Non-KF8: original behavior.
+            if mobi_header.as_ref().is_some_and(|h| h.is_utf8()) {
+                crate::formats::common::text_utils::bytes_to_string(&text)
+            } else {
+                decode_cp1252(&text)
+            }
         };
 
         // Split into chapters by filepos anchors or treat as single chapter.
@@ -130,9 +370,6 @@ impl FormatReader for MobiReader {
                 id: Some(format!("mobi_ch_{}", i)),
             });
         }
-
-        // Extract images.
-        extract_images(&pdb, &mut book, mobi_header.as_ref());
 
         Ok(book)
     }
@@ -349,14 +586,21 @@ fn populate_metadata(book: &mut Book, mobi: Option<&MobiHeader>, exth: Option<&E
 }
 
 /// Extracts image records from the PDB and adds them to the Book.
-fn extract_images(pdb: &PdbFile, book: &mut Book, mobi: Option<&MobiHeader>) {
+/// Returns a vector of image href paths indexed by image record number (0-based).
+fn extract_images_with_paths(
+    pdb: &PdbFile,
+    book: &mut Book,
+    mobi: Option<&MobiHeader>,
+) -> Vec<String> {
     let first_image = mobi
         .map(|h| h.first_image_index)
         .filter(|&idx| idx != NULL_INDEX)
         .unwrap_or(u32::MAX) as usize;
 
+    let mut image_paths = Vec::new();
+
     if first_image >= pdb.record_count() {
-        return;
+        return image_paths;
     }
 
     let mut image_index = 0u32;
@@ -378,12 +622,15 @@ fn extract_images(pdb: &PdbFile, book: &mut Book, mobi: Option<&MobiHeader>) {
         let id = format!("image_{}", image_index);
         let href = format!("images/{}.{}", image_index, ext);
         book.add_resource(&id, &href, data.to_vec(), media_type);
+        image_paths.push(href);
 
         image_index = match image_index.checked_add(1) {
             Some(v) if v <= MAX_IMAGES => v,
             _ => break,
         };
     }
+
+    image_paths
 }
 
 /// Checks if a record is a known non-image sentinel.
@@ -789,5 +1036,249 @@ mod tests {
         let (ext, mime) = detect_image_type(data);
         assert_eq!(ext, "bmp");
         assert_eq!(mime, "image/bmp");
+    }
+
+    // --- kindle:embed base-32 decoder tests ---
+
+    #[test]
+    fn decode_kindle_base32_zero() {
+        assert_eq!(decode_kindle_base32("0000"), Some(0));
+    }
+
+    #[test]
+    fn decode_kindle_base32_one() {
+        assert_eq!(decode_kindle_base32("0001"), Some(1));
+    }
+
+    #[test]
+    fn decode_kindle_base32_004i() {
+        // 0*32^3 + 0*32^2 + 4*32 + 18 = 128 + 18 = 146
+        assert_eq!(decode_kindle_base32("004I"), Some(146));
+    }
+
+    #[test]
+    fn decode_kindle_base32_004t() {
+        // 0*32^3 + 0*32^2 + 4*32 + 29 = 128 + 29 = 157
+        assert_eq!(decode_kindle_base32("004T"), Some(157));
+    }
+
+    #[test]
+    fn decode_kindle_base32_000f() {
+        // F = 15
+        assert_eq!(decode_kindle_base32("000F"), Some(15));
+    }
+
+    #[test]
+    fn decode_kindle_base32_001t() {
+        // 0*32^3 + 0*32^2 + 1*32 + 29 = 61
+        assert_eq!(decode_kindle_base32("001T"), Some(61));
+    }
+
+    #[test]
+    fn decode_kindle_base32_case_insensitive() {
+        assert_eq!(decode_kindle_base32("004i"), Some(146));
+        assert_eq!(decode_kindle_base32("004I"), Some(146));
+    }
+
+    #[test]
+    fn decode_kindle_base32_invalid_char() {
+        // 'W' is out of the 0-9,A-V range
+        assert_eq!(decode_kindle_base32("00W0"), None);
+    }
+
+    #[test]
+    fn decode_kindle_base32_empty() {
+        assert_eq!(decode_kindle_base32(""), Some(0));
+    }
+
+    // --- FDST parsing tests ---
+
+    #[test]
+    fn parse_fdst_synthetic() {
+        // Build a synthetic FDST record.
+        let mut fdst_data = vec![0u8; 12 + 3 * 8]; // header + 3 flows
+        fdst_data[..4].copy_from_slice(b"FDST");
+        write_u32_be(&mut fdst_data, 8, 3); // 3 flows
+        // Flow 0: 0-1000
+        write_u32_be(&mut fdst_data, 12, 0);
+        write_u32_be(&mut fdst_data, 16, 1000);
+        // Flow 1: 1000-1500
+        write_u32_be(&mut fdst_data, 20, 1000);
+        write_u32_be(&mut fdst_data, 24, 1500);
+        // Flow 2: 1500-2000
+        write_u32_be(&mut fdst_data, 28, 1500);
+        write_u32_be(&mut fdst_data, 32, 2000);
+
+        // Build a PDB with just this one record.
+        let pdb_data = crate::formats::common::palm_db::build_pdb_header(
+            "test", b"BOOK", b"MOBI", 1, &[88], // offset after header
+        );
+        let mut full_data = pdb_data;
+        full_data.extend_from_slice(&fdst_data);
+
+        let pdb = PdbFile::parse(full_data).unwrap();
+        let entries = parse_fdst(&pdb, 0).unwrap();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].start, 0);
+        assert_eq!(entries[0].end, 1000);
+        assert_eq!(entries[1].start, 1000);
+        assert_eq!(entries[1].end, 1500);
+        assert_eq!(entries[2].start, 1500);
+        assert_eq!(entries[2].end, 2000);
+    }
+
+    #[test]
+    fn parse_fdst_invalid_magic() {
+        let mut data = vec![0u8; 20];
+        data[..4].copy_from_slice(b"NOPE");
+        write_u32_be(&mut data, 8, 1);
+        write_u32_be(&mut data, 12, 0);
+        write_u32_be(&mut data, 16, 100);
+
+        let pdb_data = crate::formats::common::palm_db::build_pdb_header(
+            "test", b"BOOK", b"MOBI", 1, &[88],
+        );
+        let mut full_data = pdb_data;
+        full_data.extend_from_slice(&data);
+
+        let pdb = PdbFile::parse(full_data).unwrap();
+        assert!(parse_fdst(&pdb, 0).is_none());
+    }
+
+    // --- kindle: reference resolution tests ---
+
+    #[test]
+    fn resolve_kindle_embed_basic() {
+        let image_paths = vec![
+            "images/0.jpg".to_string(),
+            "images/1.png".to_string(),
+        ];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // kindle:embed:0001 is 1-based, so index 1 maps to image_paths[0]
+        let html = r#"<img src="kindle:embed:0001?mime=image/jpeg">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, r#"<img src="images/0.jpg">"#);
+    }
+
+    #[test]
+    fn resolve_kindle_embed_second_image() {
+        let image_paths = vec![
+            "images/0.jpg".to_string(),
+            "images/1.png".to_string(),
+        ];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // kindle:embed:0002 (1-based) maps to image_paths[1]
+        let html = r#"<img src="kindle:embed:0002?mime=image/png">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, r#"<img src="images/1.png">"#);
+    }
+
+    #[test]
+    fn resolve_kindle_embed_no_query() {
+        let image_paths = vec!["images/0.jpg".to_string()];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // kindle:embed:0001 (1-based) → image_paths[0]
+        let html = r#"<img src="kindle:embed:0001">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, r#"<img src="images/0.jpg">"#);
+    }
+
+    #[test]
+    fn resolve_kindle_embed_zero_left_as_is() {
+        // kindle:embed:0000 decodes to 0, which is invalid for 1-based indexing
+        let image_paths = vec!["images/0.jpg".to_string()];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        let html = r#"<img src="kindle:embed:0000?mime=image/jpeg">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, html);
+    }
+
+    #[test]
+    fn resolve_kindle_flow_basic() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths = vec![
+            None, // flow 0 = main content
+            Some("flows/flow_1.css".to_string()),
+        ];
+
+        let html = r#"<link href="kindle:flow:0001?mime=text/css">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, r#"<link href="flows/flow_1.css">"#);
+    }
+
+    #[test]
+    fn resolve_kindle_mixed_references() {
+        let image_paths = vec![
+            "images/0.jpg".to_string(),
+            "images/1.png".to_string(),
+        ];
+        let flow_paths = vec![
+            None,
+            Some("flows/flow_1.css".to_string()),
+            Some("flows/flow_2.css".to_string()),
+        ];
+
+        // kindle:embed:0002 (1-based) → image_paths[1] = images/1.png
+        let html = concat!(
+            r#"<link href="kindle:flow:0001?mime=text/css"/>"#,
+            r#"<img src="kindle:embed:0002?mime=image/png"/>"#,
+            r#"<link href="kindle:flow:0002?mime=text/css"/>"#,
+        );
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(
+            result,
+            concat!(
+                r#"<link href="flows/flow_1.css"/>"#,
+                r#"<img src="images/1.png"/>"#,
+                r#"<link href="flows/flow_2.css"/>"#,
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_kindle_out_of_range_left_as_is() {
+        let image_paths = vec!["images/0.jpg".to_string()];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // index 9999 is way out of range
+        let html = r#"<img src="kindle:embed:009N?mime=image/jpeg">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        // Should be left unchanged since index is out of range
+        assert_eq!(result, html);
+    }
+
+    #[test]
+    fn resolve_kindle_no_references() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        let html = "<p>No kindle references here</p>";
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, html);
+    }
+
+    // --- Flow type detection tests ---
+
+    #[test]
+    fn detect_flow_type_css() {
+        let data = b".class { color: red; }";
+        assert_eq!(detect_flow_type(data), ("css", "text/css"));
+    }
+
+    #[test]
+    fn detect_flow_type_svg() {
+        let data = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>";
+        assert_eq!(detect_flow_type(data), ("svg", "image/svg+xml"));
+    }
+
+    #[test]
+    fn detect_flow_type_svg_with_whitespace() {
+        let data = b"  \n<svg><circle/></svg>";
+        assert_eq!(detect_flow_type(data), ("svg", "image/svg+xml"));
     }
 }
