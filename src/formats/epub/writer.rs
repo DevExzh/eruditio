@@ -111,8 +111,18 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
         xml.push_str(&escape_html(title));
         xml.push_str("</dc:title>\n");
     }
-    for author in &m.authors {
-        xml.push_str("    <dc:creator>");
+    for (i, author) in m.authors.iter().enumerate() {
+        if i == 0 {
+            if let Some(ref sort) = m.author_sort {
+                xml.push_str("    <dc:creator opf:file-as=\"");
+                xml.push_str(&escape_html(sort));
+                xml.push_str("\">");
+            } else {
+                xml.push_str("    <dc:creator>");
+            }
+        } else {
+            xml.push_str("    <dc:creator>");
+        }
         xml.push_str(&escape_html(author));
         xml.push_str("</dc:creator>\n");
     }
@@ -587,6 +597,74 @@ mod tests {
             (play_order as usize) <= MAX_NCX_DEPTH + 1,
             "play_order {} exceeds depth limit",
             play_order
+        );
+    }
+
+    #[test]
+    fn generates_opf_with_author_sort_file_as() {
+        let mut book = sample_book();
+        book.metadata.author_sort = Some("Author, Test".into());
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains(r#"<dc:creator opf:file-as="Author, Test">Test Author</dc:creator>"#),
+            "First author should have opf:file-as attribute. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn generates_opf_without_file_as_when_author_sort_absent() {
+        let book = sample_book();
+        assert!(book.metadata.author_sort.is_none());
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains("<dc:creator>Test Author</dc:creator>"),
+            "Creator should have no opf:file-as when author_sort is None. Got:\n{}",
+            opf
+        );
+        assert!(
+            !opf.contains("opf:file-as"),
+            "opf:file-as should not appear when author_sort is None. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn generates_opf_file_as_only_on_first_author() {
+        let mut book = sample_book();
+        book.metadata.authors.push("Second Author".into());
+        book.metadata.author_sort = Some("Author, Test".into());
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains(r#"<dc:creator opf:file-as="Author, Test">Test Author</dc:creator>"#),
+            "First author should have opf:file-as. Got:\n{}",
+            opf
+        );
+        assert!(
+            opf.contains("<dc:creator>Second Author</dc:creator>"),
+            "Second author should not have opf:file-as. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn author_sort_round_trips_through_opf() {
+        use crate::formats::epub::opf::parse_opf_xml;
+
+        let mut book = sample_book();
+        book.metadata.author_sort = Some("Author, Test".into());
+
+        // Generate OPF XML from the book
+        let opf_xml = generate_opf(&book);
+
+        // Parse the generated OPF XML back
+        let data = parse_opf_xml(&opf_xml).unwrap();
+
+        assert_eq!(data.metadata.authors, vec!["Test Author"]);
+        assert_eq!(
+            data.metadata.author_sort.as_deref(),
+            Some("Author, Test"),
+            "author_sort should survive OPF round-trip"
         );
     }
 }

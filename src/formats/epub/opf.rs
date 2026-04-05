@@ -32,7 +32,7 @@ pub fn parse_opf<R: Read + Seek>(archive: &mut ZipArchive<R>, opf_path: &str) ->
 }
 
 /// Parses OPF XML content into structured data.
-fn parse_opf_xml(xml: &str) -> Result<OpfData> {
+pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
     let mut reader = XmlReader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -50,6 +50,8 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
     let mut current_text = String::new();
     // Track cover meta from EPUB2 <meta name="cover" content="..."/>
     let mut cover_meta_id: Option<String> = None;
+    // Track the opf:file-as attribute on <dc:creator>
+    let mut current_file_as: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -76,6 +78,11 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                     _ if section == Section::Metadata => {
                         current_dc_tag = tag.to_string();
                         current_text.clear();
+                        // Track the opf:file-as attribute on <dc:creator>
+                        if tag == "creator" {
+                            current_file_as = xml_utils::get_attribute(e, "opf:file-as")
+                                .or_else(|| xml_utils::get_attribute(e, "file-as"));
+                        }
                     },
                     _ => {},
                 }
@@ -111,6 +118,12 @@ fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                     "metadata" | "manifest" | "spine" | "guide" => section = Section::None,
                     _ if section == Section::Metadata && !current_dc_tag.is_empty() => {
                         apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
+                        // Capture opf:file-as from the first creator
+                        if current_dc_tag == "creator" && data.metadata.author_sort.is_none() {
+                            if let Some(ref fa) = current_file_as {
+                                data.metadata.author_sort = Some(fa.clone());
+                            }
+                        }
                         current_dc_tag.clear();
                         current_text.clear();
                     },
@@ -495,5 +508,78 @@ mod tests {
         let data = parse_opf_xml(sample_opf()).unwrap();
         let linear: Vec<_> = data.spine.linear_items().collect();
         assert_eq!(linear.len(), 2);
+    }
+
+    #[test]
+    fn parses_opf_file_as_attribute() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:creator opf:file-as="Author, Jane">Jane Author</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(data.metadata.authors, vec!["Jane Author"]);
+        assert_eq!(
+            data.metadata.author_sort.as_deref(),
+            Some("Author, Jane"),
+            "author_sort should be parsed from opf:file-as"
+        );
+    }
+
+    #[test]
+    fn parses_bare_file_as_attribute() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test</dc:title>
+    <dc:creator file-as="Doe, John">John Doe</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(data.metadata.authors, vec!["John Doe"]);
+        assert_eq!(
+            data.metadata.author_sort.as_deref(),
+            Some("Doe, John"),
+            "author_sort should be parsed from bare file-as attribute"
+        );
+    }
+
+    #[test]
+    fn no_author_sort_when_file_as_absent() {
+        let data = parse_opf_xml(sample_opf()).unwrap();
+        assert!(
+            data.metadata.author_sort.is_none(),
+            "author_sort should be None when no file-as attribute exists"
+        );
+    }
+
+    #[test]
+    fn file_as_only_from_first_creator() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:creator opf:file-as="Author, First">First Author</dc:creator>
+    <dc:creator opf:file-as="Author, Second">Second Author</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(data.metadata.authors.len(), 2);
+        assert_eq!(
+            data.metadata.author_sort.as_deref(),
+            Some("Author, First"),
+            "author_sort should come from the first creator only"
+        );
     }
 }
