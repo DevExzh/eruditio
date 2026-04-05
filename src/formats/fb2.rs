@@ -247,6 +247,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     // When we encounter </p> or end-of-input, we flush the paragraph.
     let mut inline_buf = String::new();
     let mut in_p = false;
+    let mut in_anchor = false;
 
     while pos < len {
         if bytes[pos] == b'<' {
@@ -258,16 +259,28 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
 
                 if tag_lower.starts_with("<p") && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ') {
                     // Opening <p> tag – start accumulating inline content
+                    if in_anchor {
+                        inline_buf.push_str("</a>");
+                        in_anchor = false;
+                    }
                     flush_paragraph(&mut out, &mut inline_buf);
                     in_p = true;
                     pos += gt + 1;
                 } else if tag_lower.starts_with("</p") {
                     // Closing </p> tag – flush current paragraph
+                    if in_anchor {
+                        inline_buf.push_str("</a>");
+                        in_anchor = false;
+                    }
                     flush_paragraph(&mut out, &mut inline_buf);
                     in_p = false;
                     pos += gt + 1;
                 } else if tag_lower.starts_with("<br") {
                     // <br> or <br/> – emit empty-line in FB2
+                    if in_anchor {
+                        inline_buf.push_str("</a>");
+                        in_anchor = false;
+                    }
                     flush_paragraph(&mut out, &mut inline_buf);
                     out.push_str("      <empty-line/>\n");
                     pos += gt + 1;
@@ -277,14 +290,15 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         inline_buf.push_str("<a l:href=\"");
                         inline_buf.push_str(&escape_html(&href));
                         inline_buf.push_str("\">");
+                        in_anchor = true;
                     }
                     // If no href, just skip the tag (keep the text content)
                     pos += gt + 1;
                 } else if tag_lower.starts_with("</a") {
                     // Closing </a> tag
-                    // Only close if we opened one (check if there's an open <a> in inline_buf)
-                    if inline_buf.contains("<a l:href=") {
+                    if in_anchor {
                         inline_buf.push_str("</a>");
+                        in_anchor = false;
                     }
                     pos += gt + 1;
                 } else {
@@ -309,6 +323,10 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
                         inline_buf.push_str(&escape_html(trimmed));
+                        if in_anchor {
+                            inline_buf.push_str("</a>");
+                            in_anchor = false;
+                        }
                         flush_paragraph(&mut out, &mut inline_buf);
                     }
                 }
@@ -318,6 +336,10 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     }
 
     // Flush any trailing inline content
+    if in_anchor {
+        inline_buf.push_str("</a>");
+        // in_anchor = false; // not needed, end of function
+    }
     flush_paragraph(&mut out, &mut inline_buf);
     out
 }
@@ -888,6 +910,41 @@ mod tests {
         assert!(
             xml.contains(" for more."),
             "text after link should be preserved"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_closes_anchor_at_paragraph_boundary() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Anchor Close Test".into());
+        // Simulate a link that spans across a paragraph boundary:
+        // the </a> comes after the </p>, so the writer must auto-close it.
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<p><a href="https://example.org">link text</p><p>next paragraph</p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // The anchor must be closed before the paragraph closes
+        assert!(
+            xml.contains(r#"<a l:href="https://example.org">link text</a></p>"#),
+            "anchor tag should be closed before </p>, got:\n{}",
+            xml
+        );
+        // The output must not contain an unclosed <a> tag
+        assert!(
+            !xml.contains(r#"<a l:href="https://example.org">link text</p>"#),
+            "must not have unclosed <a> tag, got:\n{}",
+            xml
+        );
+        // Validate the XML is well-formed
+        assert!(
+            xml.contains("next paragraph"),
+            "subsequent paragraph content should be preserved"
         );
     }
 
