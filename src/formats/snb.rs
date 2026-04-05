@@ -759,7 +759,7 @@ impl FormatWriter for SnbWriter {
         let mut plain_pos = 0i32;
         for block in &plain_blocks {
             block_offsets.push(plain_pos);
-            plain_pos += block.len() as i32;
+            plain_pos += snb_i32(block.len())?;
         }
 
         // Build file records for tail.
@@ -773,7 +773,7 @@ impl FormatWriter for SnbWriter {
                 } else {
                     0
                 };
-                file_records.push((0, offset as i32)); // block_index=0 for binary
+                file_records.push((0, snb_i32(offset)?)); // block_index=0 for binary
                 bin_idx += 1;
             } else {
                 let offset = if plain_idx < plain_file_offsets.len() {
@@ -785,7 +785,7 @@ impl FormatWriter for SnbWriter {
                 let file_start = offset;
                 let block_idx = file_start / BLOCK_SIZE;
                 let content_offset = file_start % BLOCK_SIZE;
-                file_records.push((block_idx as i32, content_offset as i32));
+                file_records.push((snb_i32(block_idx)?, snb_i32(content_offset)?));
                 plain_idx += 1;
             }
         }
@@ -823,11 +823,11 @@ impl FormatWriter for SnbWriter {
         file[0..8].copy_from_slice(SNB_MAGIC);
         file[0x08..0x0C].copy_from_slice(&0x00008000i32.to_be_bytes());
         file[0x0C..0x10].copy_from_slice(&0x00A3A3A3i32.to_be_bytes());
-        file[0x14..0x18].copy_from_slice(&(file_count as i32).to_be_bytes());
-        file[0x18..0x1C].copy_from_slice(&(vfat_uncompressed_size as i32).to_be_bytes());
-        file[0x1C..0x20].copy_from_slice(&(vfat_compressed.len() as i32).to_be_bytes());
-        file[0x20..0x24].copy_from_slice(&(bin_stream.len() as i32).to_be_bytes());
-        file[0x24..0x28].copy_from_slice(&(plain_concat.len() as i32).to_be_bytes());
+        file[0x14..0x18].copy_from_slice(&snb_i32(file_count)?.to_be_bytes());
+        file[0x18..0x1C].copy_from_slice(&snb_i32(vfat_uncompressed_size)?.to_be_bytes());
+        file[0x1C..0x20].copy_from_slice(&snb_i32(vfat_compressed.len())?.to_be_bytes());
+        file[0x20..0x24].copy_from_slice(&snb_i32(bin_stream.len())?.to_be_bytes());
+        file[0x24..0x28].copy_from_slice(&snb_i32(plain_concat.len())?.to_be_bytes());
 
         // VFAT.
         file[vfat_start..vfat_start + vfat_compressed.len()].copy_from_slice(&vfat_compressed);
@@ -849,14 +849,19 @@ impl FormatWriter for SnbWriter {
 
         // Footer.
         file[footer_start..footer_start + 4]
-            .copy_from_slice(&(tail_compressed.len() as i32).to_be_bytes());
+            .copy_from_slice(&snb_i32(tail_compressed.len())?.to_be_bytes());
         file[footer_start + 4..footer_start + 8]
-            .copy_from_slice(&(tail_offset as i32).to_be_bytes());
+            .copy_from_slice(&snb_i32(tail_offset)?.to_be_bytes());
         file[footer_start + 8..footer_start + 16].copy_from_slice(SNB_MAGIC);
 
         output.write_all(&file)?;
         Ok(())
     }
+}
+
+/// Converts a `usize` to `i32`, returning an error if the value overflows.
+fn snb_i32(value: usize) -> Result<i32> {
+    i32::try_from(value).map_err(|_| EruditioError::Format("SNB value too large for i32".into()))
 }
 
 /// Compresses data with zlib.
