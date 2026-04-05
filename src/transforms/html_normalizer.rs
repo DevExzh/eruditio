@@ -41,6 +41,7 @@ impl Transform for HtmlNormalizer {
 /// Normalizes an HTML string to well-formed XHTML.
 ///
 /// Current implementation handles:
+/// - Stripping `<style>` and `<script>` elements (including their content)
 /// - Self-closing void elements (br, hr, img, meta, link, input, etc.)
 /// - Unescaped ampersands in text content
 ///
@@ -77,6 +78,17 @@ fn normalize_xhtml(html: &str) -> Cow<'_, str> {
                 let special_pos = pos + offset;
 
                 if bytes[special_pos] == b'<' {
+                    // Check if this is a <style or <script opening tag whose
+                    // content should be stripped entirely.
+                    if let Some(block_end) = try_skip_style_or_script(bytes, special_pos) {
+                        let out = output
+                            .get_or_insert_with(|| String::with_capacity(len + len / 32));
+                        out.push_str(&html[copy_start..special_pos]);
+                        copy_start = block_end;
+                        pos = block_end;
+                        continue;
+                    }
+
                     // Find closing '>' for this tag.
                     match memchr::memchr(b'>', &bytes[special_pos..]) {
                         Some(close_offset) => {
@@ -146,6 +158,84 @@ fn normalize_xhtml(html: &str) -> Cow<'_, str> {
         },
         None => Cow::Borrowed(html),
     }
+}
+
+/// If `bytes[tag_start..]` begins with `<style` or `<script` (case-insensitive),
+/// followed by whitespace, `>`, or `/`, returns the byte position just past the
+/// matching closing tag (`</style>` or `</script>`). Returns `None` if the tag
+/// at `tag_start` is not a style/script opening tag.
+fn try_skip_style_or_script(bytes: &[u8], tag_start: usize) -> Option<usize> {
+    let remaining = &bytes[tag_start..];
+    let remaining_len = remaining.len();
+
+    // Minimum: `<style>` = 7 chars, `<script>` = 8 chars.
+    if remaining_len < 7 {
+        return None;
+    }
+
+    // Must start with '<'.
+    if remaining[0] != b'<' {
+        return None;
+    }
+
+    // Determine which element we matched.
+    let (tag_name_len, close_tag): (usize, &[u8]) =
+        if remaining_len >= 7 && remaining[1..6].eq_ignore_ascii_case(b"style") {
+            // Check the byte after "style": must be whitespace, '>', or '/'.
+            let after = remaining[6];
+            if after == b'>' || after == b' ' || after == b'\t' || after == b'\n'
+                || after == b'\r' || after == b'/'
+            {
+                (5, b"</style>")
+            } else {
+                return None;
+            }
+        } else if remaining_len >= 8 && remaining[1..7].eq_ignore_ascii_case(b"script") {
+            let after = remaining[7];
+            if after == b'>' || after == b' ' || after == b'\t' || after == b'\n'
+                || after == b'\r' || after == b'/'
+            {
+                (6, b"</script>")
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+
+    // Handle self-closing variant: <style /> or <script />. Find the '>' first.
+    if let Some(gt_offset) = memchr::memchr(b'>', remaining) {
+        // Check if it's self-closing (ends with "/>").
+        if gt_offset > 0 && remaining[gt_offset - 1] == b'/' {
+            return Some(tag_start + gt_offset + 1);
+        }
+    }
+
+    // Find the matching closing tag (case-insensitive).
+    let close_tag_len = close_tag.len(); // 8 for </style>, 9 for </script>
+    let search_start = tag_start + tag_name_len + 2; // skip past "<style" or "<script"
+
+    // Scan for the closing tag.
+    let mut scan = search_start;
+    while scan + close_tag_len <= bytes.len() {
+        // Look for '<' as the start of a potential closing tag.
+        match memchr::memchr(b'<', &bytes[scan..]) {
+            Some(offset) => {
+                let candidate = scan + offset;
+                if candidate + close_tag_len <= bytes.len()
+                    && bytes[candidate..candidate + close_tag_len]
+                        .eq_ignore_ascii_case(close_tag)
+                {
+                    return Some(candidate + close_tag_len);
+                }
+                scan = candidate + 1;
+            },
+            None => break,
+        }
+    }
+
+    // No closing tag found -- strip from the opening tag to end of input.
+    Some(bytes.len())
 }
 
 /// Returns `true` if the byte is valid inside an HTML entity name (alphanumeric or `#`).
@@ -374,5 +464,104 @@ mod tests {
         let chapters = result.chapters();
         assert!(chapters[0].content.contains("&amp;"));
         assert!(chapters[0].content.contains("<br />"));
+    }
+
+    // --- style/script stripping tests ---
+
+    #[test]
+    fn normalizer_strips_style_block() {
+        let input = "<head><style>body { margin: 0; }</style></head><body><p>Hello</p></body>";
+        let result = normalize_xhtml(input);
+        assert_eq!(
+            &*result,
+            "<head></head><body><p>Hello</p></body>"
+        );
+    }
+
+    #[test]
+    fn normalizer_strips_script_block() {
+        let input = "<head><script>alert('xss');</script></head><body><p>Hello</p></body>";
+        let result = normalize_xhtml(input);
+        assert_eq!(
+            &*result,
+            "<head></head><body><p>Hello</p></body>"
+        );
+    }
+
+    #[test]
+    fn normalizer_preserves_content_around_style_script() {
+        let input = "Before<style>css</style>Middle<script>js</script>After";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "BeforeMiddleAfter");
+    }
+
+    #[test]
+    fn normalizer_strips_style_case_insensitive() {
+        let input = "<STYLE>body{}</STYLE><p>ok</p>";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "<p>ok</p>");
+
+        let input2 = "<Script>var x=1;</Script><p>ok</p>";
+        let result2 = normalize_xhtml(input2);
+        assert_eq!(&*result2, "<p>ok</p>");
+
+        let input3 = "<sTyLe>body{}</STYLE><p>ok</p>";
+        let result3 = normalize_xhtml(input3);
+        assert_eq!(&*result3, "<p>ok</p>");
+    }
+
+    #[test]
+    fn normalizer_strips_style_with_attributes() {
+        let input =
+            "<style type=\"text/css\">@page { padding: 0; margin: 0; }</style><p>Content</p>";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "<p>Content</p>");
+    }
+
+    #[test]
+    fn normalizer_strips_script_with_attributes() {
+        let input = "<script type=\"text/javascript\" src=\"x.js\"></script><p>Content</p>";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "<p>Content</p>");
+    }
+
+    #[test]
+    fn normalizer_strips_multiple_style_blocks() {
+        let input = "<style>a{}</style><p>A</p><style>b{}</style><p>B</p>";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "<p>A</p><p>B</p>");
+    }
+
+    #[test]
+    fn normalizer_strips_style_block_no_closing_tag() {
+        // If there's no closing tag, everything from the style tag to the end should be stripped.
+        let input = "Before<style>body { color: red; }";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "Before");
+    }
+
+    #[test]
+    fn normalizer_does_not_strip_styled_or_stylesheet() {
+        // Tags like <styled> or elements with "style" in their name should NOT be stripped.
+        let input = "<p styled=\"yes\">text</p>";
+        let result = normalize_xhtml(input);
+        // Should be unchanged (no style/script stripping).
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn normalizer_strips_style_with_newlines() {
+        let input = "<style>\n  body {\n    margin: 0;\n  }\n</style><p>ok</p>";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "<p>ok</p>");
+    }
+
+    #[test]
+    fn normalizer_style_strip_combined_with_void_and_amp() {
+        // Ensure style stripping works alongside void-element normalization and
+        // ampersand escaping in the same document.
+        let input = "<style>css</style><p>A & B<br>C</p>";
+        let result = normalize_xhtml(input);
+        assert_eq!(&*result, "<p>A &amp; B<br />C</p>");
     }
 }
