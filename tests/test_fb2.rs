@@ -1,4 +1,6 @@
 use eruditio::EruditioParser;
+use eruditio::formats::fb2::Fb2Writer;
+use eruditio::{Book, Chapter, FormatWriter};
 use std::io::Cursor;
 
 const FB2_DATA: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -53,4 +55,89 @@ fn test_fb2_parsing() {
     assert_eq!(cover.media_type, "image/jpeg");
     let cover_data = book.resource_data("cover.jpg").unwrap();
     assert!(!cover_data.is_empty());
+}
+
+#[test]
+fn fb2_writer_closes_emphasis_at_paragraph_boundary() {
+    let mut book = Book::new();
+    book.metadata.title = Some("Emphasis Close Test".into());
+    // Simulate emphasis that spans across a paragraph boundary:
+    // the </em> comes in the second <p>, so the writer must auto-close and reopen.
+    book.add_chapter(&Chapter {
+        title: Some("Ch1".into()),
+        content: r#"<p>Normal text <em>emphasized text</p><p>still emphasized</em> normal again</p>"#.into(),
+        id: Some("ch1".into()),
+    });
+
+    let mut output = Vec::new();
+    Fb2Writer::new().write_book(&book, &mut output).unwrap();
+    let xml = String::from_utf8(output).unwrap();
+
+    // The emphasis must be closed before the paragraph closes, and reopened in the next
+    assert!(
+        xml.contains("<p>Normal text <emphasis>emphasized text</emphasis></p>"),
+        "emphasis should be closed before </p>, got:\n{}",
+        xml
+    );
+    assert!(
+        xml.contains("<p><emphasis>still emphasized</emphasis> normal again</p>"),
+        "emphasis should be reopened in next paragraph and closed when </em> is hit, got:\n{}",
+        xml
+    );
+}
+
+#[test]
+fn fb2_writer_closes_strong_at_paragraph_boundary() {
+    let mut book = Book::new();
+    book.metadata.title = Some("Strong Close Test".into());
+    // Simulate bold/strong that spans across a paragraph boundary
+    book.add_chapter(&Chapter {
+        title: Some("Ch1".into()),
+        content: r#"<p>Normal text <b>bold text</p><p>still bold</b> normal again</p>"#.into(),
+        id: Some("ch1".into()),
+    });
+
+    let mut output = Vec::new();
+    Fb2Writer::new().write_book(&book, &mut output).unwrap();
+    let xml = String::from_utf8(output).unwrap();
+
+    // The strong tag must be closed before the paragraph closes, and reopened in the next
+    assert!(
+        xml.contains("<p>Normal text <strong>bold text</strong></p>"),
+        "strong should be closed before </p>, got:\n{}",
+        xml
+    );
+    assert!(
+        xml.contains("<p><strong>still bold</strong> normal again</p>"),
+        "strong should be reopened in next paragraph and closed when </b> is hit, got:\n{}",
+        xml
+    );
+}
+
+#[test]
+fn fb2_writer_handles_nested_emphasis_strong_across_paragraphs() {
+    let mut book = Book::new();
+    book.metadata.title = Some("Nested Formatting Test".into());
+    // Both emphasis AND strong span across a paragraph boundary simultaneously
+    book.add_chapter(&Chapter {
+        title: Some("Ch1".into()),
+        content: r#"<p>Normal <em><b>bold italic text</p><p>still bold italic</b></em> normal</p>"#.into(),
+        id: Some("ch1".into()),
+    });
+
+    let mut output = Vec::new();
+    Fb2Writer::new().write_book(&book, &mut output).unwrap();
+    let xml = String::from_utf8(output).unwrap();
+
+    // Both emphasis and strong must be closed before paragraph boundary, then reopened
+    assert!(
+        xml.contains("<p>Normal <emphasis><strong>bold italic text</strong></emphasis></p>"),
+        "both emphasis and strong should be closed before </p>, got:\n{}",
+        xml
+    );
+    assert!(
+        xml.contains("<p><emphasis><strong>still bold italic</strong></emphasis> normal</p>"),
+        "both should be reopened in next paragraph, got:\n{}",
+        xml
+    );
 }
