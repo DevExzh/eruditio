@@ -509,6 +509,16 @@ fn generate_fb2(book: &Book) -> String {
 
     // Body
     xml.push_str("  <body>\n");
+
+    // Add cover image section if a cover exists
+    if let Some(ref cid) = cover_id {
+        xml.push_str("    <section>\n");
+        xml.push_str("      <image l:href=\"#");
+        xml.push_str(&escape_html(cid));
+        xml.push_str("\"/>\n");
+        xml.push_str("    </section>\n");
+    }
+
     for chapter in &book.chapters() {
         xml.push_str("    <section>\n");
         if let Some(ref ch_title) = chapter.title {
@@ -525,6 +535,10 @@ fn generate_fb2(book: &Book) -> String {
 
     // Binary resources (base64-encoded)
     for resource in &book.resources() {
+        // Skip CSS resources — FB2 readers don't use CSS
+        if resource.media_type == "text/css" {
+            continue;
+        }
         xml.push_str("  <binary id=\"");
         xml.push_str(&escape_html(resource.id));
         xml.push_str("\" content-type=\"");
@@ -1328,6 +1342,111 @@ mod tests {
         assert!(
             xml.contains("this section"),
             "link text should be preserved"
+        );
+    }
+
+    // =========================================================================
+    // Tests for CSS filtering and cover image in body
+    // =========================================================================
+
+    #[test]
+    fn fb2_writer_excludes_css_from_binary_elements() {
+        let mut book = Book::new();
+        book.metadata.title = Some("CSS Filter Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Add a CSS resource and an image resource
+        book.add_resource("style1", "styles/main.css", b"body { color: red; }".to_vec(), "text/css");
+        book.add_resource("img1", "images/photo.jpg", vec![0xFF, 0xD8], "image/jpeg");
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // CSS should NOT appear as a binary element
+        assert!(
+            !xml.contains("id=\"style1\""),
+            "CSS resource should be filtered out of binary elements, got:\n{}",
+            xml
+        );
+        assert!(
+            !xml.contains("content-type=\"text/css\""),
+            "text/css content-type should not appear in binary elements"
+        );
+
+        // Image resource should still be present
+        assert!(
+            xml.contains("id=\"img1\""),
+            "image resource should still be included as binary element"
+        );
+        assert!(
+            xml.contains("content-type=\"image/jpeg\""),
+            "image content-type should be present"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_cover_image_in_body() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Cover Body Test".into());
+        book.add_resource("cover", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // Extract the body section
+        let body_start = xml.find("<body>").expect("missing <body>");
+        let body_end = xml.find("</body>").expect("missing </body>");
+        let body_section = &xml[body_start..body_end];
+
+        // The body should contain an image element referencing the cover
+        assert!(
+            body_section.contains("<image l:href=\"#cover\"/>"),
+            "body should contain cover image reference, got:\n{}",
+            body_section
+        );
+
+        // The cover image section should appear before chapter sections
+        let cover_in_body = body_section.find("<image l:href=\"#cover\"/>").unwrap();
+        let chapter_in_body = body_section.find("<title><p>Ch1</p></title>").expect("missing chapter title in body");
+        assert!(
+            cover_in_body < chapter_in_body,
+            "cover image should appear before chapter content in body"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_no_cover_image_in_body_without_cover() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Cover Body Test".into());
+        // Add a non-cover image resource
+        book.add_resource("img1", "images/photo.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // Should not have a cover image section in the body
+        let body_section = &xml[xml.find("<body>").unwrap()..xml.find("</body>").unwrap()];
+        assert!(
+            !body_section.contains("<image l:href=\"#"),
+            "body should not contain cover image section when no cover exists, got:\n{}",
+            body_section
         );
     }
 }
