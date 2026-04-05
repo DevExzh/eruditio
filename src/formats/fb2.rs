@@ -287,10 +287,15 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 } else if tag_lower.starts_with("<a ") || tag_lower.starts_with("<a>") {
                     // Opening <a> tag – extract href and convert to l:href
                     if let Some(href) = extract_href(tag_str) {
-                        inline_buf.push_str("<a l:href=\"");
-                        inline_buf.push_str(&escape_html(&href));
-                        inline_buf.push_str("\">");
-                        in_anchor = true;
+                        // Only emit link for external URLs; internal EPUB references
+                        // are meaningless in FB2 context
+                        if is_external_url(&href) {
+                            inline_buf.push_str("<a l:href=\"");
+                            inline_buf.push_str(&escape_html(&href));
+                            inline_buf.push_str("\">");
+                            in_anchor = true;
+                        }
+                        // else: skip the <a> tag, text content will flow through as plain text
                     }
                     // If no href, just skip the tag (keep the text content)
                     pos += gt + 1;
@@ -377,6 +382,15 @@ fn extract_href(tag: &str) -> Option<String> {
             .unwrap_or(tag.len() - start);
         Some(tag[start..start + end].to_string())
     }
+}
+
+/// Returns true if the URL is an external link (http, https, ftp, mailto).
+fn is_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("ftp://")
+        || lower.starts_with("mailto:")
 }
 
 /// Generates a complete FictionBook 2.0 XML document from a `Book`.
@@ -1197,6 +1211,123 @@ mod tests {
             details.content.contains("Detail paragraph"),
             "child section content was lost: {:?}",
             details.content
+        );
+    }
+
+    #[test]
+    fn fb2_writer_strips_internal_epub_links() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Internal Link Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<p>See <a href="@public@vhost@g@gutenberg@html@files@11@11-h@11-h-0.htm.html#link2HCH0001">Chapter 1</a> for details.</p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // The link wrapper should be stripped; text content preserved
+        assert!(
+            !xml.contains("<a "),
+            "internal EPUB links should be stripped, but found <a> tag in:\n{}",
+            xml
+        );
+        assert!(
+            xml.contains("Chapter 1"),
+            "link text should be preserved as inline content"
+        );
+        assert!(
+            xml.contains("See "),
+            "text before link should be preserved"
+        );
+        assert!(
+            xml.contains(" for details."),
+            "text after link should be preserved"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_strips_fragment_only_links() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Fragment Link Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r##"<p>Go to <a href="#section1">Section 1</a> now.</p>"##.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            !xml.contains("<a "),
+            "fragment-only links should be stripped, but found <a> tag in:\n{}",
+            xml
+        );
+        assert!(
+            xml.contains("Section 1"),
+            "link text should be preserved as inline content"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_preserves_external_links() {
+        // Verify that http/https/ftp/mailto links are still emitted
+        let mut book = Book::new();
+        book.metadata.title = Some("External Link Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<p><a href="https://example.com">HTTPS</a> <a href="http://example.com">HTTP</a> <a href="ftp://files.example.com">FTP</a> <a href="mailto:test@example.com">Email</a></p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains(r#"<a l:href="https://example.com">HTTPS</a>"#),
+            "https links should be preserved"
+        );
+        assert!(
+            xml.contains(r#"<a l:href="http://example.com">HTTP</a>"#),
+            "http links should be preserved"
+        );
+        assert!(
+            xml.contains(r#"<a l:href="ftp://files.example.com">FTP</a>"#),
+            "ftp links should be preserved"
+        );
+        assert!(
+            xml.contains(r#"<a l:href="mailto:test@example.com">Email</a>"#),
+            "mailto links should be preserved"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_strips_relative_path_links() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Relative Link Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<p>See <a href="chapter1.xhtml#section1">this section</a> please.</p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            !xml.contains("<a "),
+            "relative path links should be stripped, got:\n{}",
+            xml
+        );
+        assert!(
+            xml.contains("this section"),
+            "link text should be preserved"
         );
     }
 }
