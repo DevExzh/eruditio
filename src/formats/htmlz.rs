@@ -358,7 +358,9 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                 }
                             }
                             "subject" => {
-                                book.metadata.subjects.push(text);
+                                if !book.metadata.subjects.contains(&text) {
+                                    book.metadata.subjects.push(text);
+                                }
                             }
                             "rights" => {
                                 if book.metadata.rights.is_none() {

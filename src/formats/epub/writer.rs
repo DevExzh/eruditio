@@ -103,7 +103,7 @@ fn generate_opf(book: &Book) -> String {
 
 fn generate_opf_metadata(book: &Book, xml: &mut String) {
     let m = &book.metadata;
-    xml.push_str(r#"  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">"#);
+    xml.push_str(r#"  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">"#);
     xml.push('\n');
 
     if let Some(ref title) = m.title {

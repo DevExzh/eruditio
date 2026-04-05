@@ -61,7 +61,7 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     }
     if !(rest[1].eq_ignore_ascii_case(&b'h')
         && (rest[2] == b'1' || rest[2] == b'2')
-        && (rest[3] == b'>' || rest[3] == b' ' || rest[3] == b'\t'))
+        && (rest[3] == b'>' || rest[3] == b' ' || rest[3] == b'\t' || rest[3] == b'\n' || rest[3] == b'\r'))
     {
         return content;
     }
@@ -97,7 +97,16 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
 
     if normalised_heading.eq_ignore_ascii_case(&normalised_title) {
         let after_close = search_start + close_pos + close_tag.len();
-        content[after_close..].trim_start()
+        let result = content[after_close..].trim_start();
+        // If we're in a full XHTML document, also trim the closing </body>...</html>.
+        if body_start > trimmed_start {
+            if let Some(pos) =
+                super::text_utils::find_case_insensitive(result.as_bytes(), b"</body>")
+            {
+                return result[..pos].trim_end();
+            }
+        }
+        result
     } else {
         content
     }
@@ -228,6 +237,14 @@ mod tests {
             "heading should be stripped, got: {result}"
         );
         assert!(result.contains("<p>Body text</p>"));
+        assert!(
+            !result.contains("</body>"),
+            "trailing </body> should be trimmed, got: {result}"
+        );
+        assert!(
+            !result.contains("</html>"),
+            "trailing </html> should be trimmed, got: {result}"
+        );
     }
 
     #[test]
