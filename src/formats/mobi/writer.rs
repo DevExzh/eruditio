@@ -9,6 +9,9 @@ use crate::formats::common::compression::palmdoc;
 use crate::formats::common::html_utils::strip_tags;
 use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be};
 
+use image::imageops::FilterType;
+use image::ImageEncoder;
+
 use super::exth::{
     self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_DESCRIPTION, EXTH_ISBN,
     EXTH_LANGUAGE, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_SUBJECT,
@@ -49,6 +52,49 @@ fn build_fcis(text_length: u32) -> Vec<u8> {
 /// EOF record.
 const EOF_RECORD: &[u8] = &[0xE9, 0x8E, 0x0D, 0x0A];
 
+/// Maximum thumbnail width for Kindle library display.
+const THUMBNAIL_MAX_WIDTH: u32 = 180;
+/// Maximum thumbnail height for Kindle library display.
+const THUMBNAIL_MAX_HEIGHT: u32 = 240;
+/// JPEG quality for generated thumbnails (0-100).
+const THUMBNAIL_JPEG_QUALITY: u8 = 75;
+
+/// Generates a downscaled JPEG thumbnail from cover image data.
+///
+/// The thumbnail fits within [`THUMBNAIL_MAX_WIDTH`] x [`THUMBNAIL_MAX_HEIGHT`]
+/// while maintaining the original aspect ratio. Returns `None` if the image
+/// cannot be decoded (graceful fallback to using the cover as thumbnail).
+fn generate_thumbnail(image_data: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(image_data).ok()?;
+
+    let (orig_w, orig_h) = (img.width(), img.height());
+    if orig_w == 0 || orig_h == 0 {
+        return None;
+    }
+
+    // If the image is already within thumbnail bounds, re-encode as JPEG without resizing.
+    let resized = if orig_w <= THUMBNAIL_MAX_WIDTH && orig_h <= THUMBNAIL_MAX_HEIGHT {
+        img
+    } else {
+        img.resize(
+            THUMBNAIL_MAX_WIDTH,
+            THUMBNAIL_MAX_HEIGHT,
+            FilterType::Triangle,
+        )
+    };
+
+    let rgb = resized.to_rgb8();
+    let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+        &mut jpeg_buf,
+        THUMBNAIL_JPEG_QUALITY,
+    );
+    encoder
+        .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+        .ok()?;
+    Some(jpeg_buf.into_inner())
+}
+
 /// Generates a complete MOBI file from a `Book` and returns the raw bytes.
 pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     // Convert book content to HTML.
@@ -63,8 +109,19 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     let image_refs = collect_image_refs(book);
     let has_images = !image_refs.is_empty();
 
+    // Generate a downscaled thumbnail from the cover (first) image.
+    // If generation succeeds the thumbnail is inserted as the second image
+    // record and EXTH 202 points to index 1; otherwise we fall back to 0
+    // (same image as the cover).
+    let thumbnail_data = if has_images {
+        generate_thumbnail(image_refs[0])
+    } else {
+        None
+    };
+    let thumb_offset: u32 = if thumbnail_data.is_some() { 1 } else { 0 };
+
     // Build EXTH.
-    let exth_data = build_metadata_exth(book, has_images);
+    let exth_data = build_metadata_exth(book, has_images, thumb_offset);
 
     // Build Record 0.
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
@@ -81,7 +138,8 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     let fcis = build_fcis(text_bytes.len() as u32);
 
     // Calculate total number of records and pre-compute total output size.
-    let num_records = 1 + text_record_count + image_refs.len() + 3; // record0 + text + images + FLIS + FCIS + EOF
+    let thumbnail_record_count = if thumbnail_data.is_some() { 1 } else { 0 };
+    let num_records = 1 + text_record_count + image_refs.len() + thumbnail_record_count + 3; // record0 + text + images + thumbnail + FLIS + FCIS + EOF
     let header_table_size = 78 + num_records * 8 + 2;
 
     // Calculate record offsets and total data size in a single pass.
@@ -98,10 +156,23 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
         pos += tr.len() as u32;
     }
 
-    // Image records
-    for ir in &image_refs {
+    // Image records: cover first, then thumbnail (if any), then remaining images.
+    if !image_refs.is_empty() {
+        // Cover image (index 0).
         offsets.push(pos);
-        pos += ir.len() as u32;
+        pos += image_refs[0].len() as u32;
+
+        // Thumbnail image (index 1, if generated).
+        if let Some(ref thumb) = thumbnail_data {
+            offsets.push(pos);
+            pos += thumb.len() as u32;
+        }
+
+        // Remaining images (indices shifted by thumbnail_record_count).
+        for ir in &image_refs[1..] {
+            offsets.push(pos);
+            pos += ir.len() as u32;
+        }
     }
 
     // FLIS
@@ -128,8 +199,15 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     for tr in &text_records {
         output.extend_from_slice(tr);
     }
-    for ir in &image_refs {
-        output.extend_from_slice(ir);
+    // Image records: cover, thumbnail, remaining.
+    if !image_refs.is_empty() {
+        output.extend_from_slice(image_refs[0]);
+        if let Some(ref thumb) = thumbnail_data {
+            output.extend_from_slice(thumb);
+        }
+        for ir in &image_refs[1..] {
+            output.extend_from_slice(ir);
+        }
     }
     output.extend_from_slice(FLIS_RECORD);
     output.extend_from_slice(&fcis);
@@ -262,10 +340,14 @@ fn build_record0(
 }
 
 /// Builds EXTH header from Book metadata, writing directly into a single buffer.
-fn build_metadata_exth(book: &Book, has_cover: bool) -> Vec<u8> {
+///
+/// `thumb_offset` controls EXTH 202: 0 = same as cover, 1 = separate thumbnail
+/// record immediately after the cover.
+fn build_metadata_exth(book: &Book, has_cover: bool, thumb_offset: u32) -> Vec<u8> {
     // Collect (type, data_slice) pairs without cloning the data.
     // We need to be careful about the cover offset bytes lifetime.
     let cover_offset_bytes = 0u32.to_be_bytes();
+    let thumb_offset_bytes = thumb_offset.to_be_bytes();
 
     let mut refs: Vec<(u32, &[u8])> = Vec::with_capacity(12);
 
@@ -328,9 +410,9 @@ fn build_metadata_exth(book: &Book, has_cover: bool) -> Vec<u8> {
         refs.push((EXTH_COVER_OFFSET, &cover_offset_bytes));
     }
 
-    // Thumbnail offset (same as cover — no image resizing available).
+    // Thumbnail offset (separate thumbnail if available, otherwise same as cover).
     if has_cover {
-        refs.push((EXTH_THUMB_OFFSET, &cover_offset_bytes));
+        refs.push((EXTH_THUMB_OFFSET, &thumb_offset_bytes));
     }
 
     // CDE type = EBOK (ebook).
@@ -623,9 +705,9 @@ mod tests {
             id: Some("ch1".into()),
         });
 
-        // Add a minimal valid JPEG as cover image.
-        let fake_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9];
-        book.add_resource("cover", "cover.jpg", fake_jpeg, "image/jpeg");
+        // Create a real decodable image (300x400 JPEG) so thumbnail generation succeeds.
+        let cover_jpeg = create_test_jpeg(300, 400);
+        book.add_resource("cover", "cover.jpg", cover_jpeg, "image/jpeg");
 
         let mobi_data = write_mobi(&book).unwrap();
         let pdb = PdbFile::parse(mobi_data).unwrap();
@@ -644,11 +726,113 @@ mod tests {
             .expect("EXTH 201 (cover offset) should be present");
         assert_eq!(cover_offset, 0, "cover offset should be 0");
 
-        // EXTH 202 (thumbnail offset) should be present and equal to 0.
+        // EXTH 202 (thumbnail offset) should be 1 (separate thumbnail record).
         let thumb_offset = exth
             .get_u32(EXTH_THUMB_OFFSET)
             .expect("EXTH 202 (thumbnail offset) should be present");
-        assert_eq!(thumb_offset, 0, "thumbnail offset should be 0");
+        assert_eq!(thumb_offset, 1, "thumbnail offset should be 1 (separate thumbnail)");
+    }
+
+    #[test]
+    fn cover_image_undecodable_falls_back_to_thumb_offset_zero() {
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Fallback Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Add an undecodable fake JPEG — thumbnail generation should fail gracefully.
+        let fake_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9];
+        book.add_resource("cover", "cover.jpg", fake_jpeg, "image/jpeg");
+
+        let mobi_data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+
+        // Cover offset is still 0.
+        let cover_offset = exth
+            .get_u32(EXTH_COVER_OFFSET)
+            .expect("EXTH 201 should be present");
+        assert_eq!(cover_offset, 0);
+
+        // Thumbnail offset falls back to 0 (same as cover).
+        let thumb_offset = exth
+            .get_u32(EXTH_THUMB_OFFSET)
+            .expect("EXTH 202 should be present");
+        assert_eq!(thumb_offset, 0, "thumbnail offset should fall back to 0");
+    }
+
+    #[test]
+    fn thumbnail_record_exists_and_is_smaller_than_cover() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Thumb Size Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Create a 600x800 JPEG cover (large enough that the thumbnail will be smaller).
+        let cover_jpeg = create_test_jpeg(600, 800);
+        let cover_size = cover_jpeg.len();
+        book.add_resource("cover", "cover.jpg", cover_jpeg, "image/jpeg");
+
+        let mobi_data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+
+        // Record layout: [record0, text..., cover, thumbnail, FLIS, FCIS, EOF]
+        // With 1 text record: record0=0, text=1, cover=2, thumbnail=3, FLIS=4, FCIS=5, EOF=6
+        let num_records = pdb.record_count();
+        assert!(num_records >= 7, "should have at least 7 records (record0 + text + cover + thumb + FLIS + FCIS + EOF), got {num_records}");
+
+        // The cover is at index 2 (after record0 and 1 text record).
+        let cover_record = pdb.record_data(2).unwrap();
+        assert_eq!(cover_record.len(), cover_size, "cover record should match original cover data");
+
+        // The thumbnail is at index 3.
+        let thumb_record = pdb.record_data(3).unwrap();
+        assert!(
+            thumb_record.len() < cover_record.len(),
+            "thumbnail ({} bytes) should be smaller than cover ({} bytes)",
+            thumb_record.len(),
+            cover_record.len()
+        );
+
+        // Verify the thumbnail is a valid JPEG (starts with FFD8).
+        assert_eq!(&thumb_record[..2], &[0xFF, 0xD8], "thumbnail should be a valid JPEG");
+
+        // Verify thumbnail dimensions are within bounds.
+        let thumb_img = image::load_from_memory(thumb_record).expect("thumbnail should be decodable");
+        assert!(thumb_img.width() <= 180, "thumbnail width {} should be <= 180", thumb_img.width());
+        assert!(thumb_img.height() <= 240, "thumbnail height {} should be <= 240", thumb_img.height());
+    }
+
+    /// Creates a test JPEG image of the given dimensions using the image crate.
+    fn create_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+        use image::ImageEncoder;
+        let img = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
+        encoder
+            .write_image(
+                img.as_raw(),
+                img.width(),
+                img.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        buf.into_inner()
     }
 
     #[test]
