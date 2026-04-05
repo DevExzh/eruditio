@@ -65,9 +65,9 @@ fn write_info_group(book: &Book, rtf: &mut String) {
         rtf.push_str("}\n");
     }
 
-    if let Some(author) = m.authors.first() {
+    if !m.authors.is_empty() {
         rtf.push_str("{\\author ");
-        write_rtf_text(rtf, author);
+        write_rtf_text(rtf, &m.authors.join(" & "));
         rtf.push_str("}\n");
     }
 
@@ -323,5 +323,18 @@ mod tests {
         let rtf = book_to_rtf(&book);
         assert!(rtf.contains("{\\title My Title}"));
         assert!(rtf.contains("{\\author Alice}"));
+    }
+
+    #[test]
+    fn multiple_authors_joined_with_ampersand() {
+        let mut book = Book::new();
+        book.metadata.authors.push("Jane Doe".into());
+        book.metadata.authors.push("John Smith".into());
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("{\\author Jane Doe & John Smith}"),
+            "Expected authors joined with ' & ', got: {rtf}"
+        );
     }
 }
