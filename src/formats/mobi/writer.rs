@@ -478,9 +478,10 @@ fn book_to_mobi_html(book: &Book) -> String {
             html.push_str("</h2>\n");
         }
 
-        // If content already has HTML tags, use as-is; otherwise wrap in <p>.
+        // If content already has HTML tags, strip XHTML wrapper and use; otherwise wrap in <p>.
         if content.contains('<') {
-            html.push_str(content);
+            let cleaned = strip_xhtml_wrapper(content);
+            html.push_str(&cleaned);
         } else {
             let plain = strip_tags(content);
             for line in plain.lines() {
@@ -521,8 +522,80 @@ fn push_html_escaped(buf: &mut String, text: &str) {
     buf.push_str(&escaped);
 }
 
+/// Strips XHTML wrapper elements from chapter content so that only the inner
+/// body content remains. This removes XML processing instructions, DOCTYPE
+/// declarations, `<html>`, `<head>` (with contents), and `<body>` tags that
+/// are present in EPUB XHTML source files.
+fn strip_xhtml_wrapper(content: &str) -> String {
+    let mut s = content.to_string();
+
+    // Remove <?xml ...?> processing instructions.
+    while let Some(start) = s.find("<?xml") {
+        if let Some(end) = s[start..].find("?>") {
+            s.replace_range(start..start + end + 2, "");
+        } else {
+            break;
+        }
+    }
+
+    // Remove <!DOCTYPE ...> declarations.
+    while let Some(start) = s.find("<!DOCTYPE") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    // Also handle lowercase variant.
+    while let Some(start) = s.find("<!doctype") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+
+    // Remove <head>...</head> blocks (including contents).
+    while let Some(start) = s.find("<head") {
+        if let Some(end) = s[start..].find("</head>") {
+            s.replace_range(start..start + end + 7, "");
+        } else if let Some(end) = s[start..].find("/>") {
+            // Self-closing <head/>
+            s.replace_range(start..start + end + 2, "");
+        } else {
+            break;
+        }
+    }
+
+    // Remove <html ...> and </html> tags.
+    while let Some(start) = s.find("<html") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    while let Some(start) = s.find("</html>") {
+        s.replace_range(start..start + 7, "");
+    }
+
+    // Remove <body ...> and </body> tags.
+    while let Some(start) = s.find("<body") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    while let Some(start) = s.find("</body>") {
+        s.replace_range(start..start + 7, "");
+    }
+
+    s
+}
+
 /// Truncates a title to fit the 31-character PDB name field.
-/// Avoids allocation when the title is already clean ASCII and <= 31 chars.
+/// Spaces are replaced with underscores per PalmOS convention (matches Calibre).
 fn truncate_pdb_name(title: &str) -> String {
     // Fast path: check if title is already valid (all ASCII graphic or space, len <= 31).
     if title.len() <= 31
@@ -531,7 +604,7 @@ fn truncate_pdb_name(title: &str) -> String {
             .bytes()
             .all(|b| b.is_ascii_graphic() || b == b' ')
     {
-        return title.to_string();
+        return title.replace(' ', "_");
     }
 
     let clean: String = title
@@ -543,7 +616,7 @@ fn truncate_pdb_name(title: &str) -> String {
     if clean.is_empty() {
         "Untitled".to_string()
     } else {
-        clean
+        clean.replace(' ', "_")
     }
 }
 
