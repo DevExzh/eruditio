@@ -134,18 +134,20 @@ fn find_cover_image(book: &Book) -> Option<&crate::domain::manifest::ManifestIte
         return by_property;
     }
 
-    // 3. Heuristic: "cover" in ID or href.
+    // 3. Heuristic: "cover" in ID or href (case-insensitive).
     book.manifest.iter().find(|item| {
         item.media_type.starts_with("image/")
-            && (item.id.contains("cover") || item.href.contains("cover"))
+            && (item.id.to_ascii_lowercase().contains("cover")
+                || item.href.to_ascii_lowercase().contains("cover"))
     })
 }
 
-/// Writes an RTF `\pict` group for the cover image.
+/// Writes an RTF `\pict` group for the cover image followed by a page break.
 fn write_cover_image(rtf: &mut String, image_data: &[u8], media_type: &str) {
     let blip_tag = match media_type {
         "image/png" => "\\pngblip",
-        _ => "\\jpegblip", // JPEG is the default/fallback
+        "image/jpeg" | "image/jpg" => "\\jpegblip",
+        _ => return, // Unsupported image format; skip silently.
     };
 
     let (width_px, height_px) = if media_type == "image/png" {
@@ -155,51 +157,77 @@ fn write_cover_image(rtf: &mut String, image_data: &[u8], media_type: &str) {
     }
     .unwrap_or((600, 800));
 
-    // Convert pixels to twips: twips = pixels / 96 dpi * 1440
+    // \picwgoal / \pichgoal: desired display size in twips (pixels * 1440 / 96).
     let width_twips = (width_px as u32) * 1440 / 96;
     let height_twips = (height_px as u32) * 1440 / 96;
 
     use std::fmt::Write;
     let _ = write!(
         rtf,
-        "{{\\pict{blip_tag}\\picw{width_twips}\\pich{height_twips}\n"
+        "{{\\pict{blip_tag}\\picwgoal{width_twips}\\pichgoal{height_twips}\n"
     );
 
     // Hex-encode image data with line breaks every 80 hex characters (40 bytes).
-    for (i, byte) in image_data.iter().enumerate() {
-        let _ = write!(rtf, "{:02X}", byte);
+    // Use a lookup table for performance instead of per-byte write!().
+    const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
+    rtf.reserve(image_data.len() * 2 + image_data.len() / 40 + 64);
+    for (i, &byte) in image_data.iter().enumerate() {
+        rtf.push(HEX_CHARS[(byte >> 4) as usize] as char);
+        rtf.push(HEX_CHARS[(byte & 0x0F) as usize] as char);
         if (i + 1) % 40 == 0 {
             rtf.push('\n');
         }
     }
 
-    rtf.push_str("}\n");
+    rtf.push_str("}\n\\par\\page\n");
 }
 
 /// Parses JPEG dimensions from the SOF0/SOF2 marker.
 ///
-/// Scans for `0xFF 0xC0` (baseline) or `0xFF 0xC2` (progressive),
-/// then reads height and width as big-endian u16 values.
+/// Walks marker-to-marker (skipping segment payloads) to avoid false-positive
+/// matches inside APP segment data (e.g. EXIF, ICC profiles).
 fn parse_jpeg_dimensions(data: &[u8]) -> Option<(u16, u16)> {
     let len = data.len();
-    let mut i = 0;
+    if len < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+        return None; // Not a JPEG (missing SOI marker).
+    }
+    let mut i = 2;
     while i + 1 < len {
-        if data[i] == 0xFF && (data[i + 1] == 0xC0 || data[i + 1] == 0xC2) {
-            // SOF marker found. Layout after marker:
-            //   2 bytes: segment length
-            //   1 byte:  precision
-            //   2 bytes: height (big-endian)
-            //   2 bytes: width  (big-endian)
-            if i + 9 < len {
-                let height = u16::from_be_bytes([data[i + 5], data[i + 6]]);
-                let width = u16::from_be_bytes([data[i + 7], data[i + 8]]);
+        if data[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+        // Skip fill bytes (consecutive 0xFF).
+        while i + 1 < len && data[i + 1] == 0xFF {
+            i += 1;
+        }
+        if i + 1 >= len {
+            break;
+        }
+        let marker = data[i + 1];
+        i += 2;
+        // SOF0 (baseline) or SOF2 (progressive).
+        if marker == 0xC0 || marker == 0xC2 {
+            if i + 7 <= len {
+                let height = u16::from_be_bytes([data[i + 3], data[i + 4]]);
+                let width = u16::from_be_bytes([data[i + 5], data[i + 6]]);
                 if width > 0 && height > 0 {
                     return Some((width, height));
                 }
             }
+            return None;
+        }
+        // Markers without payloads: RST0-RST7 (0xD0-0xD7), SOI (0xD8), EOI (0xD9), TEM (0x01).
+        if marker == 0x00 || marker == 0x01 || (0xD0..=0xD9).contains(&marker) {
+            continue;
+        }
+        // All other markers have a 2-byte length field; skip the segment payload.
+        if i + 1 < len {
+            let seg_len = u16::from_be_bytes([data[i], data[i + 1]]) as usize;
+            i += seg_len; // Length includes its own 2 bytes.
+        } else {
             break;
         }
-        i += 1;
     }
     None
 }
@@ -220,6 +248,9 @@ fn parse_png_dimensions(data: &[u8]) -> Option<(u16, u16)> {
     }
     let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
     let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    if width == 0 || height == 0 {
+        return None;
+    }
     // Clamp to u16; images larger than 65535px are unlikely for ebook covers.
     Some((width.min(65535) as u16, height.min(65535) as u16))
 }
@@ -647,12 +678,12 @@ mod tests {
         );
         // 800px at 96dpi = 800*1440/96 = 12000 twips
         assert!(
-            rtf.contains("\\picw12000"),
+            rtf.contains("\\picwgoal12000"),
             "Picture width should be 12000 twips, got: {rtf}"
         );
         // 600px at 96dpi = 600*1440/96 = 9000 twips
         assert!(
-            rtf.contains("\\pich9000"),
+            rtf.contains("\\pichgoal9000"),
             "Picture height should be 9000 twips, got: {rtf}"
         );
         // Cover should appear before chapter content.
@@ -683,7 +714,7 @@ mod tests {
         );
         // 640px at 96dpi = 640*1440/96 = 9600 twips
         assert!(
-            rtf.contains("\\picw9600"),
+            rtf.contains("\\picwgoal9600"),
             "Picture width should be 9600 twips, got: {rtf}"
         );
     }

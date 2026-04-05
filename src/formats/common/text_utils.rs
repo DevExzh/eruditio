@@ -206,7 +206,7 @@ fn is_head_open_tag(tag: &[u8]) -> bool {
     {
         return false;
     }
-    matches!(tag[5], b'>' | b' ' | b'\t' | b'\n' | b'\r' | b'/')
+    matches!(tag[5], b'>' | b' ' | b'\t' | b'\n' | b'\r')
 }
 
 /// Returns `true` if the tag is a closing `</head>` tag (case-insensitive).

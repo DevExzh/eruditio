@@ -306,7 +306,8 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         in_anchor = false;
                     }
                     pos += gt + 1;
-                } else if tag_lower == "<b>" || tag_lower == "<strong>" {
+                } else if tag_lower == "<b>" || tag_lower == "<strong>"
+                    || tag_lower.starts_with("<b ") || tag_lower.starts_with("<strong ") {
                     // Opening bold tag → FB2 <strong>
                     inline_buf.push_str("<strong>");
                     pos += gt + 1;
@@ -314,7 +315,8 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     // Closing bold tag
                     inline_buf.push_str("</strong>");
                     pos += gt + 1;
-                } else if tag_lower == "<i>" || tag_lower == "<em>" {
+                } else if tag_lower == "<i>" || tag_lower == "<em>"
+                    || tag_lower.starts_with("<i ") || tag_lower.starts_with("<em ") {
                     // Opening italic tag → FB2 <emphasis>
                     inline_buf.push_str("<emphasis>");
                     pos += gt + 1;
