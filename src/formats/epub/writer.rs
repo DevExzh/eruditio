@@ -135,6 +135,11 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
     } else {
         xml.push_str("    <dc:identifier id=\"uid\">urn:uuid:00000000-0000-0000-0000-000000000000</dc:identifier>\n");
     }
+    if let Some(ref isbn) = m.isbn {
+        xml.push_str("    <dc:identifier opf:scheme=\"ISBN\">");
+        xml.push_str(&escape_html(isbn));
+        xml.push_str("</dc:identifier>\n");
+    }
     if let Some(ref desc) = m.description {
         xml.push_str("    <dc:description>");
         xml.push_str(&escape_html(desc));
@@ -377,6 +382,23 @@ mod tests {
         assert!(opf.contains("<dc:title>Test Book</dc:title>"));
         assert!(opf.contains("<dc:creator>Test Author</dc:creator>"));
         assert!(opf.contains("<dc:language>en</dc:language>"));
+    }
+
+    #[test]
+    fn generates_opf_with_isbn_identifier() {
+        let mut book = sample_book();
+        book.metadata.isbn = Some("978-3-16-148410-0".into());
+        let opf = generate_opf(&book);
+        assert!(opf.contains(r#"<dc:identifier opf:scheme="ISBN">978-3-16-148410-0</dc:identifier>"#));
+        // The primary identifier should still be present
+        assert!(opf.contains(r#"<dc:identifier id="uid">urn:test:12345</dc:identifier>"#));
+    }
+
+    #[test]
+    fn generates_opf_without_isbn_when_absent() {
+        let book = sample_book();
+        let opf = generate_opf(&book);
+        assert!(!opf.contains("opf:scheme=\"ISBN\""));
     }
 
     #[test]
