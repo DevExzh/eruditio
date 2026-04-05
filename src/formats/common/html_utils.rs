@@ -42,10 +42,18 @@ pub fn wrap_xhtml(title: &str, body: &str) -> String {
 /// Returns the remaining content (trimmed). If the leading heading does not match
 /// the supplied title (case-insensitive, whitespace-normalised), the original
 /// content is returned unchanged.
+///
+/// Handles full XHTML documents: if the content starts with `<?xml`, `<!DOCTYPE`,
+/// or `<html`, the function locates `<body>` first and looks for the heading there.
 pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let bytes = content.as_bytes();
     let trimmed_start = super::text_utils::skip_whitespace(bytes);
-    let rest = &bytes[trimmed_start..];
+
+    // Determine where to look for the heading. If the content is a full XHTML
+    // document, skip past `<body...>` first.
+    let body_start = find_body_content_start(content, trimmed_start).unwrap_or(trimmed_start);
+    let search_start = body_start + super::text_utils::skip_whitespace(&bytes[body_start..]);
+    let rest = &bytes[search_start..];
 
     // Must start with '<h1' or '<h2' (case-insensitive).
     if rest.len() < 4 || rest[0] != b'<' {
@@ -64,7 +72,7 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let close_tag: [u8; 5] = [b'<', b'/', b'h', heading_level, b'>'];
 
     // Find the closing tag (case-insensitive).
-    let rest_str = &content[trimmed_start..];
+    let rest_str = &content[search_start..];
     let close_pos = match super::text_utils::find_case_insensitive(rest_str.as_bytes(), &close_tag)
     {
         Some(pos) => pos,
@@ -88,11 +96,35 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let normalised_title = normalise(title);
 
     if normalised_heading.eq_ignore_ascii_case(&normalised_title) {
-        let after_close = trimmed_start + close_pos + close_tag.len();
+        let after_close = search_start + close_pos + close_tag.len();
         content[after_close..].trim_start()
     } else {
         content
     }
+}
+
+/// If `content` contains a `<body...>` tag, returns the byte offset just after
+/// the closing `>`. Returns `None` if no `<body` is found.
+fn find_body_content_start(content: &str, from: usize) -> Option<usize> {
+    let bytes = &content.as_bytes()[from..];
+    // Only bother looking for <body if content looks like a full document.
+    if bytes.len() < 6 {
+        return None;
+    }
+    let first = bytes[0];
+    // Quick check: full XHTML docs start with '<' followed by '?', '!', or 'h'/'H'.
+    if first != b'<' {
+        return None;
+    }
+    let second = bytes[1];
+    if !(second == b'?' || second == b'!' || second.eq_ignore_ascii_case(&b'h')) {
+        return None;
+    }
+
+    let pos = super::text_utils::find_case_insensitive(bytes, b"<body")?;
+    let abs_pos = from + pos;
+    let gt = content[abs_pos..].find('>')?;
+    Some(abs_pos + gt + 1)
 }
 
 #[cfg(test)]
@@ -178,5 +210,32 @@ mod tests {
         let content = "<h1><b>Bold Title</b></h1><p>Content</p>";
         let result = strip_leading_heading(content, "Bold Title");
         assert_eq!(result, "<p>Content</p>");
+    }
+
+    #[test]
+    fn strip_leading_heading_full_xhtml_document() {
+        let content = r#"<?xml version='1.0' encoding='utf-8'?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>My Title</title></head>
+<body>
+  <h1 class="center">My Title</h1>
+  <p>Body text</p>
+</body>
+</html>"#;
+        let result = strip_leading_heading(content, "My Title");
+        assert!(
+            !result.contains("<h1"),
+            "heading should be stripped, got: {result}"
+        );
+        assert!(result.contains("<p>Body text</p>"));
+    }
+
+    #[test]
+    fn strip_leading_heading_full_xhtml_no_match() {
+        let content = r#"<?xml version='1.0'?>
+<html><head><title>T</title></head>
+<body><h1>Different</h1><p>Text</p></body></html>"#;
+        let result = strip_leading_heading(content, "Not This");
+        assert_eq!(result, content);
     }
 }
