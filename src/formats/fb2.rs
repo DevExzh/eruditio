@@ -1,6 +1,6 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::html_utils::{escape_html, strip_tags};
+use crate::formats::common::html_utils::escape_html;
 use base64::Engine;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -195,6 +195,133 @@ impl FormatWriter for Fb2Writer {
     }
 }
 
+/// Converts HTML content into FB2 paragraph elements.
+///
+/// - Wraps text inside `<p>` tags as FB2 `<p>` elements.
+/// - Converts `<a href="...">text</a>` to `<a l:href="...">text</a>`.
+/// - Emits `<empty-line/>` only for explicit `<br>` / `<br/>` tags in the source,
+///   NOT after every paragraph boundary.
+/// - Text outside any `<p>` is treated as implicit paragraphs (split by newlines).
+fn html_to_fb2_paragraphs(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+    let mut pos = 0;
+
+    // We accumulate inline content (text + converted links) per paragraph.
+    // When we encounter </p> or end-of-input, we flush the paragraph.
+    let mut inline_buf = String::new();
+    let mut in_p = false;
+
+    while pos < len {
+        if bytes[pos] == b'<' {
+            // Parse the tag
+            if let Some(gt) = memchr::memchr(b'>', &bytes[pos..]) {
+                let tag_bytes = &bytes[pos..pos + gt + 1];
+                let tag_str = std::str::from_utf8(tag_bytes).unwrap_or("");
+                let tag_lower = tag_str.to_ascii_lowercase();
+
+                if tag_lower.starts_with("<p") && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ') {
+                    // Opening <p> tag – start accumulating inline content
+                    flush_paragraph(&mut out, &mut inline_buf);
+                    in_p = true;
+                    pos += gt + 1;
+                } else if tag_lower.starts_with("</p") {
+                    // Closing </p> tag – flush current paragraph
+                    flush_paragraph(&mut out, &mut inline_buf);
+                    in_p = false;
+                    pos += gt + 1;
+                } else if tag_lower.starts_with("<br") {
+                    // <br> or <br/> – emit empty-line in FB2
+                    flush_paragraph(&mut out, &mut inline_buf);
+                    out.push_str("      <empty-line/>\n");
+                    pos += gt + 1;
+                } else if tag_lower.starts_with("<a ") || tag_lower.starts_with("<a>") {
+                    // Opening <a> tag – extract href and convert to l:href
+                    if let Some(href) = extract_href(tag_str) {
+                        inline_buf.push_str("<a l:href=\"");
+                        inline_buf.push_str(&escape_html(&href));
+                        inline_buf.push_str("\">");
+                    }
+                    // If no href, just skip the tag (keep the text content)
+                    pos += gt + 1;
+                } else if tag_lower.starts_with("</a") {
+                    // Closing </a> tag
+                    // Only close if we opened one (check if there's an open <a> in inline_buf)
+                    if inline_buf.contains("<a l:href=") {
+                        inline_buf.push_str("</a>");
+                    }
+                    pos += gt + 1;
+                } else {
+                    // Other tags (e.g. <b>, <em>, <div>, etc.) – skip the tag, keep going
+                    pos += gt + 1;
+                }
+            } else {
+                // Unclosed '<' – treat as text
+                inline_buf.push_str(&escape_html(&html[pos..pos + 1]));
+                pos += 1;
+            }
+        } else {
+            // Regular text content
+            let next_lt = memchr::memchr(b'<', &bytes[pos..]).unwrap_or(len - pos);
+            let text = &html[pos..pos + next_lt];
+            if in_p {
+                // Inside a <p>, accumulate text
+                inline_buf.push_str(&escape_html(text));
+            } else {
+                // Outside <p>: treat non-empty lines as paragraphs
+                for line in text.split('\n') {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        inline_buf.push_str(&escape_html(trimmed));
+                        flush_paragraph(&mut out, &mut inline_buf);
+                    }
+                }
+            }
+            pos += next_lt;
+        }
+    }
+
+    // Flush any trailing inline content
+    flush_paragraph(&mut out, &mut inline_buf);
+    out
+}
+
+/// If the inline buffer has content, wrap it in `<p>...</p>` and append to `out`.
+fn flush_paragraph(out: &mut String, inline_buf: &mut String) {
+    let trimmed = inline_buf.trim();
+    if !trimmed.is_empty() {
+        out.push_str("      <p>");
+        out.push_str(trimmed);
+        out.push_str("</p>\n");
+    }
+    inline_buf.clear();
+}
+
+/// Extracts the `href` attribute value from an `<a ...>` tag string.
+fn extract_href(tag: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let href_pos = lower.find("href=")?;
+    let after_eq = href_pos + 5; // length of "href="
+    let bytes = tag.as_bytes();
+    if after_eq >= bytes.len() {
+        return None;
+    }
+    let quote = bytes[after_eq];
+    if quote == b'"' || quote == b'\'' {
+        let start = after_eq + 1;
+        let end = memchr::memchr(quote, &bytes[start..])?;
+        Some(tag[start..start + end].to_string())
+    } else {
+        // Unquoted value – take until whitespace or '>'
+        let start = after_eq;
+        let end = tag[start..]
+            .find(|c: char| c.is_whitespace() || c == '>')
+            .unwrap_or(tag.len() - start);
+        Some(tag[start..start + end].to_string())
+    }
+}
+
 /// Generates a complete FictionBook 2.0 XML document from a `Book`.
 fn generate_fb2(book: &Book) -> String {
     let mut xml = String::with_capacity(4096);
@@ -206,6 +333,15 @@ fn generate_fb2(book: &Book) -> String {
     // Description / title-info
     xml.push_str("  <description>\n");
     xml.push_str("    <title-info>\n");
+
+    // Genre (FB2 requires at least one)
+    if let Some(subject) = book.metadata.subjects.first() {
+        xml.push_str("      <genre>");
+        xml.push_str(&escape_html(subject));
+        xml.push_str("</genre>\n");
+    } else {
+        xml.push_str("      <genre>other</genre>\n");
+    }
 
     // Authors
     for author in &book.metadata.authors {
@@ -253,7 +389,26 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("      </annotation>\n");
     }
 
+    // Coverpage – look for a cover image in the manifest
+    let cover_id = book
+        .manifest
+        .iter()
+        .find(|item| {
+            item.id.to_lowercase().contains("cover")
+                && item.media_type.starts_with("image/")
+        })
+        .map(|item| item.id.clone());
+    if cover_id.is_some() {
+        xml.push_str("      <coverpage><image l:href=\"#cover\"/></coverpage>\n");
+    }
+
     xml.push_str("    </title-info>\n");
+
+    // Document-info (metadata about this conversion)
+    xml.push_str("    <document-info>\n");
+    xml.push_str("      <program-used>eruditio</program-used>\n");
+    xml.push_str("      <date>2024-01-01</date>\n");
+    xml.push_str("    </document-info>\n");
 
     // Publish-info (publisher, isbn, year)
     let has_publisher = book.metadata.publisher.is_some();
@@ -291,17 +446,8 @@ fn generate_fb2(book: &Book) -> String {
             xml.push_str("</p></title>\n");
         }
         // Convert HTML content to FB2 paragraphs.
-        let plain = strip_tags(&chapter.content);
-        for line in plain.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                xml.push_str("      <empty-line/>\n");
-            } else {
-                xml.push_str("      <p>");
-                xml.push_str(&escape_html(trimmed));
-                xml.push_str("</p>\n");
-            }
-        }
+        let fb2_content = html_to_fb2_paragraphs(&chapter.content);
+        xml.push_str(&fb2_content);
         xml.push_str("    </section>\n");
     }
     xml.push_str("  </body>\n");
@@ -535,6 +681,226 @@ mod tests {
                 .format("%Y")
                 .to_string(),
             "2024"
+        );
+    }
+
+    // =========================================================================
+    // New tests for the 5 FB2 writer enhancements
+    // =========================================================================
+
+    #[test]
+    fn fb2_writer_includes_document_info() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Doc Info Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<document-info>"),
+            "missing <document-info>"
+        );
+        assert!(
+            xml.contains("<program-used>eruditio</program-used>"),
+            "missing program-used"
+        );
+        assert!(
+            xml.contains("<date>2024-01-01</date>"),
+            "missing date in document-info"
+        );
+        assert!(
+            xml.contains("</document-info>"),
+            "missing </document-info>"
+        );
+
+        // Verify ordering: document-info comes after title-info and before publish-info / </description>
+        let ti_end = xml.find("</title-info>").expect("no </title-info>");
+        let di_start = xml.find("<document-info>").expect("no <document-info>");
+        let desc_end = xml.find("</description>").expect("no </description>");
+        assert!(
+            di_start > ti_end,
+            "document-info should come after title-info"
+        );
+        assert!(
+            di_start < desc_end,
+            "document-info should come before </description>"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_includes_genre_from_subjects() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Genre Test".into());
+        book.metadata.subjects.push("science_fiction".into());
+        book.metadata.subjects.push("adventure".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<genre>science_fiction</genre>"),
+            "should use first subject as genre, got: {}",
+            xml
+        );
+        // Genre should appear before <author>
+        let genre_pos = xml.find("<genre>").unwrap();
+        let author_pos = xml.find("<author>").unwrap();
+        assert!(genre_pos < author_pos, "genre should appear before author");
+    }
+
+    #[test]
+    fn fb2_writer_includes_default_genre_when_no_subjects() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Default Genre".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<genre>other</genre>"),
+            "should use 'other' as default genre"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_includes_coverpage_when_cover_image_exists() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Cover Test".into());
+        book.add_resource("cover", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<coverpage><image l:href=\"#cover\"/></coverpage>"),
+            "missing coverpage element, got:\n{}",
+            xml
+        );
+        // Coverpage should be inside title-info
+        let ti_start = xml.find("<title-info>").unwrap();
+        let ti_end = xml.find("</title-info>").unwrap();
+        let cp_pos = xml.find("<coverpage>").unwrap();
+        assert!(cp_pos > ti_start && cp_pos < ti_end, "coverpage should be inside title-info");
+    }
+
+    #[test]
+    fn fb2_writer_omits_coverpage_when_no_cover_image() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Cover".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            !xml.contains("<coverpage>"),
+            "coverpage should not be present without a cover image"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_converts_hyperlinks() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Link Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<p>Click <a href="http://example.com">here</a> for more.</p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains(r#"<a l:href="http://example.com">here</a>"#),
+            "hyperlinks should be converted to l:href format, got:\n{}",
+            xml
+        );
+        assert!(
+            xml.contains("Click "),
+            "text before link should be preserved"
+        );
+        assert!(
+            xml.contains(" for more."),
+            "text after link should be preserved"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_no_excessive_empty_lines() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Empty Line Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>First paragraph</p><p>Second paragraph</p><p>Third paragraph</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let empty_line_count = xml.matches("<empty-line/>").count();
+        assert_eq!(
+            empty_line_count, 0,
+            "consecutive <p> tags should NOT produce empty-lines, but found {}",
+            empty_line_count
+        );
+        // All three paragraphs should be present
+        assert!(xml.contains("<p>First paragraph</p>"));
+        assert!(xml.contains("<p>Second paragraph</p>"));
+        assert!(xml.contains("<p>Third paragraph</p>"));
+    }
+
+    #[test]
+    fn fb2_writer_emits_empty_line_for_br() {
+        let mut book = Book::new();
+        book.metadata.title = Some("BR Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Before break</p><br/><p>After break</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let empty_line_count = xml.matches("<empty-line/>").count();
+        assert_eq!(
+            empty_line_count, 1,
+            "a <br/> between paragraphs should produce exactly one empty-line, got {}",
+            empty_line_count
         );
     }
 }
