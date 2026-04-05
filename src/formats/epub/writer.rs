@@ -462,4 +462,79 @@ mod tests {
         let mimetype = archive.by_name("mimetype").unwrap();
         assert_eq!(mimetype.compression(), CompressionMethod::Stored);
     }
+
+    #[test]
+    fn css_resources_included_in_epub_zip() {
+        use crate::domain::ManifestItem;
+        use std::io::Read as _;
+
+        let mut book = sample_book();
+
+        // Add CSS as binary data (via add_resource, the public API).
+        book.add_resource(
+            "stylesheet",
+            "styles/stylesheet.css",
+            b"body { margin: 0; }".to_vec(),
+            "text/css",
+        );
+
+        // Also add CSS as ManifestData::Text (the way the EPUB reader loads it).
+        let css_item = ManifestItem::new("extra-css", "styles/extra.css", "text/css")
+            .with_text("h1 { color: red; }");
+        book.manifest.insert(css_item);
+
+        let mut output = Cursor::new(Vec::new());
+        write_epub(&book, &mut output).unwrap();
+
+        output.set_position(0);
+        let mut archive = zip::ZipArchive::new(output).unwrap();
+
+        // Verify both CSS files exist in the ZIP at the correct paths.
+        {
+            let mut css_file = archive
+                .by_name("OEBPS/styles/stylesheet.css")
+                .expect("CSS file (Inline) missing from EPUB ZIP");
+            let mut contents = Vec::new();
+            css_file.read_to_end(&mut contents).unwrap();
+            assert_eq!(contents, b"body { margin: 0; }");
+        }
+        {
+            let mut css_file = archive
+                .by_name("OEBPS/styles/extra.css")
+                .expect("CSS file (Text) missing from EPUB ZIP");
+            let mut contents = String::new();
+            css_file.read_to_string(&mut contents).unwrap();
+            assert_eq!(contents, "h1 { color: red; }");
+        }
+    }
+
+    #[test]
+    fn css_items_appear_in_opf_manifest() {
+        use crate::domain::ManifestItem;
+
+        let mut book = sample_book();
+
+        book.add_resource(
+            "stylesheet",
+            "styles/stylesheet.css",
+            b"body { margin: 0; }".to_vec(),
+            "text/css",
+        );
+
+        let css_item = ManifestItem::new("extra-css", "styles/extra.css", "text/css")
+            .with_text("h1 { color: red; }");
+        book.manifest.insert(css_item);
+
+        let opf = generate_opf(&book);
+
+        // Both CSS items must be listed in the OPF <manifest> with correct media-type.
+        assert!(
+            opf.contains(r#"id="stylesheet" href="styles/stylesheet.css" media-type="text/css""#),
+            "OPF manifest missing stylesheet item"
+        );
+        assert!(
+            opf.contains(r#"id="extra-css" href="styles/extra.css" media-type="text/css""#),
+            "OPF manifest missing extra-css item"
+        );
+    }
 }
