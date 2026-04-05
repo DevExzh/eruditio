@@ -16,6 +16,17 @@ pub fn book_to_rtf(book: &Book) -> String {
     // Color table.
     rtf.push_str("{\\colortbl;\\red0\\green0\\blue0;}\n");
 
+    // Stylesheet.
+    rtf.push_str("{\\stylesheet\n");
+    rtf.push_str("{\\s0\\f0\\fs24 Normal;}\n");
+    rtf.push_str("{\\s1\\f0\\fs48\\b Heading 1;}\n");
+    rtf.push_str("{\\s2\\f0\\fs36\\b Heading 2;}\n");
+    rtf.push_str("{\\s3\\f0\\fs32\\b Heading 3;}\n");
+    rtf.push_str("{\\s4\\f0\\fs28\\b Heading 4;}\n");
+    rtf.push_str("{\\s5\\f0\\fs24\\b\\i Heading 5;}\n");
+    rtf.push_str("{\\s6\\f0\\fs24\\i Heading 6;}\n");
+    rtf.push_str("}\n");
+
     // Info group (metadata).
     write_info_group(book, &mut rtf);
 
@@ -30,11 +41,11 @@ pub fn book_to_rtf(book: &Book) -> String {
             rtf.push_str("\\page\n");
         }
 
-        // Chapter title as bold heading.
+        // Chapter title as Heading 1 style.
         if let Some(ref title) = chapter.title {
-            rtf.push_str("{\\b\\fs32 ");
+            rtf.push_str("{\\pard\\s1\\f0\\fs48\\b ");
             write_rtf_text(&mut rtf, title);
-            rtf.push_str("}\\par\\par\n");
+            rtf.push_str("}\\par\\pard\\s0\\f0\\fs24\\par\n");
         }
 
         // Strip duplicate heading from content before converting.
@@ -146,14 +157,24 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 && tag_bytes[1].eq_ignore_ascii_case(&b'h')
                 && tag_bytes[2].is_ascii_digit()
             {
-                // Heading -- bold, larger font.
-                rtf.push_str("{\\b\\fs32 ");
+                // Heading -- style reference with level-appropriate formatting.
+                let level = (tag_bytes[2] - b'0') as u8;
+                let style_ref = match level {
+                    1 => "\\pard\\s1\\f0\\fs48\\b ",
+                    2 => "\\pard\\s2\\f0\\fs36\\b ",
+                    3 => "\\pard\\s3\\f0\\fs32\\b ",
+                    4 => "\\pard\\s4\\f0\\fs28\\b ",
+                    5 => "\\pard\\s5\\f0\\fs24\\b\\i ",
+                    6 => "\\pard\\s6\\f0\\fs24\\i ",
+                    _ => "\\pard\\s1\\f0\\fs48\\b ",
+                };
+                rtf.push_str(style_ref);
             } else if tag_bytes.len() >= 5
                 && tag_bytes[0] == b'<'
                 && tag_bytes[1] == b'/'
                 && tag_bytes[2].eq_ignore_ascii_case(&b'h')
             {
-                rtf.push_str("}\\par\\par\n");
+                rtf.push_str("\\par\\pard\\s0\\f0\\fs24\\par\n");
             }
             // Other tags are silently skipped.
 
@@ -355,10 +376,103 @@ mod tests {
         });
 
         let rtf = book_to_rtf(&book);
-        // The title "Ch 1" should appear exactly once as a bold heading.
-        // Count occurrences of "Ch 1" in the RTF output.
+        // The title "Ch 1" should appear exactly once as a styled heading.
         let count = rtf.matches("Ch 1").count();
         assert_eq!(count, 1, "Expected 'Ch 1' once, found {count} times in: {rtf}");
         assert!(rtf.contains("Body text"));
+    }
+
+    #[test]
+    fn stylesheet_group_present() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Title".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("{\\stylesheet"),
+            "RTF should contain a stylesheet group"
+        );
+        assert!(
+            rtf.contains("\\s0\\f0\\fs24 Normal;"),
+            "Stylesheet should contain Normal style"
+        );
+        assert!(
+            rtf.contains("\\s1\\f0\\fs48\\b Heading 1;"),
+            "Stylesheet should contain Heading 1 style"
+        );
+        assert!(
+            rtf.contains("\\s6\\f0\\fs24\\i Heading 6;"),
+            "Stylesheet should contain Heading 6 style"
+        );
+    }
+
+    #[test]
+    fn heading_levels_produce_different_font_sizes() {
+        let mut rtf = String::new();
+        html_to_rtf(
+            "<h1>H1</h1><h2>H2</h2><h3>H3</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
+            &mut rtf,
+        );
+
+        assert!(
+            rtf.contains("\\pard\\s1\\f0\\fs48\\b H1"),
+            "H1 should use fs48, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\pard\\s2\\f0\\fs36\\b H2"),
+            "H2 should use fs36, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\pard\\s3\\f0\\fs32\\b H3"),
+            "H3 should use fs32, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\pard\\s4\\f0\\fs28\\b H4"),
+            "H4 should use fs28, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\pard\\s5\\f0\\fs24\\b\\i H5"),
+            "H5 should use fs24 bold italic, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\pard\\s6\\f0\\fs24\\i H6"),
+            "H6 should use fs24 italic, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn normal_style_restored_after_heading() {
+        let mut rtf = String::new();
+        html_to_rtf("<h2>Title</h2><p>Body</p>", &mut rtf);
+
+        // After the heading, Normal style should be restored via \pard\s0\f0\fs24
+        assert!(
+            rtf.contains("\\par\\pard\\s0\\f0\\fs24\\par"),
+            "Normal style should be restored after heading, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn chapter_title_uses_heading1_style() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("My Chapter".into()),
+            content: "<p>Body</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("\\pard\\s1\\f0\\fs48\\b My Chapter"),
+            "Chapter title should use Heading 1 style, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\par\\pard\\s0\\f0\\fs24\\par"),
+            "Normal style should be restored after chapter title, got: {rtf}"
+        );
     }
 }
