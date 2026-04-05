@@ -62,7 +62,7 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
             None => break,
         };
         let after_lt = pos + 1;
-        if after_lt >= bytes.len() || bytes[after_lt] != b'h' {
+        if after_lt >= bytes.len() || !bytes[after_lt].eq_ignore_ascii_case(&b'h') {
             search_from = pos + 1;
             continue;
         }
@@ -78,7 +78,6 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
             continue;
         }
         let level = level_byte - b'0';
-        let close_tag = CLOSE_TAGS[(level - 1) as usize];
 
         // Find the end of the opening tag using memchr.
         let content_start = match memchr::memchr(b'>', &bytes[pos..]) {
@@ -86,8 +85,9 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
             None => break,
         };
 
-        // Find the closing tag.
-        let content_end = match html[content_start..].find(close_tag) {
+        // Find the closing tag (case-insensitive).
+        let close_lower = CLOSE_TAGS[(level - 1) as usize];
+        let content_end = match find_case_insensitive(&html[content_start..], close_lower) {
             Some(ct) => content_start + ct,
             None => {
                 search_from = content_start;
@@ -102,10 +102,29 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
             headings.push((text, level));
         }
 
-        search_from = content_end + close_tag.len();
+        search_from = content_end + close_lower.len();
     }
 
     headings
+}
+
+/// Finds a substring in a case-insensitive manner, returning the byte offset.
+/// `needle` must be lowercase ASCII.
+fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || h.len() < n.len() {
+        return None;
+    }
+    'outer: for i in 0..=(h.len() - n.len()) {
+        for j in 0..n.len() {
+            if !h[i + j].eq_ignore_ascii_case(&n[j]) {
+                continue 'outer;
+            }
+        }
+        return Some(i);
+    }
+    None
 }
 
 /// Strips HTML tags from a string, returning only text content.
@@ -176,5 +195,24 @@ mod tests {
         // TOC already had entries from add_chapter, so it should be unchanged.
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].title, "Existing");
+    }
+
+    #[test]
+    fn extracts_uppercase_headings() {
+        let html = "<H1>Title</H1><p>Text</p><H2>Subtitle</H2>";
+        let headings = extract_headings(html);
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0], ("Title".into(), 1));
+        assert_eq!(headings[1], ("Subtitle".into(), 2));
+    }
+
+    #[test]
+    fn extracts_mixed_case_headings() {
+        let html = "<h1>Lower</h1><H1>Upper</H1><H3>Third</H3>";
+        let headings = extract_headings(html);
+        assert_eq!(headings.len(), 3);
+        assert_eq!(headings[0], ("Lower".into(), 1));
+        assert_eq!(headings[1], ("Upper".into(), 1));
+        assert_eq!(headings[2], ("Third".into(), 3));
     }
 }

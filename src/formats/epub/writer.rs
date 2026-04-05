@@ -291,6 +291,22 @@ fn generate_ncx(book: &Book) -> String {
 }
 
 fn write_ncx_navpoint(item: &TocItem, xml: &mut String, play_order: &mut u32, indent: usize) {
+    write_ncx_navpoint_depth(item, xml, play_order, indent, 0);
+}
+
+/// Maximum nesting depth for NCX nav-points, matching `MAX_TOC_DEPTH` in `domain::toc`.
+const MAX_NCX_DEPTH: usize = 64;
+
+fn write_ncx_navpoint_depth(
+    item: &TocItem,
+    xml: &mut String,
+    play_order: &mut u32,
+    indent: usize,
+    depth: usize,
+) {
+    if depth >= MAX_NCX_DEPTH {
+        return;
+    }
     // Use a fixed indentation buffer to avoid "  ".repeat() allocation per call.
     const INDENT_BUF: &str = "                                ";
     let pad_len = (indent * 2).min(INDENT_BUF.len());
@@ -321,7 +337,7 @@ fn write_ncx_navpoint(item: &TocItem, xml: &mut String, play_order: &mut u32, in
     xml.push_str("\"/>\n");
 
     for child in &item.children {
-        write_ncx_navpoint(child, xml, play_order, indent + 1);
+        write_ncx_navpoint_depth(child, xml, play_order, indent + 1, depth + 1);
     }
 
     xml.push_str(pad);
@@ -535,6 +551,42 @@ mod tests {
         assert!(
             opf.contains(r#"id="extra-css" href="styles/extra.css" media-type="text/css""#),
             "OPF manifest missing extra-css item"
+        );
+    }
+
+    #[test]
+    fn ncx_respects_depth_limit() {
+        // Build a deeply nested TOC (deeper than MAX_NCX_DEPTH) and ensure
+        // the writer terminates without panicking or infinite recursion.
+        let mut item = TocItem {
+            title: "Leaf".into(),
+            href: "leaf.xhtml".into(),
+            id: Some("leaf".into()),
+            children: Vec::new(),
+            play_order: None,
+        };
+        // Nest 100 levels deep (well beyond MAX_NCX_DEPTH = 64).
+        for i in (0..100).rev() {
+            item = TocItem {
+                title: format!("Level {}", i),
+                href: format!("ch{}.xhtml", i),
+                id: Some(format!("nav-{}", i)),
+                children: vec![item],
+                play_order: None,
+            };
+        }
+
+        let mut xml = String::new();
+        let mut play_order = 1u32;
+        write_ncx_navpoint(&item, &mut xml, &mut play_order, 0);
+
+        // Should contain the top-level navPoint but stop well before level 100.
+        assert!(xml.contains("Level 0"));
+        // play_order should not reach 100, meaning recursion was cut off.
+        assert!(
+            (play_order as usize) <= MAX_NCX_DEPTH + 1,
+            "play_order {} exceeds depth limit",
+            play_order
         );
     }
 }

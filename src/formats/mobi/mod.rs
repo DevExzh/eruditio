@@ -376,7 +376,7 @@ fn detect_image_type(data: &[u8]) -> (&'static str, &'static str) {
         ("png", "image/png")
     } else if data.len() >= 4 && &data[0..4] == b"GIF8" {
         ("gif", "image/gif")
-    } else if data.len() >= 4 && &data[0..4] == b"BM\x00\x00" {
+    } else if data.len() >= 2 && &data[0..2] == b"BM" {
         ("bmp", "image/bmp")
     } else if data.len() >= 4 && &data[0..4] == b"RIFF" {
         ("webp", "image/webp")
@@ -742,5 +742,24 @@ mod tests {
     fn extract_heading_mixed_case_h2() {
         let html = "<p>Intro</p><H2>Second Level</H2><p>More</p>";
         assert_eq!(extract_first_heading(html), Some("Second Level".into()));
+    }
+
+    #[test]
+    fn detect_bmp_with_nonzero_file_size() {
+        // BMP files start with "BM" followed by a 4-byte little-endian file size.
+        // The old check required bytes 2-3 to be 0x00, which fails for real BMP files.
+        let data = b"BM\x36\x04\x00\x00"; // "BM" + file size 1078 in LE
+        let (ext, mime) = detect_image_type(data);
+        assert_eq!(ext, "bmp");
+        assert_eq!(mime, "image/bmp");
+    }
+
+    #[test]
+    fn detect_bmp_minimal() {
+        // Minimal 2-byte BM signature should be enough.
+        let data = b"BM";
+        let (ext, mime) = detect_image_type(data);
+        assert_eq!(ext, "bmp");
+        assert_eq!(mime, "image/bmp");
     }
 }
