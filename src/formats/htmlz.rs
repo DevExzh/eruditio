@@ -59,6 +59,14 @@ impl FormatReader for HtmlzReader {
             }
         }
 
+        // Load style.css if present.
+        if let Ok(mut css_file) = archive.by_name("style.css") {
+            let mut css_data = Vec::new();
+            if css_file.read_to_end(&mut css_data).is_ok() && !css_data.is_empty() {
+                book.add_resource("style", "style.css", css_data, "text/css");
+            }
+        }
+
         // Extract image resources from the archive.
         let file_names: Vec<String> = (0..archive.len())
             .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
@@ -103,7 +111,34 @@ impl FormatWriter for HtmlzWriter {
             let options: FileOptions<'_, ()> =
                 FileOptions::default().compression_method(CompressionMethod::Deflated);
 
-            // 1. Write index.html (HTML content without data URI images)
+            // Collect CSS content: use manifest CSS resources, or generate a default
+            let resources = book.resources();
+            let css_resources: Vec<_> = resources
+                .iter()
+                .filter(|r| r.media_type == "text/css")
+                .collect();
+
+            let css_content = if css_resources.is_empty() {
+                default_stylesheet().to_string()
+            } else {
+                // Concatenate all CSS resources into a single style.css
+                let mut combined = String::new();
+                for res in &css_resources {
+                    if let Ok(text) = std::str::from_utf8(res.data) {
+                        if !combined.is_empty() {
+                            combined.push('\n');
+                        }
+                        combined.push_str(text);
+                    }
+                }
+                if combined.is_empty() {
+                    default_stylesheet().to_string()
+                } else {
+                    combined
+                }
+            };
+
+            // 1. Write index.html (HTML content with stylesheet link)
             let html = generate_htmlz_content(book);
             zip.start_file("index.html", options)
                 .map_err(|e| EruditioError::Format(format!("Failed to write index.html: {}", e)))?;
@@ -117,8 +152,14 @@ impl FormatWriter for HtmlzWriter {
                 })?;
             zip.write_all(opf.as_bytes())?;
 
-            // 3. Write image resources
-            let resources = book.resources();
+            // 3. Write style.css
+            zip.start_file("style.css", options)
+                .map_err(|e| {
+                    EruditioError::Format(format!("Failed to write style.css: {}", e))
+                })?;
+            zip.write_all(css_content.as_bytes())?;
+
+            // 4. Write image resources
             for res in &resources {
                 if res.media_type.starts_with("image/") {
                     let filename = res.href.rsplit('/').next().unwrap_or(res.href);
@@ -140,6 +181,7 @@ impl FormatWriter for HtmlzWriter {
 }
 
 /// Generates HTML content for the HTMLZ archive (without data URI embedding).
+/// Includes a `<link>` to `style.css` in the `<head>`.
 fn generate_htmlz_content(book: &Book) -> String {
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     let chapters = book.chapters();
@@ -162,7 +204,15 @@ fn generate_htmlz_content(book: &Book) -> String {
 
     // DO NOT embed resources as data URIs — they are written as separate ZIP entries
 
-    crate::formats::html::parser::build_html_document(title, &book.metadata, &body)
+    let mut html =
+        crate::formats::html::parser::build_html_document(title, &book.metadata, &body);
+
+    // Inject stylesheet link into <head> (before </head>)
+    if let Some(pos) = html.find("</head>") {
+        html.insert_str(pos, "<link rel=\"stylesheet\" href=\"style.css\">\n");
+    }
+
+    html
 }
 
 /// Generates a simplified OPF metadata document for the HTMLZ archive.
@@ -388,6 +438,26 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
     }
 }
 
+/// Returns a minimal default stylesheet matching calibre's HTMLZ output behavior.
+fn default_stylesheet() -> &'static str {
+    "\
+body {
+  margin: 5%;
+  font-family: serif;
+  line-height: 1.6;
+}
+h1, h2, h3 {
+  font-family: sans-serif;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+h1 { font-size: 1.8em; }
+h2 { font-size: 1.4em; }
+h3 { font-size: 1.2em; }
+p { margin: 0.5em 0; text-indent: 1.5em; }
+"
+}
+
 /// Guesses MIME type from a filename extension.
 fn guess_media_type(filename: &str) -> &'static str {
     match filename.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
@@ -397,6 +467,7 @@ fn guess_media_type(filename: &str) -> &'static str {
         Some("svg") => "image/svg+xml",
         Some("webp") => "image/webp",
         Some("bmp") => "image/bmp",
+        Some("css") => "text/css",
         _ => "application/octet-stream",
     }
 }
@@ -598,7 +669,11 @@ mod tests {
         let decoded = HtmlzReader::new().read_book(&mut cursor).unwrap();
 
         let resources = decoded.resources();
-        assert_eq!(resources.len(), 2, "Should have 2 image resources");
+        let image_resources: Vec<_> = resources
+            .iter()
+            .filter(|r| r.media_type.starts_with("image/"))
+            .collect();
+        assert_eq!(image_resources.len(), 2, "Should have 2 image resources");
 
         // Check data is preserved (order may vary)
         let jpeg_res = resources.iter().find(|r| r.media_type == "image/jpeg");
@@ -731,5 +806,117 @@ mod tests {
         assert_eq!(book.metadata.language.as_deref(), Some("en"));
         // Authors from OPF should be used since HTML had none
         assert_eq!(book.metadata.authors, vec!["OPF Author"]);
+    }
+
+    #[test]
+    fn htmlz_writer_includes_style_css_from_manifest() {
+        let mut book = Book::new();
+        book.metadata.title = Some("CSS Test".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Styled content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        let css = b"body { color: red; }";
+        book.add_resource("my-style", "styles/main.css", css.to_vec(), "text/css");
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Verify the ZIP contains style.css with the manifest CSS content
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut css_file = archive.by_name("style.css").expect("style.css should exist");
+        let mut css_content = String::new();
+        css_file.read_to_string(&mut css_content).unwrap();
+        assert!(
+            css_content.contains("body { color: red; }"),
+            "style.css should contain manifest CSS"
+        );
+    }
+
+    #[test]
+    fn htmlz_writer_generates_default_stylesheet_when_no_css() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No CSS".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Plain content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Verify the ZIP contains style.css with default stylesheet
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut css_file = archive.by_name("style.css").expect("style.css should exist");
+        let mut css_content = String::new();
+        css_file.read_to_string(&mut css_content).unwrap();
+        assert!(
+            css_content.contains("font-family: serif"),
+            "Default stylesheet should contain basic font styling"
+        );
+        assert!(
+            css_content.contains("margin: 5%"),
+            "Default stylesheet should contain body margins"
+        );
+    }
+
+    #[test]
+    fn htmlz_index_html_contains_stylesheet_link() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Link Test".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut html_file = archive.by_name("index.html").unwrap();
+        let mut html_content = String::new();
+        html_file.read_to_string(&mut html_content).unwrap();
+
+        assert!(
+            html_content.contains(r#"<link rel="stylesheet" href="style.css">"#),
+            "index.html should contain a link to style.css"
+        );
+    }
+
+    #[test]
+    fn htmlz_reader_loads_style_css() {
+        let mut book = Book::new();
+        book.metadata.title = Some("CSS Round Trip".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Styled</p>".into(),
+            id: Some("ch1".into()),
+        });
+        let css = b"h1 { font-size: 2em; }";
+        book.add_resource("custom-css", "custom.css", css.to_vec(), "text/css");
+
+        // Write
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back
+        let mut cursor = Cursor::new(output);
+        let decoded = HtmlzReader::new().read_book(&mut cursor).unwrap();
+
+        let resources = decoded.resources();
+        let css_res = resources.iter().find(|r| r.media_type == "text/css");
+        assert!(css_res.is_some(), "Should have CSS resource after reading");
+        assert!(
+            std::str::from_utf8(css_res.unwrap().data)
+                .unwrap()
+                .contains("font-size: 2em"),
+            "CSS content should be preserved"
+        );
     }
 }
