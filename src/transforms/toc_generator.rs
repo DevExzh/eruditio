@@ -33,14 +33,11 @@ impl Transform for TocGenerator {
                     continue;
                 }
 
-                // Try to extract a title from the content.
-                let title = item
-                    .data
-                    .as_text()
-                    .and_then(extract_first_heading)
-                    .unwrap_or_else(|| format!("Chapter {}", index + 1));
-
-                new_entries.push(TocItem::new(&title, &item.href));
+                // Only add a TOC entry if the content has a real heading.
+                // Skip items without headings (e.g. cover pages with just an image).
+                if let Some(title) = item.data.as_text().and_then(extract_first_heading) {
+                    new_entries.push(TocItem::new(&title, &item.href));
+                }
             }
         }
 
@@ -187,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn generator_uses_fallback_title() {
+    fn generator_skips_items_without_headings() {
         let mut book = Book::new();
         book.add_chapter(&Chapter {
             title: None,
@@ -199,7 +196,32 @@ mod tests {
         let toc_gen = TocGenerator;
         let result = toc_gen.apply(book).unwrap();
 
+        // Items without headings should be skipped entirely.
+        assert_eq!(result.toc.len(), 0);
+    }
+
+    #[test]
+    fn generator_skips_cover_page_image_only() {
+        let mut book = Book::new();
+        // Simulate a cover page that is just an image with no heading.
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<div><img src=\"cover.jpg\" alt=\"Cover\" /></div>".into(),
+            id: Some("cover".into()),
+        });
+        // Add a real chapter with a heading.
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<h1>Introduction</h1><p>Welcome</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.toc.clear();
+
+        let toc_gen = TocGenerator;
+        let result = toc_gen.apply(book).unwrap();
+
+        // Only the chapter with a real heading should appear.
         assert_eq!(result.toc.len(), 1);
-        assert_eq!(result.toc[0].title, "Chapter 1");
+        assert_eq!(result.toc[0].title, "Introduction");
     }
 }
