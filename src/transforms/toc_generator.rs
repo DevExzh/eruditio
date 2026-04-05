@@ -27,7 +27,7 @@ impl Transform for TocGenerator {
 
         // Add entries for spine items that aren't already in the TOC.
         let mut new_entries = Vec::new();
-        for (index, spine_item) in result.spine.iter().enumerate() {
+        for spine_item in result.spine.iter() {
             if let Some(item) = result.manifest.get(&spine_item.manifest_id) {
                 if existing_hrefs.contains(&item.href) {
                     continue;
