@@ -12,7 +12,7 @@ use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_
 use super::exth::{
     self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_DESCRIPTION, EXTH_ISBN,
     EXTH_LANGUAGE, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_SUBJECT,
-    EXTH_UPDATED_TITLE,
+    EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
 };
 use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 
@@ -328,6 +328,11 @@ fn build_metadata_exth(book: &Book, has_cover: bool) -> Vec<u8> {
         refs.push((EXTH_COVER_OFFSET, &cover_offset_bytes));
     }
 
+    // Thumbnail offset (same as cover — no image resizing available).
+    if has_cover {
+        refs.push((EXTH_THUMB_OFFSET, &cover_offset_bytes));
+    }
+
     // CDE type = EBOK (ebook).
     refs.push((EXTH_CDE_TYPE, b"EBOK"));
 
@@ -602,6 +607,82 @@ mod tests {
             decoded.metadata.identifier.as_deref(),
             Some("B00TEST1234"),
             "identifier should round-trip"
+        );
+    }
+
+    #[test]
+    fn cover_image_writes_exth_201_and_202() {
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Cover Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Add a minimal valid JPEG as cover image.
+        let fake_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02, 0xFF, 0xD9];
+        book.add_resource("cover", "cover.jpg", fake_jpeg, "image/jpeg");
+
+        let mobi_data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+
+        // Parse MOBI header to locate EXTH.
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        assert!(mobi_hdr.has_exth(), "EXTH flag should be set");
+
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+
+        // EXTH 201 (cover offset) should be present and equal to 0.
+        let cover_offset = exth
+            .get_u32(EXTH_COVER_OFFSET)
+            .expect("EXTH 201 (cover offset) should be present");
+        assert_eq!(cover_offset, 0, "cover offset should be 0");
+
+        // EXTH 202 (thumbnail offset) should be present and equal to 0.
+        let thumb_offset = exth
+            .get_u32(EXTH_THUMB_OFFSET)
+            .expect("EXTH 202 (thumbnail offset) should be present");
+        assert_eq!(thumb_offset, 0, "thumbnail offset should be 0");
+    }
+
+    #[test]
+    fn no_cover_omits_exth_201_and_202() {
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("No Cover Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+        // No image resources added.
+
+        let mobi_data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        assert!(mobi_hdr.has_exth(), "EXTH flag should be set");
+
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+
+        // Neither EXTH 201 nor 202 should be present when there is no cover.
+        assert!(
+            exth.get_u32(EXTH_COVER_OFFSET).is_none(),
+            "EXTH 201 should not be present without a cover image"
+        );
+        assert!(
+            exth.get_u32(EXTH_THUMB_OFFSET).is_none(),
+            "EXTH 202 should not be present without a cover image"
         );
     }
 }
