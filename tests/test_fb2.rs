@@ -84,6 +84,7 @@ fn fb2_writer_closes_emphasis_at_paragraph_boundary() {
         "emphasis should be reopened in next paragraph and closed when </em> is hit, got:\n{}",
         xml
     );
+    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis tags found:\n{xml}");
 }
 
 #[test]
@@ -112,6 +113,7 @@ fn fb2_writer_closes_strong_at_paragraph_boundary() {
         "strong should be reopened in next paragraph and closed when </b> is hit, got:\n{}",
         xml
     );
+    assert!(!xml.contains("<strong></strong>"), "spurious empty strong tags found:\n{xml}");
 }
 
 #[test]
@@ -140,4 +142,28 @@ fn fb2_writer_handles_nested_emphasis_strong_across_paragraphs() {
         "both should be reopened in next paragraph, got:\n{}",
         xml
     );
+    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis tags found:\n{xml}");
+    assert!(!xml.contains("<strong></strong>"), "spurious empty strong tags found:\n{xml}");
+}
+
+#[test]
+fn fb2_writer_emphasis_spanning_multiple_paragraphs() {
+    let mut book = Book::new();
+    book.metadata.title = Some("Multi-Para Emphasis Test".into());
+    book.add_chapter(&Chapter {
+        title: Some("Ch1".into()),
+        content: "<p>A <em>B</p><p>C</p><p>D</em> E</p>".into(),
+        id: Some("ch1".into()),
+    });
+
+    let mut output = Vec::new();
+    Fb2Writer::new().write_book(&book, &mut output).unwrap();
+    let xml = String::from_utf8(output).unwrap();
+
+    // Should have emphasis properly closed/reopened across all paragraphs
+    assert!(xml.contains("<emphasis>B</emphasis>"), "first para should have emphasis, got:\n{xml}");
+    assert!(xml.contains("<emphasis>C</emphasis>"), "middle para should have emphasis, got:\n{xml}");
+    assert!(xml.contains("<emphasis>D</emphasis>"), "last para should have emphasis before close, got:\n{xml}");
+    // No spurious empty paragraphs
+    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis found:\n{xml}");
 }

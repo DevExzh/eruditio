@@ -437,9 +437,17 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
 fn flush_paragraph(out: &mut String, inline_buf: &mut String) {
     let trimmed = inline_buf.trim();
     if !trimmed.is_empty() {
-        out.push_str("      <p>");
-        out.push_str(trimmed);
-        out.push_str("</p>\n");
+        // Skip paragraphs that contain only empty inline markup (no actual text)
+        let text_only = trimmed
+            .replace("<emphasis>", "")
+            .replace("</emphasis>", "")
+            .replace("<strong>", "")
+            .replace("</strong>", "");
+        if !text_only.trim().is_empty() {
+            out.push_str("      <p>");
+            out.push_str(trimmed);
+            out.push_str("</p>\n");
+        }
     }
     inline_buf.clear();
 }
