@@ -36,6 +36,13 @@ use crate::formats::{
 };
 
 /// Registry mapping `Format` values to their reader/writer implementations.
+///
+/// # Relationship to `EruditioParser`
+///
+/// [`crate::parser::EruditioParser`] maintains a parallel string-based format
+/// dispatch for its convenience `parse()` API. See the doc comment on
+/// `EruditioParser` for why the two are kept separate. When adding a new format
+/// reader, register it in both places.
 #[must_use]
 pub struct FormatRegistry {
     readers: HashMap<Format, Box<dyn FormatReader>>,

@@ -14,6 +14,25 @@ use crate::formats::{
 use std::io::Read;
 
 /// High-level parser that can automatically detect and parse various ebook formats.
+///
+/// # Relationship to `FormatRegistry`
+///
+/// [`crate::pipeline::registry::FormatRegistry`] maintains a parallel set of
+/// format-to-reader (and writer) mappings used by the conversion [`crate::Pipeline`].
+/// The two exist independently because they serve different ergonomic purposes:
+///
+/// - **`EruditioParser`** is a zero-setup convenience API: give it a `Read` +
+///   extension string and get a `Book` back. It matches on string extensions
+///   directly, avoiding `Format` enum conversion and `HashMap` lookups.
+///
+/// - **`FormatRegistry`** is the pipeline's pluggable registry, mapping `Format`
+///   enum values to trait-object readers *and* writers. It supports dynamic
+///   registration, format enumeration, and the read-transform-write pipeline.
+///
+/// Delegating `EruditioParser` to `FormatRegistry` would add unnecessary overhead
+/// (constructing all writers, HashMap allocation) for users who just want to read
+/// a single file. If a new format reader is added, it must be registered in both
+/// places — see `FormatRegistry::new()` for the pipeline side.
 #[must_use]
 pub struct EruditioParser;
 

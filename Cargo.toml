@@ -20,10 +20,11 @@ zip = "8.1.0"
 lzxd = "0.2"
 pulldown-cmark = "0.12"
 encoding_rs = "0.8"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive"], optional = true }
 
 [features]
-default = ["native-fs", "cbr", "cb7"]
+default = ["native-fs", "cbr", "cb7", "cli"]
+cli = ["dep:clap"]
 native-fs = []
 cbr = ["dep:unrar", "native-fs"]
 cb7 = ["dep:sevenz-rust2"]
@@ -40,11 +41,17 @@ dhat = "0.3"
 [[bin]]
 name = "eruditio-convert"
 path = "src/bin/convert.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "memory_profile"
 path = "src/bin/memory_profile.rs"
 required-features = []
+
+[[bin]]
+name = "validate"
+path = "src/bin/validate.rs"
+required-features = ["native-fs"]
 
 [[bench]]
 name = "palmdoc"
