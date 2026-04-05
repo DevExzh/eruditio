@@ -183,4 +183,40 @@ mod tests {
             "Expected decoded entities in: {text}"
         );
     }
+
+    #[test]
+    fn txt_writer_no_duplicate_heading_with_br() {
+        // Heading in HTML body contains <br/> which previously caused strip_leading_heading
+        // to fail matching, resulting in the title appearing twice.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("CHAPTER I. Down the Rabbit-Hole".into()),
+            content: "<h1>CHAPTER I.<br/>Down the Rabbit-Hole</h1><p>Alice was beginning to get very tired.</p>".into(),
+            id: Some("ch1".into()),
+        });
+        let text = book_to_plain_text(&book);
+        let count = text.matches("Down the Rabbit-Hole").count();
+        assert_eq!(
+            count, 1,
+            "Expected 'Down the Rabbit-Hole' once, but found {count} times in:\n{text}"
+        );
+        assert!(text.contains("Alice was beginning to get very tired."));
+    }
+
+    #[test]
+    fn txt_writer_spaces_between_paragraphs() {
+        // Block-level elements should produce spaces in the plain text output,
+        // not concatenated words.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>First paragraph.</p><p>Second paragraph.</p>".into(),
+            id: Some("ch1".into()),
+        });
+        let text = book_to_plain_text(&book);
+        assert!(
+            text.contains("First paragraph. Second paragraph."),
+            "Expected space between paragraphs in: {text}"
+        );
+    }
 }

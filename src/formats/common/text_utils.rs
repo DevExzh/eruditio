@@ -124,6 +124,11 @@ fn is_html_special(b: u8, xml_mode: bool) -> bool {
 /// Uses `memchr` to jump between `<` and `>` delimiters instead of scanning
 /// character by character.
 ///
+/// Block-level elements (`<br>`, `<p>`, `<div>`, `<h1>`–`<h6>`, `<li>`,
+/// `<tr>`, `<td>`, `<th>`, `<blockquote>`) insert a space when removed so
+/// that adjacent text nodes are not concatenated.  A post-processing step
+/// collapses runs of whitespace and trims the result.
+///
 /// Returns `Cow::Borrowed` when the input contains no tags, avoiding
 /// allocation entirely.
 pub fn strip_tags(html: &str) -> Cow<'_, str> {
@@ -150,6 +155,10 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
                 // Find the closing '>'.
                 match memchr(b'>', &bytes[tag_start..]) {
                     Some(end_offset) => {
+                        let tag_bytes = &bytes[tag_start..tag_start + end_offset + 1];
+                        if is_block_level_tag(tag_bytes) {
+                            result.push(' ');
+                        }
                         pos = tag_start + end_offset + 1;
                     },
                     None => {
@@ -166,7 +175,96 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
         }
     }
 
-    Cow::Owned(result)
+    // Collapse runs of whitespace into a single space, then trim.
+    let collapsed = collapse_whitespace(&result);
+    Cow::Owned(collapsed)
+}
+
+/// Returns `true` if the tag (including `<` and `>`) is a block-level element
+/// that should produce whitespace when stripped.
+///
+/// Matches opening and closing forms of: `br`, `p`, `div`, `h1`–`h6`, `li`,
+/// `tr`, `td`, `th`, `blockquote`.
+fn is_block_level_tag(tag: &[u8]) -> bool {
+    // Minimum valid tag is `<p>` (3 bytes).
+    if tag.len() < 3 {
+        return false;
+    }
+    // Skip '<' and optional '/'.
+    let start = if tag.len() > 1 && tag[1] == b'/' { 2 } else { 1 };
+    // Find end of tag name: first space, '/', or '>'.
+    let rest = &tag[start..];
+    let name_end = rest
+        .iter()
+        .position(|&b| b == b' ' || b == b'>' || b == b'/' || b == b'\t' || b == b'\n' || b == b'\r')
+        .unwrap_or(rest.len());
+    let name = &rest[..name_end];
+
+    // Case-insensitive comparison against known block-level tag names.
+    matches!(
+        name.len(),
+        1..=10
+    ) && match name.len() {
+        2 => {
+            // br, li, td, th, tr, h1-h6, hr
+            let a = name[0].to_ascii_lowercase();
+            let b = name[1].to_ascii_lowercase();
+            matches!(
+                (a, b),
+                (b'b', b'r')
+                    | (b'l', b'i')
+                    | (b't', b'd')
+                    | (b't', b'h')
+                    | (b't', b'r')
+                    | (b'h', b'r')
+                    | (b'h', b'1')
+                    | (b'h', b'2')
+                    | (b'h', b'3')
+                    | (b'h', b'4')
+                    | (b'h', b'5')
+                    | (b'h', b'6')
+            )
+        }
+        1 => {
+            // p
+            name[0].to_ascii_lowercase() == b'p'
+        }
+        3 => {
+            // div
+            let a = name[0].to_ascii_lowercase();
+            let b = name[1].to_ascii_lowercase();
+            let c = name[2].to_ascii_lowercase();
+            (a, b, c) == (b'd', b'i', b'v')
+        }
+        10 => {
+            // blockquote
+            name.eq_ignore_ascii_case(b"blockquote")
+        }
+        _ => false,
+    }
+}
+
+/// Collapses runs of ASCII whitespace into a single space and trims
+/// leading/trailing whitespace.
+fn collapse_whitespace(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut prev_was_space = true; // treat start as space so leading spaces are trimmed
+    for ch in s.chars() {
+        if ch.is_ascii_whitespace() {
+            if !prev_was_space {
+                result.push(' ');
+                prev_was_space = true;
+            }
+        } else {
+            result.push(ch);
+            prev_was_space = false;
+        }
+    }
+    // Trim trailing space.
+    if result.ends_with(' ') {
+        result.pop();
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +532,7 @@ mod tests {
 
     #[test]
     fn strip_tags_nested() {
-        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "AB");
+        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "A B");
     }
 
     #[test]
@@ -444,7 +542,36 @@ mod tests {
 
     #[test]
     fn strip_tags_unclosed() {
-        assert_eq!(strip_tags("before <unclosed"), "before ");
+        assert_eq!(strip_tags("before <unclosed"), "before");
+    }
+
+    #[test]
+    fn strip_tags_br_inserts_space() {
+        assert_eq!(
+            strip_tags("CHAPTER I.<br/>Down the Rabbit-Hole"),
+            "CHAPTER I. Down the Rabbit-Hole"
+        );
+    }
+
+    #[test]
+    fn strip_tags_br_variants() {
+        assert_eq!(strip_tags("A<br>B"), "A B");
+        assert_eq!(strip_tags("A<br/>B"), "A B");
+        assert_eq!(strip_tags("A<br />B"), "A B");
+        assert_eq!(strip_tags("A<BR>B"), "A B");
+    }
+
+    #[test]
+    fn strip_tags_headings_insert_space() {
+        assert_eq!(strip_tags("<h1>Title</h1>Body"), "Title Body");
+        assert_eq!(strip_tags("<h3>Sub</h3>Text"), "Sub Text");
+    }
+
+    #[test]
+    fn strip_tags_inline_no_extra_space() {
+        // Inline tags like <b>, <i>, <span> should NOT insert extra space.
+        assert_eq!(strip_tags("Hello <b>bold</b> world"), "Hello bold world");
+        assert_eq!(strip_tags("<span>A</span><span>B</span>"), "AB");
     }
 
     // -- unescape_basic_entities ---------------------------------------------

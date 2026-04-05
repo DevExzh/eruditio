@@ -55,20 +55,20 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let search_start = body_start + super::text_utils::skip_whitespace(&bytes[body_start..]);
     let rest = &bytes[search_start..];
 
-    // Must start with '<h1' or '<h2' (case-insensitive).
+    // Must start with '<h1' through '<h6' (case-insensitive).
     if rest.len() < 4 || rest[0] != b'<' {
         return content;
     }
     if !(rest[1].eq_ignore_ascii_case(&b'h')
-        && (rest[2] == b'1' || rest[2] == b'2')
+        && rest[2].is_ascii_digit() && rest[2] >= b'1' && rest[2] <= b'6'
         && (rest[3] == b'>' || rest[3] == b' ' || rest[3] == b'\t' || rest[3] == b'\n' || rest[3] == b'\r'))
     {
         return content;
     }
 
-    let heading_level = rest[2]; // b'1' or b'2'
+    let heading_level = rest[2]; // b'1' through b'6'
 
-    // Build the closing tag to search for, e.g. "</h1>" or "</h2>".
+    // Build the closing tag to search for, e.g. "</h1>" through "</h6>".
     let close_tag: [u8; 5] = [b'<', b'/', b'h', heading_level, b'>'];
 
     // Find the closing tag (case-insensitive).
@@ -254,5 +254,27 @@ mod tests {
 <body><h1>Different</h1><p>Text</p></body></html>"#;
         let result = strip_leading_heading(content, "Not This");
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn strip_leading_heading_with_br_in_heading() {
+        // The heading contains a <br/> which strip_tags now converts to a space.
+        let content = "<h1>CHAPTER I.<br/>Down the Rabbit-Hole</h1><p>Body</p>";
+        let result = strip_leading_heading(content, "CHAPTER I. Down the Rabbit-Hole");
+        assert_eq!(result, "<p>Body</p>");
+    }
+
+    #[test]
+    fn strip_leading_heading_h3() {
+        let content = "<h3>Section</h3><p>Content here</p>";
+        let result = strip_leading_heading(content, "Section");
+        assert_eq!(result, "<p>Content here</p>");
+    }
+
+    #[test]
+    fn strip_leading_heading_h6() {
+        let content = "<h6>Deep Heading</h6><p>Body</p>";
+        let result = strip_leading_heading(content, "Deep Heading");
+        assert_eq!(result, "<p>Body</p>");
     }
 }
