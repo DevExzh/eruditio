@@ -111,7 +111,13 @@ impl Book {
                 !item.media_type.contains("xhtml") && !item.media_type.contains("html")
             })
             .filter_map(|item| {
-                let data = item.data.as_bytes()?;
+                // Return binary data from Inline items, or UTF-8 bytes from Text
+                // items (e.g. CSS loaded as text by the EPUB reader).
+                let data = match &item.data {
+                    super::manifest::ManifestData::Inline(b) => Some(b.as_slice()),
+                    super::manifest::ManifestData::Text(s) => Some(s.as_bytes()),
+                    super::manifest::ManifestData::Empty => None,
+                }?;
                 Some(ResourceView {
                     id: &item.id,
                     href: &item.href,
@@ -123,8 +129,15 @@ impl Book {
     }
 
     /// Looks up a resource by manifest ID and returns its binary data.
+    ///
+    /// Returns the raw bytes for both `Inline` and `Text` manifest items,
+    /// so callers can access CSS and other text-based resources loaded from EPUB.
     pub fn resource_data(&self, id: &str) -> Option<&[u8]> {
-        self.manifest.get(id).and_then(|item| item.data.as_bytes())
+        self.manifest.get(id).and_then(|item| match &item.data {
+            super::manifest::ManifestData::Inline(b) => Some(b.as_slice()),
+            super::manifest::ManifestData::Text(s) => Some(s.as_bytes()),
+            super::manifest::ManifestData::Empty => None,
+        })
     }
 
     /// Returns the number of content documents in the spine.
@@ -211,5 +224,45 @@ mod tests {
         let resources = book.resources();
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].id, "img");
+    }
+
+    #[test]
+    fn resources_includes_text_css() {
+        // CSS loaded by the EPUB reader is stored as ManifestData::Text.
+        // resources() must return it so downstream writers (e.g. HTMLZ) can
+        // access the CSS content.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let css_item = ManifestItem::new("epub-css", "styles/main.css", "text/css")
+            .with_text("body { color: blue; }");
+        book.manifest.insert(css_item);
+
+        let resources = book.resources();
+        let css_res = resources.iter().find(|r| r.media_type == "text/css");
+        assert!(css_res.is_some(), "CSS stored as Text should appear in resources()");
+        assert_eq!(
+            std::str::from_utf8(css_res.unwrap().data).unwrap(),
+            "body { color: blue; }"
+        );
+    }
+
+    #[test]
+    fn resource_data_returns_text_css() {
+        let mut book = Book::new();
+        let css_item = ManifestItem::new("my-css", "style.css", "text/css")
+            .with_text("p { margin: 0; }");
+        book.manifest.insert(css_item);
+
+        let data = book.resource_data("my-css");
+        assert!(data.is_some(), "resource_data should return bytes for Text items");
+        assert_eq!(
+            std::str::from_utf8(data.unwrap()).unwrap(),
+            "p { margin: 0; }"
+        );
     }
 }
