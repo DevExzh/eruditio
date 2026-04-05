@@ -9,7 +9,7 @@ use base64::Engine;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::html_utils::escape_html;
+use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
 use std::io::{Read, Write};
 
 /// HTML format reader.
@@ -106,7 +106,11 @@ fn book_to_html(book: &Book) -> String {
             body.push_str(&format!("<h1>{}</h1>\n", escape_html(ch_title)));
         }
 
-        body.push_str(&chapter.content);
+        let content = match chapter.title {
+            Some(ref ch_title) => strip_leading_heading(&chapter.content, ch_title),
+            None => &chapter.content,
+        };
+        body.push_str(content);
         body.push('\n');
     }
 
@@ -245,5 +249,25 @@ mod tests {
         let html = String::from_utf8(output).unwrap();
 
         assert!(html.contains("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn html_writer_no_duplicate_heading() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<h1>Ch 1</h1><p>Body text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        HtmlWriter::new().write_book(&book, &mut output).unwrap();
+        let html = String::from_utf8(output).unwrap();
+
+        // The <h1>Ch 1</h1> heading should appear exactly once.
+        let count = html.matches("<h1>Ch 1</h1>").count();
+        assert_eq!(count, 1, "Expected one <h1>Ch 1</h1>, found {count} in: {html}");
+        assert!(html.contains("Body text"));
     }
 }

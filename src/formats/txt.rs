@@ -1,6 +1,6 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::html_utils::strip_tags;
+use crate::formats::common::html_utils::{strip_leading_heading, strip_tags};
 use std::io::{Read, Write};
 
 /// TXT format reader.
@@ -86,7 +86,11 @@ pub fn book_to_plain_text(book: &Book) -> String {
             parts.push(title.clone());
             parts.push(String::new()); // blank line after title
         }
-        let plain = strip_tags(&chapter.content);
+        let content = match chapter.title {
+            Some(ref title) => strip_leading_heading(&chapter.content, title),
+            None => &chapter.content,
+        };
+        let plain = strip_tags(content);
         let trimmed = plain.trim();
         if !trimmed.is_empty() {
             parts.push(trimmed.to_string());
@@ -145,5 +149,21 @@ mod tests {
 
         assert!(text.contains("Hello World"));
         assert!(text.contains("Second paragraph"));
+    }
+
+    #[test]
+    fn txt_writer_no_duplicate_heading() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<h1>Ch 1</h1><p>Body text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let text = book_to_plain_text(&book);
+        // The title "Ch 1" should appear exactly once.
+        let count = text.matches("Ch 1").count();
+        assert_eq!(count, 1, "Expected 'Ch 1' once, but found {count} times in: {text}");
+        assert!(text.contains("Body text"));
     }
 }

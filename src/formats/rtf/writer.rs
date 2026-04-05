@@ -1,7 +1,7 @@
 //! RTF writer — generates RTF documents from `Book`.
 
 use crate::domain::Book;
-use crate::formats::common::html_utils::strip_tags;
+use crate::formats::common::html_utils::{strip_leading_heading, strip_tags};
 
 /// Converts a `Book` to an RTF document string.
 pub fn book_to_rtf(book: &Book) -> String {
@@ -37,8 +37,14 @@ pub fn book_to_rtf(book: &Book) -> String {
             rtf.push_str("}\\par\\par\n");
         }
 
+        // Strip duplicate heading from content before converting.
+        let content = match chapter.title {
+            Some(ref title) => strip_leading_heading(&chapter.content, title),
+            None => &chapter.content,
+        };
+
         // Convert HTML content to RTF.
-        html_to_rtf(&chapter.content, &mut rtf);
+        html_to_rtf(content, &mut rtf);
     }
 
     rtf.push_str("}\n");
@@ -336,5 +342,23 @@ mod tests {
             rtf.contains("{\\author Jane Doe & John Smith}"),
             "Expected authors joined with ' & ', got: {rtf}"
         );
+    }
+
+    #[test]
+    fn rtf_writer_no_duplicate_heading() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<h1>Ch 1</h1><p>Body text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        // The title "Ch 1" should appear exactly once as a bold heading.
+        // Count occurrences of "Ch 1" in the RTF output.
+        let count = rtf.matches("Ch 1").count();
+        assert_eq!(count, 1, "Expected 'Ch 1' once, found {count} times in: {rtf}");
+        assert!(rtf.contains("Body text"));
     }
 }
