@@ -52,6 +52,8 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
     let mut cover_meta_id: Option<String> = None;
     // Track the opf:file-as attribute on <dc:creator>
     let mut current_file_as: Option<String> = None;
+    // Track the opf:event attribute on <dc:date>
+    let mut current_date_event: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -82,6 +84,11 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         if tag == "creator" {
                             current_file_as = xml_utils::get_attribute(e, "opf:file-as")
                                 .or_else(|| xml_utils::get_attribute(e, "file-as"));
+                        }
+                        // Track the opf:event attribute on <dc:date>
+                        if tag == "date" {
+                            current_date_event = xml_utils::get_attribute(e, "opf:event")
+                                .or_else(|| xml_utils::get_attribute(e, "event"));
                         }
                     },
                     _ => {},
@@ -117,13 +124,33 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                 match tag {
                     "metadata" | "manifest" | "spine" | "guide" => section = Section::None,
                     _ if section == Section::Metadata && !current_dc_tag.is_empty() => {
-                        apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
+                        // Skip dc:date elements with opf:event="conversion";
+                        // don't overwrite an already-set publication_date unless
+                        // the new date explicitly has event="publication".
+                        let skip = if current_dc_tag == "date" {
+                            let event = current_date_event.as_deref();
+                            if event == Some("conversion") {
+                                true
+                            } else if data.metadata.publication_date.is_some()
+                                && event != Some("publication")
+                            {
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if !skip {
+                            apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
+                        }
                         // Capture opf:file-as from the first creator
                         if current_dc_tag == "creator" && data.metadata.author_sort.is_none() {
                             if let Some(ref fa) = current_file_as {
                                 data.metadata.author_sort = Some(fa.clone());
                             }
                         }
+                        current_date_event = None;
                         current_dc_tag.clear();
                         current_text.clear();
                     },
@@ -581,5 +608,79 @@ mod tests {
             Some("Author, First"),
             "author_sort should come from the first creator only"
         );
+    }
+
+    #[test]
+    fn publication_date_preferred_over_conversion_date() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date opf:event="publication">2008-06-27</dc:date>
+    <dc:date opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        let date = data.metadata.publication_date.expect("publication_date should be set");
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2008-06-27",
+            "publication_date should be the publication date, not the conversion date");
+    }
+
+    #[test]
+    fn conversion_only_date_is_ignored() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert!(data.metadata.publication_date.is_none(),
+            "publication_date should not be set when only a conversion date is present");
+    }
+
+    #[test]
+    fn date_without_event_attribute_still_parsed() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date>2024-01-15</dc:date>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        let date = data.metadata.publication_date.expect("publication_date should be set");
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-01-15",
+            "dc:date without opf:event should still be parsed as publication_date");
+    }
+
+    #[test]
+    fn publication_date_wins_regardless_of_order() {
+        // Conversion date appears BEFORE the publication date
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>
+    <dc:date opf:event="publication">2008-06-27</dc:date>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        let date = data.metadata.publication_date.expect("publication_date should be set");
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2008-06-27",
+            "publication_date should be set from event=publication regardless of element order");
     }
 }
