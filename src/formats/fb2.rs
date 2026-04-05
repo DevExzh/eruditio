@@ -485,8 +485,10 @@ fn generate_fb2(book: &Book) -> String {
                 && item.media_type.starts_with("image/")
         })
         .map(|item| item.id.clone());
-    if cover_id.is_some() {
-        xml.push_str("      <coverpage><image l:href=\"#cover\"/></coverpage>\n");
+    if let Some(ref cid) = cover_id {
+        xml.push_str("      <coverpage><image l:href=\"#");
+        xml.push_str(&escape_html(cid));
+        xml.push_str("\"/></coverpage>\n");
     }
 
     xml.push_str("    </title-info>\n");
@@ -931,6 +933,38 @@ mod tests {
         assert!(
             !xml.contains("<coverpage>"),
             "coverpage should not be present without a cover image"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_preserves_inline_formatting() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Formatting Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>This is <b>bold</b> and <i>italic</i> text.</p><p>Also <strong>strong</strong> and <em>emphasis</em>.</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<strong>bold</strong>"),
+            "HTML <b> should become FB2 <strong>, got:\n{xml}"
+        );
+        assert!(
+            xml.contains("<emphasis>italic</emphasis>"),
+            "HTML <i> should become FB2 <emphasis>, got:\n{xml}"
+        );
+        assert!(
+            xml.contains("<strong>strong</strong>"),
+            "HTML <strong> should become FB2 <strong>, got:\n{xml}"
+        );
+        assert!(
+            xml.contains("<emphasis>emphasis</emphasis>"),
+            "HTML <em> should become FB2 <emphasis>, got:\n{xml}"
         );
     }
 

@@ -710,6 +710,42 @@ mod tests {
     }
 
     #[test]
+    fn truncate_pdb_name_replaces_spaces_with_underscores() {
+        assert_eq!(truncate_pdb_name("Alice in Wonderland"), "Alice_in_Wonderland");
+        assert_eq!(truncate_pdb_name("A B"), "A_B");
+    }
+
+    #[test]
+    fn strip_xhtml_wrapper_removes_all_wrappers() {
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter 1</title><meta charset="utf-8"/></head>
+<body>
+<h1>Chapter 1</h1>
+<p>Hello world.</p>
+</body>
+</html>"#;
+        let result = strip_xhtml_wrapper(input);
+        assert!(!result.contains("<?xml"), "XML declaration should be stripped");
+        assert!(!result.contains("<!DOCTYPE"), "DOCTYPE should be stripped");
+        assert!(!result.contains("<html"), "html tag should be stripped");
+        assert!(!result.contains("<head"), "head tag should be stripped");
+        assert!(!result.contains("<title>"), "title should be stripped with head");
+        assert!(!result.contains("<body"), "body tag should be stripped");
+        assert!(!result.contains("</html>"), "closing html should be stripped");
+        assert!(!result.contains("</body>"), "closing body should be stripped");
+        assert!(result.contains("<h1>Chapter 1</h1>"), "content should remain");
+        assert!(result.contains("<p>Hello world.</p>"), "content should remain");
+    }
+
+    #[test]
+    fn strip_xhtml_wrapper_passthrough_plain_html() {
+        let input = "<h1>Title</h1><p>Body</p>";
+        assert_eq!(strip_xhtml_wrapper(input), input);
+    }
+
+    #[test]
     fn html_escape_works() {
         let mut buf = String::new();
         push_html_escaped(&mut buf, "a & b < c > d");
