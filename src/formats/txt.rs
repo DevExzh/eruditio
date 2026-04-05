@@ -1,6 +1,6 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::html_utils::{strip_leading_heading, strip_tags};
+use crate::formats::common::html_utils::{strip_leading_heading, strip_tags, unescape_basic_entities};
 use std::io::{Read, Write};
 
 /// TXT format reader.
@@ -91,7 +91,8 @@ pub fn book_to_plain_text(book: &Book) -> String {
             None => &chapter.content,
         };
         let plain = strip_tags(content);
-        let trimmed = plain.trim();
+        let decoded = unescape_basic_entities(&plain);
+        let trimmed = decoded.trim();
         if !trimmed.is_empty() {
             parts.push(trimmed.to_string());
         }
@@ -165,5 +166,20 @@ mod tests {
         let count = text.matches("Ch 1").count();
         assert_eq!(count, 1, "Expected 'Ch 1' once, but found {count} times in: {text}");
         assert!(text.contains("Body text"));
+    }
+
+    #[test]
+    fn txt_writer_decodes_html_entities() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Test".into()),
+            content: "<p>&amp; &lt; &gt; &quot; &#8212; &#8220;curly&#8221; &#169; &#174;</p>".into(),
+            id: Some("ch1".into()),
+        });
+        let text = book_to_plain_text(&book);
+        assert!(
+            text.contains("& < > \" \u{2014} \u{201C}curly\u{201D} \u{00A9} \u{00AE}"),
+            "Expected decoded entities in: {text}"
+        );
     }
 }

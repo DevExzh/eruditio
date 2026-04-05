@@ -205,7 +205,28 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                         "&quot;" => result.push('"'),
                         "&apos;" => result.push('\''),
                         "&nbsp;" => result.push('\u{00A0}'),
-                        _ => result.push_str(entity), // unknown -- keep as-is
+                        _ => {
+                            // Try numeric entity: &#NNN; or &#xHHH;
+                            if entity.starts_with("&#") {
+                                let num_part = &entity[2..entity.len() - 1]; // strip "&#" and ";"
+                                let code_point = if let Some(hex) =
+                                    num_part.strip_prefix('x').or_else(|| num_part.strip_prefix('X'))
+                                {
+                                    u32::from_str_radix(hex, 16).ok()
+                                } else {
+                                    num_part.parse::<u32>().ok()
+                                };
+                                if let Some(cp) = code_point {
+                                    if let Some(ch) = char::from_u32(cp) {
+                                        result.push(ch);
+                                        pos = entity_start + semi + 1;
+                                        continue;
+                                    }
+                                }
+                            }
+                            // Still unknown -- keep as-is
+                            result.push_str(entity);
+                        }
                     }
                     pos = entity_start + semi + 1;
                 } else {
@@ -444,6 +465,48 @@ mod tests {
     #[test]
     fn unescape_unknown_entity() {
         assert_eq!(unescape_basic_entities("&foo;"), "&foo;");
+    }
+
+    #[test]
+    fn unescape_numeric_decimal_em_dash() {
+        assert_eq!(unescape_basic_entities("&#8212;"), "\u{2014}");
+    }
+
+    #[test]
+    fn unescape_numeric_hex_em_dash() {
+        assert_eq!(unescape_basic_entities("&#x2014;"), "\u{2014}");
+    }
+
+    #[test]
+    fn unescape_numeric_hex_uppercase() {
+        assert_eq!(unescape_basic_entities("&#X2014;"), "\u{2014}");
+    }
+
+    #[test]
+    fn unescape_numeric_copyright() {
+        assert_eq!(unescape_basic_entities("&#169;"), "\u{00A9}");
+    }
+
+    #[test]
+    fn unescape_numeric_curly_quotes() {
+        assert_eq!(
+            unescape_basic_entities("&#8220;text&#8221;"),
+            "\u{201C}text\u{201D}"
+        );
+    }
+
+    #[test]
+    fn unescape_mixed_named_and_numeric() {
+        assert_eq!(
+            unescape_basic_entities("&amp; &#8212; &lt;"),
+            "& \u{2014} <"
+        );
+    }
+
+    #[test]
+    fn unescape_invalid_numeric_entity_kept() {
+        // 0xFFFFFFFF is not a valid Unicode scalar value
+        assert_eq!(unescape_basic_entities("&#4294967295;"), "&#4294967295;");
     }
 
     // -- decode_cp1252 -------------------------------------------------------

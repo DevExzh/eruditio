@@ -11,6 +11,11 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
     super::text_utils::strip_tags(html)
 }
 
+/// Decodes the most common HTML/XML character entities (named and numeric).
+pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
+    super::text_utils::unescape_basic_entities(text)
+}
+
 /// Wraps text in a paragraph element.
 pub fn wrap_paragraph(text: &str) -> String {
     format!("<p>{}</p>", text)
