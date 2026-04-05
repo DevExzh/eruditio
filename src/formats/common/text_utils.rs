@@ -142,13 +142,16 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
     let len = bytes.len();
     let mut result = String::with_capacity(len);
     let mut pos = 0;
+    // Depth counter for <head> nesting.  While > 0, suppress all text output
+    // so that content inside <head> (including <title>) is not emitted.
+    let mut head_depth: u32 = 0;
 
     loop {
         // Find the next '<' (tag start).
         match memchr(b'<', &bytes[pos..]) {
             Some(offset) => {
-                // Copy text before the tag.
-                if offset > 0 {
+                // Copy text before the tag (only when outside <head>).
+                if offset > 0 && head_depth == 0 {
                     result.push_str(&html[pos..pos + offset]);
                 }
                 let tag_start = pos + offset;
@@ -156,7 +159,13 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
                 match memchr(b'>', &bytes[tag_start..]) {
                     Some(end_offset) => {
                         let tag_bytes = &bytes[tag_start..tag_start + end_offset + 1];
-                        if is_block_level_tag(tag_bytes) {
+                        // Track <head> / </head> transitions.
+                        if is_head_open_tag(tag_bytes) {
+                            head_depth += 1;
+                        } else if is_head_close_tag(tag_bytes) {
+                            head_depth = head_depth.saturating_sub(1);
+                        }
+                        if head_depth == 0 && is_block_level_tag(tag_bytes) {
                             result.push('\n');
                         }
                         pos = tag_start + end_offset + 1;
@@ -169,7 +178,9 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
             },
             None => {
                 // No more tags -- copy remaining text.
-                result.push_str(&html[pos..]);
+                if head_depth == 0 {
+                    result.push_str(&html[pos..]);
+                }
                 break;
             },
         }
@@ -178,6 +189,40 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
     // Collapse runs of whitespace into a single space, then trim.
     let collapsed = collapse_whitespace(&result);
     Cow::Owned(collapsed)
+}
+
+/// Returns `true` if the tag is an opening `<head` tag (case-insensitive).
+fn is_head_open_tag(tag: &[u8]) -> bool {
+    // Minimum: <head> = 6 bytes.  Must not be a closing tag.
+    if tag.len() < 6 || tag[0] != b'<' || tag[1] == b'/' {
+        return false;
+    }
+    // The tag name must be exactly "head" (case-insensitive), followed by
+    // '>', ' ', '\t', '\n', '\r', or '/'.
+    if !tag[1].eq_ignore_ascii_case(&b'h')
+        || !tag[2].eq_ignore_ascii_case(&b'e')
+        || !tag[3].eq_ignore_ascii_case(&b'a')
+        || !tag[4].eq_ignore_ascii_case(&b'd')
+    {
+        return false;
+    }
+    matches!(tag[5], b'>' | b' ' | b'\t' | b'\n' | b'\r' | b'/')
+}
+
+/// Returns `true` if the tag is a closing `</head>` tag (case-insensitive).
+fn is_head_close_tag(tag: &[u8]) -> bool {
+    // Minimum: </head> = 7 bytes.
+    if tag.len() < 7 || tag[0] != b'<' || tag[1] != b'/' {
+        return false;
+    }
+    if !tag[2].eq_ignore_ascii_case(&b'h')
+        || !tag[3].eq_ignore_ascii_case(&b'e')
+        || !tag[4].eq_ignore_ascii_case(&b'a')
+        || !tag[5].eq_ignore_ascii_case(&b'd')
+    {
+        return false;
+    }
+    matches!(tag[6], b'>' | b' ' | b'\t' | b'\n' | b'\r')
 }
 
 /// Returns `true` if the tag (including `<` and `>`) is a block-level element
@@ -725,5 +770,40 @@ mod tests {
     #[test]
     fn case_insensitive_empty_needle() {
         assert_eq!(find_case_insensitive(b"Hello", b""), None);
+    }
+
+    // -- strip_tags: <head> suppression -------------------------------------
+
+    #[test]
+    fn strip_tags_suppresses_head_content() {
+        let html = r#"<html><head><title>My Book | Publisher</title></head><body><p>Content</p></body></html>"#;
+        let result = strip_tags(html);
+        assert!(
+            !result.contains("My Book"),
+            "Title tag text should be suppressed: {result}"
+        );
+        assert!(
+            !result.contains("Publisher"),
+            "Title tag text should be suppressed: {result}"
+        );
+        assert!(
+            result.contains("Content"),
+            "Body content should remain: {result}"
+        );
+    }
+
+    #[test]
+    fn strip_tags_suppresses_head_with_meta() {
+        let html = r#"<html><HEAD><title>Title</title><meta name="author" content="Me"/></HEAD><body><p>Body</p></body></html>"#;
+        let result = strip_tags(html);
+        assert!(!result.contains("Title"), "HEAD content should be suppressed: {result}");
+        assert!(result.contains("Body"), "Body content should remain: {result}");
+    }
+
+    #[test]
+    fn strip_tags_no_head_unchanged() {
+        // Without a <head> tag, behaviour is unchanged.
+        let html = "<p>Hello</p>";
+        assert_eq!(strip_tags(html), "Hello");
     }
 }

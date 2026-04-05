@@ -161,12 +161,40 @@ fn strip_title_prefix<'a>(text: &'a str, title: &str) -> &'a str {
     }
 }
 
+/// Returns `true` if the chapter is essentially just a cover image with no
+/// substantial text content.  Cover-only chapters typically contain a single
+/// `<img>` tag whose alt text is "Cover" (or similar short text) and nothing
+/// else of interest.  We detect this by checking:
+///   - the chapter title is "Cover" or empty, AND
+///   - the stripped plain-text content is very short (under ~20 chars).
+fn is_cover_only_chapter(chapter: &Chapter) -> bool {
+    let title_is_cover = match chapter.title {
+        Some(ref t) => {
+            let t = t.trim();
+            t.is_empty() || t.eq_ignore_ascii_case("cover")
+        }
+        None => true,
+    };
+    if !title_is_cover {
+        return false;
+    }
+    let plain = strip_tags(&chapter.content);
+    let decoded = unescape_basic_entities(&plain);
+    let trimmed = decoded.trim();
+    trimmed.len() < 20
+}
+
 /// Converts a `Book` to plain text by stripping HTML from all chapters.
 pub fn book_to_plain_text(book: &Book) -> String {
     let chapters = book.chapters();
     let mut parts = Vec::with_capacity(chapters.len());
 
     for chapter in &chapters {
+        // Skip cover-only chapters to avoid "Cover" alt-text artifacts.
+        if is_cover_only_chapter(chapter) {
+            continue;
+        }
+
         if let Some(ref title) = chapter.title {
             parts.push(title.clone());
             parts.push(String::new()); // blank line after title
@@ -383,6 +411,96 @@ mod tests {
         assert!(
             text.contains("First paragraph.\n\nSecond paragraph."),
             "Expected blank line between paragraphs in: {text}"
+        );
+    }
+
+    #[test]
+    fn txt_writer_skips_cover_chapter() {
+        // A cover-only chapter (just an <img> tag with alt "Cover") should be
+        // suppressed to avoid "Cover" appearing as the first line of output.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Cover".into()),
+            content: r#"<div><img src="cover.jpg" alt="Cover"/></div>"#.into(),
+            id: Some("cover".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Once upon a time.</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let text = book_to_plain_text(&book);
+        assert!(
+            !text.starts_with("Cover"),
+            "Cover artifact should not appear at the start of output: {text}"
+        );
+        assert!(text.contains("Chapter 1"));
+        assert!(text.contains("Once upon a time."));
+    }
+
+    #[test]
+    fn txt_writer_skips_empty_title_cover_chapter() {
+        // A cover chapter with no title should also be suppressed.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: None,
+            content: r#"<img src="cover.jpg" alt="Cover"/>"#.into(),
+            id: Some("cover".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Body text.</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let text = book_to_plain_text(&book);
+        assert!(
+            !text.contains("\nCover\n"),
+            "Cover artifact should not appear in output: {text}"
+        );
+        assert!(text.contains("Chapter 1"));
+    }
+
+    #[test]
+    fn txt_writer_keeps_real_chapter_named_cover() {
+        // A chapter titled "Cover" with substantial body text should NOT be skipped.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Cover".into()),
+            content: "<p>This is a long description of the front artwork and its significance to the story.</p>".into(),
+            id: Some("cover".into()),
+        });
+        let text = book_to_plain_text(&book);
+        assert!(
+            text.contains("long description of the front artwork"),
+            "Substantial cover chapter content should be kept: {text}"
+        );
+    }
+
+    #[test]
+    fn txt_writer_suppresses_title_tag_text() {
+        // Text inside <head><title>...</title></head> should not leak into output.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Moby Dick; or The Whale | Project Gutenberg</title></head>
+<body><p>Call me Ishmael.</p></body>
+</html>"#
+                .into(),
+            id: Some("ch1".into()),
+        });
+
+        let text = book_to_plain_text(&book);
+        assert!(
+            !text.contains("Project Gutenberg"),
+            "Title tag text should not leak into output: {text}"
+        );
+        assert!(
+            text.contains("Call me Ishmael."),
+            "Body text should still be present: {text}"
         );
     }
 }
