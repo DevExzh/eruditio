@@ -215,8 +215,8 @@ mod tests {
         });
         let text = book_to_plain_text(&book);
         assert!(
-            text.contains("First paragraph.\nSecond paragraph."),
-            "Expected newline between paragraphs in: {text}"
+            text.contains("First paragraph.\n\nSecond paragraph."),
+            "Expected blank line between paragraphs in: {text}"
         );
     }
 }

@@ -246,29 +246,36 @@ fn is_block_level_tag(tag: &[u8]) -> bool {
 
 /// Collapses runs of ASCII whitespace and trims leading/trailing whitespace.
 ///
-/// When a run of whitespace contains at least one newline, it collapses to a
-/// single `\n` (preserving paragraph breaks).  Otherwise it collapses to a
+/// When a run of whitespace contains two or more newlines, it collapses to
+/// `\n\n` (blank line = paragraph break).  When it contains exactly one
+/// newline, it collapses to a single `\n`.  Otherwise it collapses to a
 /// single space.
 fn collapse_whitespace(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut in_ws = true; // treat start as whitespace so leading is trimmed
-    let mut run_has_newline = false;
+    let mut newline_count: usize = 0;
     for ch in s.chars() {
         if ch.is_ascii_whitespace() {
             if ch == '\n' {
-                run_has_newline = true;
+                newline_count += 1;
             }
             if !in_ws {
                 in_ws = true;
-                run_has_newline = ch == '\n';
+                newline_count = if ch == '\n' { 1 } else { 0 };
             }
         } else {
             if in_ws && !result.is_empty() {
-                result.push(if run_has_newline { '\n' } else { ' ' });
+                if newline_count >= 2 {
+                    result.push_str("\n\n");
+                } else if newline_count == 1 {
+                    result.push('\n');
+                } else {
+                    result.push(' ');
+                }
             }
             result.push(ch);
             in_ws = false;
-            run_has_newline = false;
+            newline_count = 0;
         }
     }
     result
@@ -539,7 +546,7 @@ mod tests {
 
     #[test]
     fn strip_tags_nested() {
-        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "A\nB");
+        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "A\n\nB");
     }
 
     #[test]
@@ -579,6 +586,21 @@ mod tests {
         // Inline tags like <b>, <i>, <span> should NOT insert extra space.
         assert_eq!(strip_tags("Hello <b>bold</b> world"), "Hello bold world");
         assert_eq!(strip_tags("<span>A</span><span>B</span>"), "AB");
+    }
+
+    #[test]
+    fn strip_tags_paragraph_separation() {
+        // Multiple paragraphs should be separated by blank lines (\n\n),
+        // while single line breaks (br) remain single newlines.
+        assert_eq!(
+            strip_tags("<p>First paragraph.</p><p>Second paragraph.</p><p>Third paragraph.</p>"),
+            "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+        );
+        // A <br> within a paragraph should produce a single newline, not a blank line.
+        assert_eq!(
+            strip_tags("<p>Line one.<br>Line two.</p><p>Next paragraph.</p>"),
+            "Line one.\nLine two.\n\nNext paragraph."
+        );
     }
 
     // -- unescape_basic_entities ---------------------------------------------
