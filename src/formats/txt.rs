@@ -1,6 +1,6 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::html_utils::{strip_leading_heading, strip_tags, unescape_basic_entities};
+use crate::formats::common::html_utils::{strip_tags, unescape_basic_entities};
 use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 
@@ -77,6 +77,86 @@ impl FormatWriter for TxtWriter {
     }
 }
 
+/// Strips everything up to and including the first occurrence of `title` in the
+/// plain text, but only if the title appears within the first ~500 characters.
+///
+/// This handles Gutenberg-style EPUBs where a page-header div appears before
+/// the chapter heading, which causes `strip_leading_heading` (HTML-level) to
+/// miss the heading.  By operating on the already-flattened plain text we can
+/// remove both the boilerplate *and* the duplicate heading in one pass.
+///
+/// Both the title and the search area are whitespace-normalised and lowercased
+/// for comparison, so `<br/>` newlines in headings still match.
+fn strip_title_prefix<'a>(text: &'a str, title: &str) -> &'a str {
+    let normalised_title = title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if normalised_title.is_empty() {
+        return text;
+    }
+    // Only search within the first ~500 chars to avoid stripping content
+    // mid-chapter on a false match.
+    let search_limit = text.len().min(500);
+    let search_area = &text[..search_limit];
+
+    // Build a whitespace-normalised, lowercased version of the search area
+    // together with a mapping from each normalised byte position back to the
+    // original byte index that follows the corresponding character.
+    let mut normalised = String::new();
+    // `orig_end[i]` = the byte offset in `text` right after the original
+    // character that produced normalised byte `i`.
+    let mut orig_end: Vec<usize> = Vec::new();
+    let mut in_ws = false;
+    for (byte_pos, ch) in search_area.char_indices() {
+        if ch.is_whitespace() {
+            if !in_ws && !normalised.is_empty() {
+                normalised.push(' ');
+                // The space maps to right after this whitespace char.
+                let end = byte_pos + ch.len_utf8();
+                for _ in 0..' '.len_utf8() {
+                    orig_end.push(end);
+                }
+                in_ws = true;
+            }
+            // Skip additional whitespace (update the mapped position of
+            // the trailing normalised space so it points past the last ws).
+            if in_ws && !normalised.is_empty() {
+                let end = byte_pos + ch.len_utf8();
+                let n = orig_end.len();
+                if n > 0 {
+                    orig_end[n - 1] = end;
+                }
+            }
+        } else {
+            in_ws = false;
+            for lower in ch.to_lowercase() {
+                let start_n = normalised.len();
+                normalised.push(lower);
+                let bytes_added = normalised.len() - start_n;
+                let end = byte_pos + ch.len_utf8();
+                for _ in 0..bytes_added {
+                    orig_end.push(end);
+                }
+            }
+        }
+    }
+
+    if let Some(pos) = normalised.find(&normalised_title) {
+        let end_normalised = pos + normalised_title.len();
+        // Map back to the original text position.
+        let orig_after = if end_normalised > 0 && end_normalised <= orig_end.len() {
+            orig_end[end_normalised - 1]
+        } else {
+            0
+        };
+        text[orig_after..].trim_start()
+    } else {
+        text
+    }
+}
+
 /// Converts a `Book` to plain text by stripping HTML from all chapters.
 pub fn book_to_plain_text(book: &Book) -> String {
     let chapters = book.chapters();
@@ -87,13 +167,15 @@ pub fn book_to_plain_text(book: &Book) -> String {
             parts.push(title.clone());
             parts.push(String::new()); // blank line after title
         }
-        let content = match chapter.title {
-            Some(ref title) => strip_leading_heading(&chapter.content, title),
-            None => &chapter.content,
-        };
-        let plain = strip_tags(content);
+        let plain = strip_tags(&chapter.content);
         let decoded = unescape_basic_entities(&plain);
         let trimmed = decoded.trim();
+        // For TXT output, strip everything up to and including the title
+        // to remove both page-header boilerplate and duplicate heading.
+        let trimmed = match chapter.title {
+            Some(ref title) => strip_title_prefix(trimmed, title),
+            None => trimmed,
+        };
         if !trimmed.is_empty() {
             parts.push(trimmed.to_string());
         }
@@ -201,6 +283,75 @@ mod tests {
             "Expected 'Down the Rabbit-Hole' once, but found {count} times in:\n{text}"
         );
         assert!(text.contains("Alice was beginning to get very tired."));
+    }
+
+    #[test]
+    fn txt_writer_no_triplicate_heading_with_pgheader() {
+        // Gutenberg EPUBs include a page-header div before the chapter heading.
+        // This used to produce 3 occurrences: explicit title, pgheader boilerplate
+        // text, and the heading remaining in the body.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("CHAPTER I. Down the Rabbit-Hole".into()),
+            content: r#"<div class="pg-boilerplate pgheader section">
+                <h2>The Project Gutenberg eBook of Alice's Adventures in Wonderland</h2>
+                <p>Release date: June 27, 2008</p>
+            </div>
+            <h2>CHAPTER I. Down the Rabbit-Hole</h2>
+            <p>Alice was beginning to get very tired of sitting by her sister.</p>"#
+                .into(),
+            id: Some("ch1".into()),
+        });
+
+        let text = book_to_plain_text(&book);
+        let count = text.matches("Down the Rabbit-Hole").count();
+        assert_eq!(
+            count, 1,
+            "Expected 'Down the Rabbit-Hole' once, but found {count} times in:\n{text}"
+        );
+        // The pgheader boilerplate should also be stripped.
+        assert!(
+            !text.contains("Project Gutenberg"),
+            "pgheader boilerplate should be stripped, but found in:\n{text}"
+        );
+        assert!(text.contains("Alice was beginning to get very tired"));
+    }
+
+    #[test]
+    fn strip_title_prefix_basic() {
+        let text = "Some boilerplate\n\nCHAPTER I. Down the Rabbit-Hole\n\nAlice was beginning";
+        let result = strip_title_prefix(text, "CHAPTER I. Down the Rabbit-Hole");
+        assert_eq!(result, "Alice was beginning");
+    }
+
+    #[test]
+    fn strip_title_prefix_case_insensitive() {
+        let text = "chapter i. down the rabbit-hole\n\nBody text";
+        let result = strip_title_prefix(text, "CHAPTER I. Down the Rabbit-Hole");
+        assert_eq!(result, "Body text");
+    }
+
+    #[test]
+    fn strip_title_prefix_no_match() {
+        let text = "This text has no chapter heading\n\nBody text";
+        let result = strip_title_prefix(text, "CHAPTER I. Down the Rabbit-Hole");
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn strip_title_prefix_empty_title() {
+        let text = "Some text here";
+        let result = strip_title_prefix(text, "");
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn strip_title_prefix_whitespace_normalised() {
+        // Both the title and the text are whitespace-normalised for matching,
+        // so extra spaces/newlines in the text still match the title.
+        let text = "CHAPTER   I.   Down  the  Rabbit-Hole\n\nBody text";
+        let result = strip_title_prefix(text, "CHAPTER I. Down the Rabbit-Hole");
+        assert_eq!(result, "Body text");
     }
 
     #[test]
