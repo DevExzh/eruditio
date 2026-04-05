@@ -167,3 +167,22 @@ fn fb2_writer_emphasis_spanning_multiple_paragraphs() {
     // No spurious empty paragraphs
     assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis found:\n{xml}");
 }
+
+#[test]
+fn fb2_writer_emphasis_across_br_boundary() {
+    let mut book = Book::new();
+    book.metadata.title = Some("BR Emphasis Test".into());
+    book.add_chapter(&Chapter {
+        title: Some("Ch1".into()),
+        content: "<p>A <em>B<br/>C</em> D</p>".into(),
+        id: Some("ch1".into()),
+    });
+
+    let mut output = Vec::new();
+    Fb2Writer::new().write_book(&book, &mut output).unwrap();
+    let xml = String::from_utf8(output).unwrap();
+
+    assert!(xml.contains("<emphasis>B</emphasis>"), "emphasis should close before br, got:\n{xml}");
+    assert!(xml.contains("<emphasis>C</emphasis>"), "emphasis should reopen after br, got:\n{xml}");
+    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis found:\n{xml}");
+}

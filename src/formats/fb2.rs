@@ -230,6 +230,26 @@ impl FormatWriter for Fb2Writer {
     }
 }
 
+#[inline]
+fn close_inline_formatting(buf: &mut String, in_strong: bool, in_emphasis: bool) {
+    if in_strong {
+        buf.push_str("</strong>");
+    }
+    if in_emphasis {
+        buf.push_str("</emphasis>");
+    }
+}
+
+#[inline]
+fn reopen_inline_formatting(buf: &mut String, in_emphasis: bool, in_strong: bool) {
+    if in_emphasis {
+        buf.push_str("<emphasis>");
+    }
+    if in_strong {
+        buf.push_str("<strong>");
+    }
+}
+
 /// Converts HTML content into FB2 paragraph elements.
 ///
 /// - Wraps text inside `<p>` tags as FB2 `<p>` elements.
@@ -261,69 +281,36 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
 
                 if tag_lower.starts_with("<p") && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ') {
                     // Opening <p> tag – start accumulating inline content
-                    if in_strong {
-                        inline_buf.push_str("</strong>");
-                    }
-                    if in_emphasis {
-                        inline_buf.push_str("</emphasis>");
-                    }
+                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                     if in_anchor {
                         inline_buf.push_str("</a>");
                         in_anchor = false;
                     }
                     flush_paragraph(&mut out, &mut inline_buf);
-                    // Reopen emphasis/strong in the new paragraph context
-                    if in_emphasis {
-                        inline_buf.push_str("<emphasis>");
-                    }
-                    if in_strong {
-                        inline_buf.push_str("<strong>");
-                    }
+                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     in_p = true;
                     pos += gt + 1;
                 } else if tag_lower.starts_with("</p") {
                     // Closing </p> tag – flush current paragraph
-                    if in_strong {
-                        inline_buf.push_str("</strong>");
-                    }
-                    if in_emphasis {
-                        inline_buf.push_str("</emphasis>");
-                    }
+                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                     if in_anchor {
                         inline_buf.push_str("</a>");
                         in_anchor = false;
                     }
                     flush_paragraph(&mut out, &mut inline_buf);
-                    // Reopen emphasis/strong for continuation after paragraph boundary
-                    if in_emphasis {
-                        inline_buf.push_str("<emphasis>");
-                    }
-                    if in_strong {
-                        inline_buf.push_str("<strong>");
-                    }
+                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     in_p = false;
                     pos += gt + 1;
                 } else if tag_lower.starts_with("<br") {
                     // <br> or <br/> – emit empty-line in FB2
-                    if in_strong {
-                        inline_buf.push_str("</strong>");
-                    }
-                    if in_emphasis {
-                        inline_buf.push_str("</emphasis>");
-                    }
+                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                     if in_anchor {
                         inline_buf.push_str("</a>");
                         in_anchor = false;
                     }
                     flush_paragraph(&mut out, &mut inline_buf);
                     out.push_str("      <empty-line/>\n");
-                    // Reopen emphasis/strong for continuation after <br>
-                    if in_emphasis {
-                        inline_buf.push_str("<emphasis>");
-                    }
-                    if in_strong {
-                        inline_buf.push_str("<strong>");
-                    }
+                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     pos += gt + 1;
                 } else if tag_lower.starts_with("<a ") || tag_lower.starts_with("<a>") {
                     // Opening <a> tag – extract href and convert to l:href
@@ -391,24 +378,13 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
                         inline_buf.push_str(&escape_html(trimmed));
-                        if in_strong {
-                            inline_buf.push_str("</strong>");
-                        }
-                        if in_emphasis {
-                            inline_buf.push_str("</emphasis>");
-                        }
+                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                         if in_anchor {
                             inline_buf.push_str("</a>");
                             in_anchor = false;
                         }
                         flush_paragraph(&mut out, &mut inline_buf);
-                        // Reopen emphasis/strong for continuation
-                        if in_emphasis {
-                            inline_buf.push_str("<emphasis>");
-                        }
-                        if in_strong {
-                            inline_buf.push_str("<strong>");
-                        }
+                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     }
                 }
             }
@@ -417,14 +393,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     }
 
     // Flush any trailing inline content
-    if in_strong {
-        inline_buf.push_str("</strong>");
-        // in_strong = false; // not needed, end of function
-    }
-    if in_emphasis {
-        inline_buf.push_str("</emphasis>");
-        // in_emphasis = false; // not needed, end of function
-    }
+    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
     if in_anchor {
         inline_buf.push_str("</a>");
         // in_anchor = false; // not needed, end of function
@@ -437,13 +406,16 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
 fn flush_paragraph(out: &mut String, inline_buf: &mut String) {
     let trimmed = inline_buf.trim();
     if !trimmed.is_empty() {
-        // Skip paragraphs that contain only empty inline markup (no actual text)
-        let text_only = trimmed
-            .replace("<emphasis>", "")
-            .replace("</emphasis>", "")
-            .replace("<strong>", "")
-            .replace("</strong>", "");
-        if !text_only.trim().is_empty() {
+        // Quick check: only do the expensive strip if content could be markup-only
+        let is_empty_markup = trimmed.starts_with('<') && {
+            let text_only = trimmed
+                .replace("<emphasis>", "")
+                .replace("</emphasis>", "")
+                .replace("<strong>", "")
+                .replace("</strong>", "");
+            text_only.trim().is_empty()
+        };
+        if !is_empty_markup {
             out.push_str("      <p>");
             out.push_str(trimmed);
             out.push_str("</p>\n");
