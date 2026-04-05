@@ -72,16 +72,17 @@ fn generate_thumbnail(image_data: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
 
-    // If the image is already within thumbnail bounds, re-encode as JPEG without resizing.
-    let resized = if orig_w <= THUMBNAIL_MAX_WIDTH && orig_h <= THUMBNAIL_MAX_HEIGHT {
-        img
-    } else {
-        img.resize(
-            THUMBNAIL_MAX_WIDTH,
-            THUMBNAIL_MAX_HEIGHT,
-            FilterType::Triangle,
-        )
-    };
+    // If the image is already within thumbnail bounds, skip generation entirely
+    // to avoid lossy re-encoding. The caller falls back to using the cover itself.
+    if orig_w <= THUMBNAIL_MAX_WIDTH && orig_h <= THUMBNAIL_MAX_HEIGHT {
+        return None;
+    }
+
+    let resized = img.resize(
+        THUMBNAIL_MAX_WIDTH,
+        THUMBNAIL_MAX_HEIGHT,
+        FilterType::Triangle,
+    );
 
     let rgb = resized.to_rgb8();
     let mut jpeg_buf = std::io::Cursor::new(Vec::new());
@@ -110,15 +111,19 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     let has_images = !image_refs.is_empty();
 
     // Generate a downscaled thumbnail from the cover (first) image.
-    // If generation succeeds the thumbnail is inserted as the second image
-    // record and EXTH 202 points to index 1; otherwise we fall back to 0
-    // (same image as the cover).
+    // If generation succeeds the thumbnail is appended as the last image
+    // record (after all original images) so that existing recindex references
+    // in the HTML are not shifted.  EXTH 202 points to that final index.
     let thumbnail_data = if has_images {
         generate_thumbnail(image_refs[0])
     } else {
         None
     };
-    let thumb_offset: u32 = if thumbnail_data.is_some() { 1 } else { 0 };
+    let thumb_offset: u32 = if thumbnail_data.is_some() {
+        image_refs.len() as u32 // index after the last original image
+    } else {
+        0
+    };
 
     // Build EXTH.
     let exth_data = build_metadata_exth(book, has_images, thumb_offset);
@@ -156,22 +161,18 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
         pos += tr.len() as u32;
     }
 
-    // Image records: cover first, then thumbnail (if any), then remaining images.
+    // Image records: all original images first, then thumbnail (if any).
     if !image_refs.is_empty() {
-        // Cover image (index 0).
-        offsets.push(pos);
-        pos += image_refs[0].len() as u32;
+        // All original images in order.
+        for ir in &image_refs {
+            offsets.push(pos);
+            pos += ir.len() as u32;
+        }
 
-        // Thumbnail image (index 1, if generated).
+        // Thumbnail appended after all original images.
         if let Some(ref thumb) = thumbnail_data {
             offsets.push(pos);
             pos += thumb.len() as u32;
-        }
-
-        // Remaining images (indices shifted by thumbnail_record_count).
-        for ir in &image_refs[1..] {
-            offsets.push(pos);
-            pos += ir.len() as u32;
         }
     }
 
@@ -199,14 +200,13 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     for tr in &text_records {
         output.extend_from_slice(tr);
     }
-    // Image records: cover, thumbnail, remaining.
+    // Image records: all original images, then thumbnail.
     if !image_refs.is_empty() {
-        output.extend_from_slice(image_refs[0]);
+        for ir in &image_refs {
+            output.extend_from_slice(ir);
+        }
         if let Some(ref thumb) = thumbnail_data {
             output.extend_from_slice(thumb);
-        }
-        for ir in &image_refs[1..] {
-            output.extend_from_slice(ir);
         }
     }
     output.extend_from_slice(FLIS_RECORD);
@@ -833,6 +833,84 @@ mod tests {
             )
             .unwrap();
         buf.into_inner()
+    }
+
+    #[test]
+    fn thumbnail_appended_after_all_images_no_index_shift() {
+        // Regression test: thumbnail must be appended AFTER all original images
+        // so that recindex references in the HTML are not shifted.
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Multi-Image Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // All images are larger than 180x240 so that whichever one ends up
+        // first (HashMap ordering) will still trigger thumbnail generation.
+        let cover_jpeg = create_test_jpeg(600, 800);
+        let img2_jpeg = create_test_jpeg(300, 400);
+        let img3_jpeg = create_test_jpeg(400, 300);
+        book.add_resource("cover", "cover.jpg", cover_jpeg, "image/jpeg");
+        book.add_resource("img2", "img2.jpg", img2_jpeg, "image/jpeg");
+        book.add_resource("img3", "img3.jpg", img3_jpeg, "image/jpeg");
+
+        let mobi_data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+
+        // Record layout: [record0, text, img*3, thumbnail, FLIS, FCIS, EOF] = 9 records
+        assert_eq!(pdb.record_count(), 9, "expected 9 records (1+1+3+1+3), got {}", pdb.record_count());
+
+        // The thumbnail is the 4th image record (index 5 = record0 + 1 text + 3 images).
+        // It's a JPEG and should be smaller than the large cover.
+        let thumb_record = pdb.record_data(5).unwrap();
+        assert_eq!(&thumb_record[..2], &[0xFF, 0xD8], "thumbnail should be a valid JPEG");
+
+        // EXTH 202 should point to index 3 (= number of original images, 0-based from first image).
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+        let thumb_offset = exth.get_u32(EXTH_THUMB_OFFSET).expect("EXTH 202 should be present");
+        assert_eq!(thumb_offset, 3, "thumbnail offset should be 3 (after 3 original images)");
+    }
+
+    #[test]
+    fn small_cover_skips_thumbnail_generation() {
+        // If the cover is already within 180x240 bounds, no separate thumbnail
+        // should be generated (avoids lossy re-encoding).
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Small Cover Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // 100x100 is within 180x240 bounds — should NOT generate a thumbnail.
+        let small_jpeg = create_test_jpeg(100, 100);
+        book.add_resource("cover", "cover.jpg", small_jpeg, "image/jpeg");
+
+        let mobi_data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+
+        // Record layout without thumbnail: [record0, text, cover, FLIS, FCIS, EOF] = 6 records
+        assert_eq!(pdb.record_count(), 6, "no thumbnail record should be generated for small cover");
+
+        // EXTH 202 should fall back to 0 (same as cover).
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+        let thumb_offset = exth.get_u32(EXTH_THUMB_OFFSET).expect("EXTH 202 should be present");
+        assert_eq!(thumb_offset, 0, "thumbnail offset should be 0 (no separate thumbnail)");
     }
 
     #[test]
