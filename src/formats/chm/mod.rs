@@ -11,6 +11,7 @@ use crate::domain::{Book, Chapter, FormatReader};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::itss::{self, DirectoryEntry};
 use crate::formats::common::text_utils;
+use crate::formats::common::MAX_INPUT_SIZE;
 
 /// Maximum number of directory entries to prevent DoS from crafted files.
 const MAX_ENTRIES: usize = 1_000_000;
@@ -471,7 +472,7 @@ impl ChmReader {
 impl FormatReader for ChmReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
 
         let mut container = ChmContainer::parse(buffer)?;
         let mut book = Book::new();

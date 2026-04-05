@@ -6,6 +6,7 @@
 use crate::domain::{Book, FormatReader};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::palm_db::PdbFile;
+use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::pdf::PdfReader;
 use std::io::{Cursor, Read};
 
@@ -25,7 +26,7 @@ impl Azw4Reader {
 impl FormatReader for Azw4Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut data)?;
 
         // Extract the PDF from the PDB container.
         let pdf_bytes = extract_pdf(&data)?;

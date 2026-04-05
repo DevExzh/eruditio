@@ -1,6 +1,7 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::html_utils::escape_html;
+use crate::formats::common::MAX_INPUT_SIZE;
 use base64::Engine;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -19,7 +20,7 @@ impl Fb2Reader {
 impl FormatReader for Fb2Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader.read_to_string(&mut contents)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_string(&mut contents)?;
 
         if contents.trim().is_empty() {
             return Err(EruditioError::Format("Empty FB2 input".into()));

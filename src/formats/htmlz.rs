@@ -9,6 +9,7 @@ use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
 use crate::formats::common::xml_utils;
+use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::html::HtmlReader;
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
@@ -29,7 +30,7 @@ impl HtmlzReader {
 impl FormatReader for HtmlzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)?;

@@ -10,6 +10,7 @@ use base64::Engine;
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
+use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 
 /// HTML format reader.
@@ -28,7 +29,7 @@ impl HtmlReader {
 impl FormatReader for HtmlReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader.read_to_string(&mut contents)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_string(&mut contents)?;
 
         let mut book = Book::new();
 

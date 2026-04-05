@@ -1,6 +1,7 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::intrinsics;
+use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::txt::{TxtReader, book_to_plain_text};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
@@ -18,7 +19,7 @@ impl TcrReader {
 impl FormatReader for TcrReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
 
         if buffer.len() < 9 || &buffer[0..9] != b"!!8-Bit!!" {
             return Err(EruditioError::Format("Invalid TCR header".into()));

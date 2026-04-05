@@ -1,6 +1,7 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::common::html_utils::{strip_leading_heading, strip_tags, unescape_basic_entities};
+use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 
 /// TXT format reader.
@@ -16,7 +17,7 @@ impl TxtReader {
 impl FormatReader for TxtReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        reader.read_to_string(&mut contents)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_string(&mut contents)?;
 
         let mut book = Book::new();
 

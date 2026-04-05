@@ -4,6 +4,7 @@
 
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::pml::{PmlReader, PmlWriter};
 use std::io::{Cursor, Read, Write};
 
@@ -20,7 +21,7 @@ impl PmlzReader {
 impl FormatReader for PmlzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut data)?;
 
         let cursor = Cursor::new(&data);
         let mut archive = zip::ZipArchive::new(cursor)?;

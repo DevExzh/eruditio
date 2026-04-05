@@ -14,6 +14,7 @@ use crate::formats::common::compression::huffcdic::HuffCdicReader;
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::PdbFile;
 use crate::formats::common::text_utils;
+use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 
 use self::exth::{
@@ -53,7 +54,7 @@ impl MobiReader {
 impl FormatReader for MobiReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
 
         let pdb = PdbFile::parse(buffer)?;
 

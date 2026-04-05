@@ -9,6 +9,7 @@ pub mod writer;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 use tokenizer::{RtfToken, tokenize};
 
@@ -28,7 +29,7 @@ impl RtfReader {
 impl FormatReader for RtfReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data)?;
+        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut data)?;
 
         // Verify RTF magic.
         if !data.starts_with(b"{\\rtf") {
