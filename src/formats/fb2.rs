@@ -38,6 +38,10 @@ impl FormatReader for Fb2Reader {
         let mut current_section_title = None;
         let mut current_section_content = String::new();
         let mut section_counter: u32 = 0;
+        // Track nested section depth within <body> so that content inside
+        // `<section>` elements at any depth is captured, not just the first level.
+        let mut section_depth: u32 = 0;
+        let mut in_section_title = false;
 
         let mut current_binary_id = None;
         let mut current_binary_ctype = None;
@@ -67,6 +71,25 @@ impl FormatReader for Fb2Reader {
                                 _ => {},
                             }
                         }
+                    } else if tag == "section" && in_body {
+                        // Entering a (possibly nested) section. If there is
+                        // already accumulated content from the parent section,
+                        // flush it as its own chapter before starting the child.
+                        if section_depth > 0
+                            && (current_section_title.is_some()
+                                || !current_section_content.is_empty())
+                        {
+                            section_counter += 1;
+                            book.add_chapter(&Chapter {
+                                title: current_section_title.take(),
+                                content: current_section_content.clone(),
+                                id: Some(format!("section_{}", section_counter)),
+                            });
+                            current_section_content.clear();
+                        }
+                        section_depth += 1;
+                    } else if tag == "title" && section_depth > 0 {
+                        in_section_title = true;
                     }
                     if !path_buf.is_empty() {
                         path_buf.push('/');
@@ -134,20 +157,31 @@ impl FormatReader for Fb2Reader {
                         }
                     } else {
                         // Parse content
-                        if path_buf == "FictionBook/body/section/title/p" {
+                        if tag == "p" && in_section_title {
                             current_section_title = Some(current_text.clone());
-                        } else if path_buf.starts_with("FictionBook/body/section") && tag == "p" {
+                        } else if tag == "title" && section_depth > 0 {
+                            in_section_title = false;
+                        } else if section_depth > 0 && tag == "p" {
                             current_section_content.push_str("<p>");
                             current_section_content.push_str(&current_text);
                             current_section_content.push_str("</p>\n");
-                        } else if path_buf == "FictionBook/body/section" && tag == "section" {
-                            section_counter += 1;
-                            book.add_chapter(&Chapter {
-                                title: current_section_title.take(),
-                                content: current_section_content.clone(),
-                                id: Some(format!("section_{}", section_counter)),
-                            });
-                            current_section_content.clear();
+                        } else if tag == "section" && section_depth > 0 {
+                            section_depth -= 1;
+                            // Only emit a chapter when there is a title or
+                            // content. This avoids empty chapters for wrapper
+                            // sections whose content was already flushed when
+                            // their child sections started.
+                            if current_section_title.is_some()
+                                || !current_section_content.is_empty()
+                            {
+                                section_counter += 1;
+                                book.add_chapter(&Chapter {
+                                    title: current_section_title.take(),
+                                    content: current_section_content.clone(),
+                                    id: Some(format!("section_{}", section_counter)),
+                                });
+                                current_section_content.clear();
+                            }
                         } else if tag == "body" {
                             in_body = false;
                         }
@@ -901,6 +935,210 @@ mod tests {
             empty_line_count, 1,
             "a <br/> between paragraphs should produce exactly one empty-line, got {}",
             empty_line_count
+        );
+    }
+
+    // =========================================================================
+    // Tests for nested section handling in FB2 reader
+    // =========================================================================
+
+    #[test]
+    fn fb2_reader_nested_sections() {
+        let fb2_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>Nested Test</book-title>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Chapter 1</p></title>
+      <section>
+        <title><p>Section 1.1</p></title>
+        <p>Content of 1.1</p>
+      </section>
+      <section>
+        <title><p>Section 1.2</p></title>
+        <p>Content of 1.2</p>
+      </section>
+    </section>
+  </body>
+</FictionBook>"#;
+
+        let mut cursor = Cursor::new(fb2_xml.as_bytes());
+        let book = Fb2Reader::new().read_book(&mut cursor).unwrap();
+        let chapters = book.chapters();
+
+        // The outer section has a title but the content was flushed when the
+        // first child section started, producing a chapter for "Chapter 1"
+        // (empty body) and one chapter per inner section.
+        assert!(
+            chapters.len() >= 2,
+            "expected at least 2 chapters for nested sections, got {}",
+            chapters.len()
+        );
+
+        // Find chapters by title
+        let titles: Vec<Option<&str>> = chapters.iter().map(|c| c.title.as_deref()).collect();
+        assert!(
+            titles.contains(&Some("Section 1.1")),
+            "missing 'Section 1.1' chapter, found titles: {:?}",
+            titles
+        );
+        assert!(
+            titles.contains(&Some("Section 1.2")),
+            "missing 'Section 1.2' chapter, found titles: {:?}",
+            titles
+        );
+
+        // Verify inner section content is not dropped
+        let sec11 = chapters.iter().find(|c| c.title.as_deref() == Some("Section 1.1")).unwrap();
+        assert!(
+            sec11.content.contains("Content of 1.1"),
+            "Section 1.1 content was dropped: {:?}",
+            sec11.content
+        );
+        let sec12 = chapters.iter().find(|c| c.title.as_deref() == Some("Section 1.2")).unwrap();
+        assert!(
+            sec12.content.contains("Content of 1.2"),
+            "Section 1.2 content was dropped: {:?}",
+            sec12.content
+        );
+    }
+
+    #[test]
+    fn fb2_reader_deeply_nested_sections() {
+        let fb2_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>Deep Nesting</book-title>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Part I</p></title>
+      <section>
+        <title><p>Chapter 1</p></title>
+        <section>
+          <title><p>Section 1.1</p></title>
+          <p>Deep content here</p>
+        </section>
+      </section>
+    </section>
+  </body>
+</FictionBook>"#;
+
+        let mut cursor = Cursor::new(fb2_xml.as_bytes());
+        let book = Fb2Reader::new().read_book(&mut cursor).unwrap();
+        let chapters = book.chapters();
+
+        let titles: Vec<Option<&str>> = chapters.iter().map(|c| c.title.as_deref()).collect();
+        assert!(
+            titles.contains(&Some("Section 1.1")),
+            "deeply nested section title not found, got: {:?}",
+            titles
+        );
+
+        let sec = chapters.iter().find(|c| c.title.as_deref() == Some("Section 1.1")).unwrap();
+        assert!(
+            sec.content.contains("Deep content here"),
+            "deeply nested section content was dropped: {:?}",
+            sec.content
+        );
+    }
+
+    #[test]
+    fn fb2_reader_flat_sections_still_work() {
+        // Regression test: flat (non-nested) sections must keep working.
+        let fb2_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>Flat Sections</book-title>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Chapter 1</p></title>
+      <p>First chapter content</p>
+    </section>
+    <section>
+      <title><p>Chapter 2</p></title>
+      <p>Second chapter content</p>
+    </section>
+    <section>
+      <title><p>Chapter 3</p></title>
+      <p>Third chapter content</p>
+    </section>
+  </body>
+</FictionBook>"#;
+
+        let mut cursor = Cursor::new(fb2_xml.as_bytes());
+        let book = Fb2Reader::new().read_book(&mut cursor).unwrap();
+        let chapters = book.chapters();
+
+        assert_eq!(
+            chapters.len(),
+            3,
+            "expected 3 flat chapters, got {}",
+            chapters.len()
+        );
+        assert_eq!(chapters[0].title.as_deref(), Some("Chapter 1"));
+        assert_eq!(chapters[1].title.as_deref(), Some("Chapter 2"));
+        assert_eq!(chapters[2].title.as_deref(), Some("Chapter 3"));
+        assert!(chapters[0].content.contains("First chapter content"));
+        assert!(chapters[1].content.contains("Second chapter content"));
+        assert!(chapters[2].content.contains("Third chapter content"));
+    }
+
+    #[test]
+    fn fb2_reader_nested_section_with_parent_content() {
+        // A parent section has content before its nested child sections.
+        let fb2_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>Mixed Content</book-title>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Introduction</p></title>
+      <p>Intro paragraph</p>
+      <section>
+        <title><p>Details</p></title>
+        <p>Detail paragraph</p>
+      </section>
+    </section>
+  </body>
+</FictionBook>"#;
+
+        let mut cursor = Cursor::new(fb2_xml.as_bytes());
+        let book = Fb2Reader::new().read_book(&mut cursor).unwrap();
+        let chapters = book.chapters();
+
+        // The parent section's content should be flushed as a chapter before
+        // the child section starts.
+        assert!(
+            chapters.len() >= 2,
+            "expected at least 2 chapters, got {}",
+            chapters.len()
+        );
+
+        let intro = chapters.iter().find(|c| c.title.as_deref() == Some("Introduction")).unwrap();
+        assert!(
+            intro.content.contains("Intro paragraph"),
+            "parent section content was lost: {:?}",
+            intro.content
+        );
+
+        let details = chapters.iter().find(|c| c.title.as_deref() == Some("Details")).unwrap();
+        assert!(
+            details.content.contains("Detail paragraph"),
+            "child section content was lost: {:?}",
+            details.content
         );
     }
 }
