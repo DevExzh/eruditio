@@ -141,16 +141,20 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
 ///
 /// Uses a reusable `PalmDocCompressor` to amortise the 16 KB hash-chain
 /// initialisation cost across all records (instead of re-creating it per record).
+/// Also reuses a single output buffer to reduce allocations.
 fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
     let num_records = (text.len() + RECORD_SIZE - 1) / RECORD_SIZE.max(1);
     let mut records = Vec::with_capacity(num_records.max(1));
     let mut compressor = palmdoc::PalmDocCompressor::new();
+    let mut buf = Vec::with_capacity(RECORD_SIZE);
     let mut offset = 0;
 
     while offset < text.len() {
         let end = (offset + RECORD_SIZE).min(text.len());
         let chunk = &text[offset..end];
-        records.push(compressor.compress_record(chunk));
+        buf.clear();
+        compressor.compress_record_into(chunk, &mut buf);
+        records.push(buf.clone());
         offset = end;
     }
 

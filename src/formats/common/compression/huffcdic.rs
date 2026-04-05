@@ -194,16 +194,13 @@ impl HuffCdicReader {
         }
 
         let mut bits_left = (data.len() as i64) * 8;
-        // Pad data with 8 zero bytes so we can always read a u64 safely.
-        let mut padded = Vec::with_capacity(data.len() + 8);
-        padded.extend_from_slice(data);
-        padded.extend_from_slice(&[0u8; 8]);
 
         let mut pos: usize = 0;
-        let mut x = read_u64_be(&padded, pos);
+        let mut x = read_u64_be_padded(data, pos);
         let mut n: i32 = 32; // Number of usable bits in the current window.
 
-        let mut result = Vec::new();
+        // Pre-allocate result: decompressed text is typically ~2x the compressed size.
+        let mut result = Vec::with_capacity(data.len().saturating_mul(2).min(MAX_UNPACK_OUTPUT));
 
         loop {
             if result.len() > MAX_UNPACK_OUTPUT {
@@ -213,10 +210,10 @@ impl HuffCdicReader {
             }
             if n <= 0 {
                 pos += 4;
-                if pos + 8 > padded.len() {
+                x = read_u64_be_padded(data, pos);
+                if pos >= data.len() {
                     break;
                 }
-                x = read_u64_be(&padded, pos);
                 n += 32;
             }
 
@@ -285,6 +282,21 @@ impl HuffCdicReader {
     }
 }
 
+/// Reads a big-endian u64 from `data` at `offset`, zero-padding bytes beyond
+/// the end of the slice. This avoids allocating a padded copy of the input.
+#[inline]
+fn read_u64_be_padded(data: &[u8], offset: usize) -> u64 {
+    let remaining = data.len().saturating_sub(offset);
+    if remaining >= 8 {
+        u64::from_be_bytes(data[offset..offset + 8].try_into().unwrap())
+    } else {
+        let mut buf = [0u8; 8];
+        let n = remaining.min(8);
+        buf[..n].copy_from_slice(&data[offset..offset + n]);
+        u64::from_be_bytes(buf)
+    }
+}
+
 #[inline]
 fn read_u32_be(data: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes([
@@ -298,20 +310,6 @@ fn read_u32_be(data: &[u8], offset: usize) -> u32 {
 #[inline]
 fn read_u16_be(data: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([data[offset], data[offset + 1]])
-}
-
-#[inline]
-fn read_u64_be(data: &[u8], offset: usize) -> u64 {
-    u64::from_be_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-        data[offset + 4],
-        data[offset + 5],
-        data[offset + 6],
-        data[offset + 7],
-    ])
 }
 
 #[cfg(test)]

@@ -36,6 +36,18 @@ fn bench_decompress(c: &mut Criterion) {
     });
 }
 
+fn bench_decompress_into(c: &mut Criterion) {
+    let record = make_text_record();
+    let compressed = palmdoc::compress(&record);
+    let mut output = Vec::with_capacity(4096);
+    c.bench_function("palmdoc/decompress_4k_into", |b| {
+        b.iter(|| {
+            output.clear();
+            palmdoc::decompress_into(black_box(&compressed), &mut output).unwrap();
+        })
+    });
+}
+
 fn bench_compress_random(c: &mut Criterion) {
     // Low-entropy random-ish data (less compressible).
     let mut data = vec![0u8; 4096];
@@ -79,6 +91,20 @@ fn bench_compress_multi_record(c: &mut Criterion) {
             records
         })
     });
+
+    c.bench_function("palmdoc/compress_200k_book_into", |b| {
+        b.iter(|| {
+            let mut compressor = palmdoc::PalmDocCompressor::new();
+            let mut records = Vec::new();
+            let mut buf = Vec::with_capacity(4096);
+            for chunk in black_box(&book).chunks(4096) {
+                buf.clear();
+                compressor.compress_record_into(chunk, &mut buf);
+                records.push(buf.clone());
+            }
+            records
+        })
+    });
 }
 
 criterion_group!(
@@ -86,6 +112,7 @@ criterion_group!(
     bench_compress,
     bench_compress_reuse,
     bench_decompress,
+    bench_decompress_into,
     bench_compress_random,
     bench_compress_random_reuse,
     bench_compress_multi_record,

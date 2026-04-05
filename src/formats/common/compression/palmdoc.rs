@@ -162,9 +162,30 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
     output.reserve(RECORD_SIZE);
     let mut i = 0;
+    let len = input.len();
 
-    while i < input.len() {
+    while i < len {
         let c = input[i];
+
+        // Fast path: scan for a run of self-representing bytes (0x09..=0x7F).
+        // This is the overwhelmingly common case for text-heavy ebook content
+        // (plain ASCII letters, digits, punctuation). We bulk-copy entire runs
+        // instead of pushing one byte at a time.
+        if c >= 0x09 && c <= 0x7F {
+            let run_start = i;
+            i += 1;
+            while i < len {
+                let b = input[i];
+                if b >= 0x09 && b <= 0x7F {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            output.extend_from_slice(&input[run_start..i]);
+            continue;
+        }
+
         i += 1;
 
         match c {
@@ -175,7 +196,7 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
             0x01..=0x08 => {
                 // Copy next `c` bytes literally.
                 let count = c as usize;
-                if i + count > input.len() {
+                if i + count > len {
                     return Err(EruditioError::Format(
                         "PalmDoc: literal copy extends past input".into(),
                     ));
@@ -184,12 +205,13 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
                 i += count;
             },
             0x09..=0x7F => {
-                // Self-representing byte.
-                output.push(c);
+                // Self-representing bytes are handled above in the fast path.
+                // This arm is unreachable but required for exhaustiveness.
+                unreachable!()
             },
             0x80..=0xBF => {
                 // LZ77 back-reference: 2-byte encoding.
-                if i >= input.len() {
+                if i >= len {
                     return Err(EruditioError::Format(
                         "PalmDoc: back-reference missing second byte".into(),
                     ));
@@ -219,16 +241,16 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
                 if distance >= length {
                     // Non-overlapping: bulk copy is safe.
                     output.reserve(length);
-                    let len = output.len();
+                    let out_len = output.len();
                     unsafe {
                         let base = output.as_mut_ptr();
                         let src = base.add(start) as *const u8;
-                        let dst = base.add(len);
-                        // SAFETY: `start + length <= len` because `distance >= length`
-                        // and `start = len - distance`. We reserved `length` bytes so
+                        let dst = base.add(out_len);
+                        // SAFETY: `start + length <= out_len` because `distance >= length`
+                        // and `start = out_len - distance`. We reserved `length` bytes so
                         // `dst` is valid for writes. Regions do not overlap.
                         std::ptr::copy_nonoverlapping(src, dst, length);
-                        output.set_len(len + length);
+                        output.set_len(out_len + length);
                     }
                 } else if distance == 1 {
                     // RLE: single-byte repeat -- the most common overlapping case.
@@ -325,18 +347,29 @@ impl PalmDocCompressor {
 
     /// Compresses a single text record, reusing the internal hash chain.
     pub fn compress_record(&mut self, input: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(input.len());
+        self.compress_record_into(input, &mut output);
+        output
+    }
+
+    /// Compresses a single text record into the given output buffer, which is
+    /// cleared first. Reuses both the internal hash chain and the caller's
+    /// output buffer to eliminate per-record allocation.
+    pub fn compress_record_into(&mut self, input: &[u8], output: &mut Vec<u8>) {
+        output.clear();
         if input.is_empty() {
-            return Vec::new();
+            return;
         }
 
         self.chain.reset();
-        let mut output = Vec::with_capacity(input.len());
+        output.reserve(input.len());
+        let input_len = input.len();
         let mut i = 0;
 
-        while i < input.len() {
+        while i < input_len {
             // Try LZ77 back-reference.
             if i >= MIN_MATCH
-                && input.len() - i >= MIN_MATCH
+                && input_len - i >= MIN_MATCH
                 && let Some((distance, length)) = self.chain.find_best_match(input, i)
             {
                 // Update the hash chain for every position consumed by this match.
@@ -355,7 +388,7 @@ impl PalmDocCompressor {
             self.chain.insert(input, i);
 
             // Try space + character optimization.
-            if input[i] == b' ' && i + 1 < input.len() {
+            if input[i] == b' ' && i + 1 < input_len {
                 let next = input[i + 1];
                 if (0x40..=0x7F).contains(&next) {
                     self.chain.insert(input, i + 1);
@@ -375,12 +408,12 @@ impl PalmDocCompressor {
             // Binary literal: collect up to 8 bytes that aren't self-representing.
             let start = i;
             let mut count = 0;
-            while i < input.len()
+            while i < input_len
                 && count < 8
                 && !(input[i] == 0x00 || (0x09..=0x7F).contains(&input[i]))
             {
                 if input[i] == b' '
-                    && i + 1 < input.len()
+                    && i + 1 < input_len
                     && (0x40..=0x7F).contains(&input[i + 1])
                 {
                     break;
@@ -399,8 +432,6 @@ impl PalmDocCompressor {
                 i += 1;
             }
         }
-
-        output
     }
 }
 
@@ -533,11 +564,6 @@ mod tests {
 
     #[test]
     fn decompress_space_char() {
-        // 0xC0 | ('t' ^ 0x80) won't work since 't' = 0x74, 0x74 ^ 0x80 = 0xF4
-        // Space + 't': output 0x20, 't'
-        // Encoding: 0xC0 | 0x74 = ... no, it's: byte = char ^ 0x80 | 0xC0
-        // Actually the encoding is: single byte C where C = next_char XOR 0x80
-        // and C must be in 0xC0..=0xFF, meaning next_char is in 0x40..=0x7F.
         // 't' = 0x74, so encoded byte = 0x74 ^ 0x80 = 0xF4.
         let input = &[0xF4]; // space + 't'
         let result = decompress(input).unwrap();
@@ -589,27 +615,15 @@ mod tests {
 
     #[test]
     fn compress_space_optimization() {
-        // "Hello World" -- the space before 'W' (0x57, in 0x40..0x7F) should compress.
         let original = b"Hello World";
         let compressed = compress(original);
         let decompressed = decompress(&compressed).unwrap();
         assert_eq!(decompressed, original);
-        // " W" compresses to 1 byte (0x57 ^ 0x80 = 0xD7), so output should be shorter.
         assert!(compressed.len() < original.len());
     }
 
     #[test]
     fn decompress_overlapping_backref() {
-        // Craft input that exercises the overlapping back-reference path
-        // (distance > 1 but distance < length). We'll build compressed data
-        // that, when decoded, produces a pattern like "abcabcabc..." via a
-        // back-reference with distance=3, length=9.
-        //
-        // First emit "abc" as literal bytes, then a back-reference:
-        //   distance=3, length=9 => encoded length = 9-3 = 6
-        //   compound = (3 << 3) | 6 = 24 | 6 = 30 = 0x001E
-        //   high byte = 0x80 | (0x001E >> 8) = 0x80
-        //   low byte  = 0x1E
         let input = &[b'a', b'b', b'c', 0x80, 0x1E];
         let result = decompress(input).unwrap();
         assert_eq!(result, b"abcabcabcabc"); // 3 original + 9 from backref = 12
@@ -619,7 +633,6 @@ mod tests {
     fn palmdoc_compressor_reuse() {
         let mut compressor = PalmDocCompressor::new();
 
-        // Compress multiple records and verify they all round-trip.
         let phrases: &[&[u8]] = &[
             b"The quick brown fox jumps over the lazy dog. ",
             b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ",
@@ -643,8 +656,25 @@ mod tests {
     }
 
     #[test]
+    fn compress_record_into_round_trip() {
+        let mut compressor = PalmDocCompressor::new();
+        let mut buf = Vec::new();
+
+        let phrases: &[&[u8]] = &[
+            b"The quick brown fox jumps over the lazy dog. ",
+            b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ",
+            b"abcabc abcabc abcabc abcabc abcabc",
+        ];
+
+        for phrase in phrases {
+            compressor.compress_record_into(phrase, &mut buf);
+            let decompressed = decompress(&buf).unwrap();
+            assert_eq!(&decompressed, phrase);
+        }
+    }
+
+    #[test]
     fn round_trip_full_record() {
-        // Simulate a full 4096-byte record.
         let mut original = Vec::with_capacity(RECORD_SIZE);
         let phrase = b"The quick brown fox jumps over the lazy dog. ";
         while original.len() + phrase.len() <= RECORD_SIZE {
@@ -657,16 +687,11 @@ mod tests {
         let compressed = compress(&original);
         let decompressed = decompress(&compressed).unwrap();
         assert_eq!(decompressed, original);
-        // Highly repetitive text should compress well.
         assert!(compressed.len() < original.len() / 2);
     }
 
-    /// Validates that the hash-chain compressor produces valid output that
-    /// round-trips correctly, and achieves comparable (or better) compression
-    /// to the naive brute-force approach.
     #[test]
     fn hash_chain_vs_naive_compression() {
-        // Build a realistic 4096-byte record with repetitive content.
         let mut original = Vec::with_capacity(RECORD_SIZE);
         let phrases: &[&[u8]] = &[
             b"The quick brown fox jumps over the lazy dog. ",
@@ -685,15 +710,11 @@ mod tests {
         let compressed_hash = compress(&original);
         let compressed_naive = compress_naive(&original);
 
-        // Both must round-trip correctly.
         let decompressed_hash = decompress(&compressed_hash).unwrap();
         let decompressed_naive = decompress(&compressed_naive).unwrap();
         assert_eq!(decompressed_hash, original, "hash-chain round-trip failed");
         assert_eq!(decompressed_naive, original, "naive round-trip failed");
 
-        // Hash-chain should produce output of similar or better size.
-        // Allow up to 10% worse in case the hash chain misses a few matches
-        // that the exhaustive scan found.
         let tolerance = (compressed_naive.len() as f64 * 1.10) as usize;
         assert!(
             compressed_hash.len() <= tolerance,

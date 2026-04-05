@@ -1,4 +1,8 @@
 //! RTF tokenizer — lexes an RTF byte stream into tokens.
+//!
+//! Performance-critical path: this module uses lookup tables for ASCII
+//! classification, `unsafe` UTF-8 elision where byte contents are proven
+//! ASCII-only, and inlined hex parsing to minimize per-token overhead.
 
 use std::borrow::Cow;
 
@@ -30,6 +34,39 @@ pub enum RtfToken<'a> {
 
 /// Maximum number of tokens to prevent DoS from crafted RTF files.
 const MAX_TOKENS: usize = 10_000_000;
+
+/// Lookup table for hex digit values. 0xFF means "not a hex digit".
+static HEX_LUT: [u8; 256] = {
+    let mut lut = [0xFFu8; 256];
+    let mut i = 0u8;
+    loop {
+        lut[i as usize] = match i {
+            b'0'..=b'9' => i - b'0',
+            b'a'..=b'f' => i - b'a' + 10,
+            b'A'..=b'F' => i - b'A' + 10,
+            _ => 0xFF,
+        };
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    lut
+};
+
+/// Lookup table: `true` for ASCII alphabetic bytes (a-z, A-Z).
+static IS_ALPHA: [bool; 256] = {
+    let mut lut = [false; 256];
+    let mut i = 0u8;
+    loop {
+        lut[i as usize] = i.is_ascii_alphabetic();
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    lut
+};
 
 /// Tokenizes an RTF byte stream into a sequence of tokens.
 ///
@@ -75,7 +112,7 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                         if pos + 1 < len {
                             let hi = input[pos];
                             let lo = input[pos + 1];
-                            if let Some(byte) = parse_hex_byte(hi, lo) {
+                            if let Some(byte) = parse_hex_byte_lut(hi, lo) {
                                 tokens.push(RtfToken::HexByte(byte));
                             }
                             pos += 2;
@@ -99,15 +136,15 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                         }
                     }
                     // Control word: letters followed by optional numeric parameter.
-                    c if c.is_ascii_alphabetic() => {
-                        let (name, param, new_pos) = read_control_word(input, pos);
+                    c if IS_ALPHA[c as usize] => {
+                        let (name, param, new_pos) = read_control_word_fast(input, pos);
 
                         // Check for Unicode escape: \uN
                         if name == "u" {
                             if let Some(val) = param {
                                 tokens.push(RtfToken::Unicode(val));
                                 // Skip the replacement character after \uN.
-                                let skip_pos = skip_unicode_replacement(input, new_pos);
+                                let skip_pos = skip_unicode_replacement_fast(input, new_pos);
                                 pos = skip_pos;
                             } else {
                                 tokens.push(RtfToken::ControlWord {
@@ -169,19 +206,21 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
 /// Reads a control word starting at `pos` (which points to the first letter).
 /// Returns (name, optional_param, new_position).
 ///
-/// Control word names are always ASCII letters, so `str::from_utf8` is used
-/// instead of the more expensive `from_utf8_lossy`. The returned `&str` borrows
-/// directly from the input slice — no heap allocation.
-fn read_control_word(input: &[u8], mut pos: usize) -> (&str, Option<i32>, usize) {
+/// Uses a lookup table for ASCII alphabetic classification and
+/// `unsafe from_utf8_unchecked` since the loop guarantees all bytes
+/// are in [A-Za-z].
+#[inline]
+fn read_control_word_fast(input: &[u8], mut pos: usize) -> (&str, Option<i32>, usize) {
     let len = input.len();
     let start = pos;
 
-    // Read alphabetic name.
-    while pos < len && input[pos].is_ascii_alphabetic() {
+    // Read alphabetic name using lookup table.
+    while pos < len && IS_ALPHA[input[pos] as usize] {
         pos += 1;
     }
-    // Control word names are pure ASCII — from_utf8 always succeeds here.
-    let name = std::str::from_utf8(&input[start..pos]).unwrap_or("");
+    // SAFETY: every byte in input[start..pos] was verified as ASCII
+    // alphabetic (A-Z, a-z) by the loop. ASCII bytes are valid UTF-8.
+    let name = unsafe { std::str::from_utf8_unchecked(&input[start..pos]) };
 
     // Read optional numeric parameter (may start with '-') directly from bytes.
     let param = if pos < len && (input[pos].is_ascii_digit() || input[pos] == b'-') {
@@ -209,7 +248,8 @@ fn read_control_word(input: &[u8], mut pos: usize) -> (&str, Option<i32>, usize)
 
 /// Skips the Unicode replacement character after `\uN`.
 /// RTF specifies that one byte (or the number set by `\ucN`) follows as a fallback.
-fn skip_unicode_replacement(input: &[u8], mut pos: usize) -> usize {
+#[inline]
+fn skip_unicode_replacement_fast(input: &[u8], mut pos: usize) -> usize {
     let len = input.len();
     if pos >= len {
         return pos;
@@ -221,11 +261,11 @@ fn skip_unicode_replacement(input: &[u8], mut pos: usize) -> usize {
     } else if pos < len
         && input[pos] == b'\\'
         && pos + 1 < len
-        && input[pos + 1].is_ascii_alphabetic()
+        && IS_ALPHA[input[pos + 1] as usize]
     {
         // Skip control word replacement.
         pos += 1;
-        while pos < len && input[pos].is_ascii_alphabetic() {
+        while pos < len && IS_ALPHA[input[pos] as usize] {
             pos += 1;
         }
         while pos < len && (input[pos].is_ascii_digit() || input[pos] == b'-') {
@@ -242,20 +282,17 @@ fn skip_unicode_replacement(input: &[u8], mut pos: usize) -> usize {
     pos
 }
 
-/// Parses two hex ASCII characters into a byte.
-fn parse_hex_byte(hi: u8, lo: u8) -> Option<u8> {
-    let h = hex_digit(hi)?;
-    let l = hex_digit(lo)?;
-    Some((h << 4) | l)
-}
-
-fn hex_digit(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
+/// Parses two hex ASCII characters into a byte using the lookup table.
+/// Returns `None` if either character is not a valid hex digit.
+#[inline(always)]
+fn parse_hex_byte_lut(hi: u8, lo: u8) -> Option<u8> {
+    let h = HEX_LUT[hi as usize];
+    let l = HEX_LUT[lo as usize];
+    // If either value is 0xFF (sentinel), the byte was not a hex digit.
+    if (h | l) & 0xF0 != 0 {
+        return None;
     }
+    Some((h << 4) | l)
 }
 
 #[cfg(test)]
@@ -381,5 +418,75 @@ mod tests {
                 param: Some(1)
             }
         );
+    }
+
+    #[test]
+    fn hex_lut_matches_original() {
+        for b in 0u8..=255 {
+            let expected = match b {
+                b'0'..=b'9' => Some(b - b'0'),
+                b'a'..=b'f' => Some(b - b'a' + 10),
+                b'A'..=b'F' => Some(b - b'A' + 10),
+                _ => None,
+            };
+            let got = {
+                let v = HEX_LUT[b as usize];
+                if v == 0xFF { None } else { Some(v) }
+            };
+            assert_eq!(got, expected, "HEX_LUT mismatch for byte 0x{:02X}", b);
+        }
+    }
+
+    #[test]
+    fn parse_hex_byte_lut_cases() {
+        assert_eq!(parse_hex_byte_lut(b'e', b'9'), Some(0xe9));
+        assert_eq!(parse_hex_byte_lut(b'0', b'0'), Some(0x00));
+        assert_eq!(parse_hex_byte_lut(b'F', b'F'), Some(0xff));
+        assert_eq!(parse_hex_byte_lut(b'g', b'0'), None);
+        assert_eq!(parse_hex_byte_lut(b'0', b'z'), None);
+    }
+
+    #[test]
+    fn is_alpha_lut_matches_stdlib() {
+        for b in 0u8..=255 {
+            assert_eq!(
+                IS_ALPHA[b as usize],
+                b.is_ascii_alphabetic(),
+                "IS_ALPHA mismatch for byte 0x{:02X}",
+                b
+            );
+        }
+    }
+
+    #[test]
+    fn text_with_non_ascii_utf8() {
+        // \xC3\xA9 is the UTF-8 encoding of U+00E9 (e-acute).
+        let rtf: &[u8] = b"{\\rtf1 caf\xC3\xA9}";
+        let tokens = tokenize(rtf).unwrap();
+        let text_tokens: Vec<_> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                RtfToken::Text(s) => Some(s.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            text_tokens.iter().any(|t| t.contains("caf")),
+            "Expected text containing 'caf', got: {:?}",
+            text_tokens
+        );
+    }
+
+    #[test]
+    fn empty_input() {
+        let tokens = tokenize(b"").unwrap();
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn backslash_at_end() {
+        let tokens = tokenize(b"text\\").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0], RtfToken::Text("text".into()));
     }
 }
