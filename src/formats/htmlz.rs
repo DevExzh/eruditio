@@ -1,11 +1,17 @@
 //! HTMLZ format: HTML inside a ZIP archive.
 //!
-//! Delegates to `HtmlReader`/`HtmlWriter` for the actual content,
-//! wrapping/unwrapping the ZIP container.
+//! Produces a calibre-compatible HTMLZ archive with:
+//! - `index.html` — HTML content with relative image paths
+//! - `metadata.opf` — OPF metadata (Dublin Core)
+//! - `images/` — extracted image resources
 
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::html::{HtmlReader, HtmlWriter};
+use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
+use crate::formats::common::xml_utils;
+use crate::formats::html::HtmlReader;
+use quick_xml::events::Event;
+use quick_xml::Reader as XmlReader;
 use std::io::{Cursor, Read, Seek, Write};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -38,9 +44,43 @@ impl FormatReader for HtmlzReader {
 
         let mut contents = Vec::new();
         html_file.read_to_end(&mut contents)?;
+        drop(html_file);
 
         let mut cursor = Cursor::new(contents);
-        HtmlReader::new().read_book(&mut cursor)
+        let mut book = HtmlReader::new().read_book(&mut cursor)?;
+
+        // Try to read metadata.opf and merge metadata.
+        if let Ok(mut opf_file) = archive.by_name("metadata.opf") {
+            let mut opf_contents = String::new();
+            if opf_file.read_to_string(&mut opf_contents).is_ok() {
+                drop(opf_file);
+                merge_opf_metadata(&opf_contents, &mut book);
+            }
+        }
+
+        // Extract image resources from the archive.
+        let file_names: Vec<String> = (0..archive.len())
+            .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+            .collect();
+
+        for name in &file_names {
+            if name.starts_with("images/") && name.len() > "images/".len() {
+                if let Ok(mut file) = archive.by_name(name) {
+                    let mut data = Vec::new();
+                    if file.read_to_end(&mut data).is_ok() && !data.is_empty() {
+                        let filename = name.rsplit('/').next().unwrap_or(name);
+                        let media_type = guess_media_type(filename);
+                        let id = filename
+                            .rsplit_once('.')
+                            .map(|(base, _)| base)
+                            .unwrap_or(filename);
+                        book.add_resource(id, name.as_str(), data, media_type);
+                    }
+                }
+            }
+        }
+
+        Ok(book)
     }
 }
 
@@ -56,17 +96,143 @@ impl HtmlzWriter {
 
 impl FormatWriter for HtmlzWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
-        // Write HTML content to memory first.
-        let mut html_buf = Vec::new();
-        HtmlWriter::new().write_book(book, &mut html_buf)?;
-
-        // Wrap in a ZIP.
         let mut zip_buf = Cursor::new(Vec::new());
-        write_single_file_zip(&mut zip_buf, "index.html", &html_buf)?;
+        {
+            let mut zip = ZipWriter::new(&mut zip_buf);
+            let options: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            // 1. Write index.html (HTML content without data URI images)
+            let html = generate_htmlz_content(book);
+            zip.start_file("index.html", options)
+                .map_err(|e| EruditioError::Format(format!("Failed to write index.html: {}", e)))?;
+            zip.write_all(html.as_bytes())?;
+
+            // 2. Write metadata.opf
+            let opf = generate_htmlz_opf(book);
+            zip.start_file("metadata.opf", options)
+                .map_err(|e| {
+                    EruditioError::Format(format!("Failed to write metadata.opf: {}", e))
+                })?;
+            zip.write_all(opf.as_bytes())?;
+
+            // 3. Write image resources
+            let resources = book.resources();
+            for res in &resources {
+                if res.media_type.starts_with("image/") {
+                    let filename = res.href.rsplit('/').next().unwrap_or(res.href);
+                    let path = format!("images/{}", filename);
+                    zip.start_file(&path, options).map_err(|e| {
+                        EruditioError::Format(format!("Failed to write {}: {}", path, e))
+                    })?;
+                    zip.write_all(res.data)?;
+                }
+            }
+
+            zip.finish()
+                .map_err(|e| EruditioError::Format(format!("Failed to finalize HTMLZ: {}", e)))?;
+        }
 
         output.write_all(zip_buf.get_ref())?;
         Ok(())
     }
+}
+
+/// Generates HTML content for the HTMLZ archive (without data URI embedding).
+fn generate_htmlz_content(book: &Book) -> String {
+    let title = book.metadata.title.as_deref().unwrap_or("Untitled");
+    let chapters = book.chapters();
+
+    let mut body = String::with_capacity(4096);
+    for (i, chapter) in chapters.iter().enumerate() {
+        if i > 0 {
+            body.push_str("<hr />\n");
+        }
+        if let Some(ref ch_title) = chapter.title {
+            body.push_str(&format!("<h1>{}</h1>\n", escape_html(ch_title)));
+        }
+        let content = match chapter.title {
+            Some(ref t) => strip_leading_heading(&chapter.content, t),
+            None => &chapter.content,
+        };
+        body.push_str(content);
+        body.push('\n');
+    }
+
+    // DO NOT embed resources as data URIs — they are written as separate ZIP entries
+
+    crate::formats::html::parser::build_html_document(title, &book.metadata, &body)
+}
+
+/// Generates a simplified OPF metadata document for the HTMLZ archive.
+fn generate_htmlz_opf(book: &Book) -> String {
+    let m = &book.metadata;
+    let mut xml = String::with_capacity(1024);
+
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"2.0\">\n");
+    xml.push_str("  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:opf=\"http://www.idpf.org/2007/opf\">\n");
+
+    if let Some(ref title) = m.title {
+        xml.push_str("    <dc:title>");
+        xml.push_str(&escape_html(title));
+        xml.push_str("</dc:title>\n");
+    }
+    for author in &m.authors {
+        xml.push_str("    <dc:creator>");
+        xml.push_str(&escape_html(author));
+        xml.push_str("</dc:creator>\n");
+    }
+    if let Some(ref lang) = m.language {
+        xml.push_str("    <dc:language>");
+        xml.push_str(&escape_html(lang));
+        xml.push_str("</dc:language>\n");
+    }
+    if let Some(ref publisher) = m.publisher {
+        xml.push_str("    <dc:publisher>");
+        xml.push_str(&escape_html(publisher));
+        xml.push_str("</dc:publisher>\n");
+    }
+    if let Some(ref identifier) = m.identifier {
+        xml.push_str("    <dc:identifier>");
+        xml.push_str(&escape_html(identifier));
+        xml.push_str("</dc:identifier>\n");
+    }
+    if let Some(ref isbn) = m.isbn {
+        xml.push_str("    <dc:identifier opf:scheme=\"ISBN\">");
+        xml.push_str(&escape_html(isbn));
+        xml.push_str("</dc:identifier>\n");
+    }
+    if let Some(ref desc) = m.description {
+        xml.push_str("    <dc:description>");
+        xml.push_str(&escape_html(desc));
+        xml.push_str("</dc:description>\n");
+    }
+    for subject in &m.subjects {
+        xml.push_str("    <dc:subject>");
+        xml.push_str(&escape_html(subject));
+        xml.push_str("</dc:subject>\n");
+    }
+    if let Some(ref rights) = m.rights {
+        xml.push_str("    <dc:rights>");
+        xml.push_str(&escape_html(rights));
+        xml.push_str("</dc:rights>\n");
+    }
+    if let Some(ref series) = m.series {
+        xml.push_str("    <meta name=\"calibre:series\" content=\"");
+        xml.push_str(&escape_html(series));
+        xml.push_str("\"/>\n");
+    }
+    if let Some(idx) = m.series_index {
+        xml.push_str(&format!(
+            "    <meta name=\"calibre:series_index\" content=\"{}\"/>\n",
+            idx
+        ));
+    }
+
+    xml.push_str("  </metadata>\n");
+    xml.push_str("</package>\n");
+    xml
 }
 
 /// Finds the first HTML file in a ZIP archive.
@@ -82,22 +248,154 @@ fn find_html_file<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Option<String>
     None
 }
 
-/// Creates a ZIP archive containing a single file.
-fn write_single_file_zip<W: Write + Seek>(
-    writer: &mut W,
-    filename: &str,
-    data: &[u8],
-) -> Result<()> {
-    let mut zip = ZipWriter::new(writer);
-    let options: FileOptions<'_, ()> =
-        FileOptions::default().compression_method(CompressionMethod::Deflated);
+/// Parses OPF XML and merges Dublin Core metadata into the book.
+///
+/// Uses quick-xml for lightweight event-based parsing. Only overwrites
+/// fields that are not already set from the HTML `<head>` metadata,
+/// except for authors which are always taken from OPF if present.
+fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
+    let mut reader = XmlReader::from_str(opf_xml);
+    reader.config_mut().trim_text(true);
 
-    zip.start_file(filename, options)
-        .map_err(|e| EruditioError::Format(format!("Failed to create {}: {}", filename, e)))?;
-    zip.write_all(data)?;
-    zip.finish()?;
+    let mut buf = Vec::new();
+    let mut current_tag = String::new();
+    let mut current_text = String::new();
+    let mut in_metadata = false;
+    let mut current_scheme: Option<String> = None;
+    let mut opf_authors: Vec<String> = Vec::new();
 
-    Ok(())
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                if tag == "metadata" {
+                    in_metadata = true;
+                } else if in_metadata {
+                    current_tag = tag.to_string();
+                    current_text.clear();
+                    current_scheme = None;
+
+                    // Track the opf:scheme attribute on <dc:identifier>
+                    if tag == "identifier" {
+                        current_scheme = xml_utils::get_attribute(e, "opf:scheme")
+                            .or_else(|| xml_utils::get_attribute(e, "scheme"));
+                    }
+                }
+            }
+            Ok(Event::Empty(ref e)) => {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                // Handle self-closing <meta name="..." content="..."/> elements
+                if in_metadata && tag == "meta" {
+                    let name = xml_utils::get_attribute(e, "name");
+                    let content = xml_utils::get_attribute(e, "content");
+                    if let (Some(name), Some(content)) = (name, content) {
+                        match name.as_str() {
+                            "calibre:series" => {
+                                if book.metadata.series.is_none() {
+                                    book.metadata.series = Some(content);
+                                }
+                            }
+                            "calibre:series_index" => {
+                                if book.metadata.series_index.is_none() {
+                                    if let Ok(idx) = content.parse::<f64>() {
+                                        book.metadata.series_index = Some(idx);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                if in_metadata && !current_tag.is_empty() {
+                    current_text = xml_utils::bytes_to_string(e.as_ref());
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let name = e.name();
+                let tag = xml_utils::local_tag_name(name.as_ref());
+                if tag == "metadata" {
+                    in_metadata = false;
+                } else if in_metadata && !current_tag.is_empty() {
+                    let text = current_text.trim().to_string();
+                    if !text.is_empty() {
+                        match current_tag.as_str() {
+                            "title" => {
+                                if book.metadata.title.is_none() {
+                                    book.metadata.title = Some(text);
+                                }
+                            }
+                            "creator" => {
+                                opf_authors.push(text);
+                            }
+                            "language" => {
+                                if book.metadata.language.is_none() {
+                                    book.metadata.language = Some(text);
+                                }
+                            }
+                            "publisher" => {
+                                if book.metadata.publisher.is_none() {
+                                    book.metadata.publisher = Some(text);
+                                }
+                            }
+                            "identifier" => {
+                                if let Some(ref scheme) = current_scheme {
+                                    if scheme.eq_ignore_ascii_case("ISBN") {
+                                        if book.metadata.isbn.is_none() {
+                                            book.metadata.isbn = Some(text);
+                                        }
+                                    }
+                                } else if book.metadata.identifier.is_none() {
+                                    book.metadata.identifier = Some(text);
+                                }
+                            }
+                            "description" => {
+                                if book.metadata.description.is_none() {
+                                    book.metadata.description = Some(text);
+                                }
+                            }
+                            "subject" => {
+                                book.metadata.subjects.push(text);
+                            }
+                            "rights" => {
+                                if book.metadata.rights.is_none() {
+                                    book.metadata.rights = Some(text);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    current_tag.clear();
+                    current_text.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // Authors from OPF take precedence if the HTML-parsed ones are empty.
+    if book.metadata.authors.is_empty() && !opf_authors.is_empty() {
+        book.metadata.authors = opf_authors;
+    }
+}
+
+/// Guesses MIME type from a filename extension.
+fn guess_media_type(filename: &str) -> &'static str {
+    match filename.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        _ => "application/octet-stream",
+    }
 }
 
 #[cfg(test)]
@@ -150,5 +448,285 @@ mod tests {
         assert_eq!(decoded.metadata.title.as_deref(), Some("Meta Test"));
         assert_eq!(decoded.metadata.authors, vec!["Alice"]);
         assert_eq!(decoded.metadata.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn htmlz_writer_includes_metadata_opf() {
+        let mut book = Book::new();
+        book.metadata.title = Some("OPF Test".into());
+        book.metadata.authors.push("Bob".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Hi</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Verify the ZIP contains metadata.opf
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut opf = archive.by_name("metadata.opf").expect("metadata.opf should exist");
+        let mut opf_content = String::new();
+        opf.read_to_string(&mut opf_content).unwrap();
+
+        assert!(opf_content.contains("<dc:title>OPF Test</dc:title>"));
+        assert!(opf_content.contains("<dc:creator>Bob</dc:creator>"));
+    }
+
+    #[test]
+    fn htmlz_writer_includes_images() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Image Test".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>text</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_resource("img1", "images/cover.png", vec![0x89, 0x50, 0x4E, 0x47], "image/png");
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Verify the ZIP contains the image
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut img = archive
+            .by_name("images/cover.png")
+            .expect("images/cover.png should exist");
+        let mut img_data = Vec::new();
+        img.read_to_end(&mut img_data).unwrap();
+        assert_eq!(img_data, vec![0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn htmlz_metadata_opf_content() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Full Meta".into());
+        book.metadata.authors.push("Author A".into());
+        book.metadata.authors.push("Author B".into());
+        book.metadata.language = Some("fr".into());
+        book.metadata.publisher = Some("Publisher X".into());
+        book.metadata.isbn = Some("978-0-123456-78-9".into());
+        book.metadata.description = Some("A test book".into());
+        book.metadata.subjects.push("Fiction".into());
+        book.metadata.rights = Some("CC BY 4.0".into());
+        book.metadata.series = Some("Test Series".into());
+        book.metadata.series_index = Some(3.0);
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let opf = generate_htmlz_opf(&book);
+
+        assert!(opf.contains("<dc:title>Full Meta</dc:title>"));
+        assert!(opf.contains("<dc:creator>Author A</dc:creator>"));
+        assert!(opf.contains("<dc:creator>Author B</dc:creator>"));
+        assert!(opf.contains("<dc:language>fr</dc:language>"));
+        assert!(opf.contains("<dc:publisher>Publisher X</dc:publisher>"));
+        assert!(opf.contains("opf:scheme=\"ISBN\">978-0-123456-78-9</dc:identifier>"));
+        assert!(opf.contains("<dc:description>A test book</dc:description>"));
+        assert!(opf.contains("<dc:subject>Fiction</dc:subject>"));
+        assert!(opf.contains("<dc:rights>CC BY 4.0</dc:rights>"));
+        assert!(opf.contains("calibre:series\" content=\"Test Series\""));
+        assert!(opf.contains("calibre:series_index\" content=\"3\""));
+    }
+
+    #[test]
+    fn htmlz_round_trip_with_metadata_from_opf() {
+        let mut book = Book::new();
+        book.metadata.title = Some("OPF Round Trip".into());
+        book.metadata.authors.push("Jane".into());
+        book.metadata.language = Some("de".into());
+        book.metadata.publisher = Some("Verlag".into());
+        book.metadata.description = Some("Ein Buch".into());
+        book.add_chapter(&Chapter {
+            title: Some("Kapitel 1".into()),
+            content: "<p>Inhalt</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Write
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back
+        let mut cursor = Cursor::new(output);
+        let decoded = HtmlzReader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(decoded.metadata.title.as_deref(), Some("OPF Round Trip"));
+        assert_eq!(decoded.metadata.authors, vec!["Jane"]);
+        assert_eq!(decoded.metadata.language.as_deref(), Some("de"));
+        assert_eq!(decoded.metadata.publisher.as_deref(), Some("Verlag"));
+        assert_eq!(decoded.metadata.description.as_deref(), Some("Ein Buch"));
+    }
+
+    #[test]
+    fn htmlz_round_trip_with_images() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Image Round Trip".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>text with image</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_resource(
+            "cover",
+            "images/cover.jpg",
+            vec![0xFF, 0xD8, 0xFF, 0xE0],
+            "image/jpeg",
+        );
+        book.add_resource(
+            "fig1",
+            "images/figure1.png",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
+
+        // Write
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back
+        let mut cursor = Cursor::new(output);
+        let decoded = HtmlzReader::new().read_book(&mut cursor).unwrap();
+
+        let resources = decoded.resources();
+        assert_eq!(resources.len(), 2, "Should have 2 image resources");
+
+        // Check data is preserved (order may vary)
+        let jpeg_res = resources.iter().find(|r| r.media_type == "image/jpeg");
+        let png_res = resources.iter().find(|r| r.media_type == "image/png");
+        assert!(jpeg_res.is_some(), "Should have JPEG resource");
+        assert!(png_res.is_some(), "Should have PNG resource");
+        assert_eq!(jpeg_res.unwrap().data, &[0xFF, 0xD8, 0xFF, 0xE0]);
+        assert_eq!(png_res.unwrap().data, &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn htmlz_backward_compat_no_opf() {
+        // Create a minimal HTMLZ with only index.html (no metadata.opf)
+        let html = b"<!DOCTYPE html>\n<html>\n<head>\n<title>Legacy</title>\n</head>\n<body>\n<p>Old content</p>\n</body>\n</html>\n";
+
+        let mut zip_buf = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut zip_buf);
+            let options: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(CompressionMethod::Deflated);
+            zip.start_file("index.html", options).unwrap();
+            zip.write_all(html).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let mut cursor = Cursor::new(zip_buf.into_inner());
+        let decoded = HtmlzReader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(decoded.metadata.title.as_deref(), Some("Legacy"));
+        let chapters = decoded.chapters();
+        assert!(!chapters.is_empty());
+        assert!(chapters[0].content.contains("Old content"));
+    }
+
+    #[test]
+    fn htmlz_html_does_not_contain_data_uris() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Data URI".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>text</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_resource("img1", "cover.png", vec![0x89, 0x50], "image/png");
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read the index.html from the zip
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut html_file = archive.by_name("index.html").unwrap();
+        let mut html_content = String::new();
+        html_file.read_to_string(&mut html_content).unwrap();
+
+        assert!(
+            !html_content.contains("data:image/"),
+            "HTML should not contain data URI images"
+        );
+        assert!(
+            !html_content.contains("base64,"),
+            "HTML should not contain base64 data"
+        );
+    }
+
+    #[test]
+    fn generate_htmlz_opf_minimal() {
+        let book = Book::new();
+        let opf = generate_htmlz_opf(&book);
+
+        assert!(opf.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(opf.contains("<package xmlns=\"http://www.idpf.org/2007/opf\""));
+        assert!(opf.contains("<metadata"));
+        assert!(opf.contains("</metadata>"));
+        assert!(opf.contains("</package>"));
+    }
+
+    #[test]
+    fn merge_opf_metadata_parses_correctly() {
+        let opf = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>OPF Title</dc:title>
+    <dc:creator>OPF Author</dc:creator>
+    <dc:language>es</dc:language>
+    <dc:publisher>OPF Publisher</dc:publisher>
+    <dc:description>OPF Description</dc:description>
+    <dc:identifier opf:scheme="ISBN">978-1234567890</dc:identifier>
+    <dc:subject>Science</dc:subject>
+    <dc:rights>Public Domain</dc:rights>
+  </metadata>
+</package>"#;
+
+        let mut book = Book::new();
+        merge_opf_metadata(opf, &mut book);
+
+        assert_eq!(book.metadata.title.as_deref(), Some("OPF Title"));
+        assert_eq!(book.metadata.authors, vec!["OPF Author"]);
+        assert_eq!(book.metadata.language.as_deref(), Some("es"));
+        assert_eq!(book.metadata.publisher.as_deref(), Some("OPF Publisher"));
+        assert_eq!(
+            book.metadata.description.as_deref(),
+            Some("OPF Description")
+        );
+        assert_eq!(book.metadata.isbn.as_deref(), Some("978-1234567890"));
+        assert_eq!(book.metadata.subjects, vec!["Science"]);
+        assert_eq!(book.metadata.rights.as_deref(), Some("Public Domain"));
+    }
+
+    #[test]
+    fn merge_opf_does_not_overwrite_html_metadata() {
+        let opf = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>OPF Title</dc:title>
+    <dc:creator>OPF Author</dc:creator>
+    <dc:language>es</dc:language>
+  </metadata>
+</package>"#;
+
+        let mut book = Book::new();
+        // Pre-fill from HTML parsing
+        book.metadata.title = Some("HTML Title".into());
+        book.metadata.language = Some("en".into());
+
+        merge_opf_metadata(opf, &mut book);
+
+        // HTML values should be preserved
+        assert_eq!(book.metadata.title.as_deref(), Some("HTML Title"));
+        assert_eq!(book.metadata.language.as_deref(), Some("en"));
+        // Authors from OPF should be used since HTML had none
+        assert_eq!(book.metadata.authors, vec!["OPF Author"]);
     }
 }
