@@ -306,8 +306,24 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         in_anchor = false;
                     }
                     pos += gt + 1;
+                } else if tag_lower == "<b>" || tag_lower == "<strong>" {
+                    // Opening bold tag → FB2 <strong>
+                    inline_buf.push_str("<strong>");
+                    pos += gt + 1;
+                } else if tag_lower == "</b>" || tag_lower == "</strong>" {
+                    // Closing bold tag
+                    inline_buf.push_str("</strong>");
+                    pos += gt + 1;
+                } else if tag_lower == "<i>" || tag_lower == "<em>" {
+                    // Opening italic tag → FB2 <emphasis>
+                    inline_buf.push_str("<emphasis>");
+                    pos += gt + 1;
+                } else if tag_lower == "</i>" || tag_lower == "</em>" {
+                    // Closing italic tag
+                    inline_buf.push_str("</emphasis>");
+                    pos += gt + 1;
                 } else {
-                    // Other tags (e.g. <b>, <em>, <div>, etc.) – skip the tag, keep going
+                    // Other tags (e.g. <div>, <span>, etc.) – skip the tag, keep going
                     pos += gt + 1;
                 }
             } else {
@@ -478,7 +494,9 @@ fn generate_fb2(book: &Book) -> String {
     // Document-info (metadata about this conversion)
     xml.push_str("    <document-info>\n");
     xml.push_str("      <program-used>eruditio</program-used>\n");
-    xml.push_str("      <date>2024-01-01</date>\n");
+    xml.push_str("      <date>");
+    xml.push_str(&chrono::Utc::now().format("%Y-%m-%d").to_string());
+    xml.push_str("</date>\n");
     xml.push_str("    </document-info>\n");
 
     // Publish-info (publisher, isbn, year)
@@ -795,9 +813,13 @@ mod tests {
             xml.contains("<program-used>eruditio</program-used>"),
             "missing program-used"
         );
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let expected_date = format!("<date>{}</date>", today);
         assert!(
-            xml.contains("<date>2024-01-01</date>"),
-            "missing date in document-info"
+            xml.contains(&expected_date),
+            "missing current date in document-info, expected {}, got:\n{}",
+            expected_date,
+            xml
         );
         assert!(
             xml.contains("</document-info>"),
