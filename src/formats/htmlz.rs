@@ -1178,4 +1178,88 @@ mod tests {
             "cover_image_id should round-trip"
         );
     }
+
+    #[test]
+    fn htmlz_writer_preserves_text_css_from_epub_reader() {
+        // Simulates the EPUB reader path: CSS is loaded as ManifestData::Text
+        // (not ManifestData::Inline) because text/css is a text media type.
+        // The HTMLZ writer must still include this CSS in the output.
+        use crate::domain::ManifestItem;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("CSS Passthrough".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Styled content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Insert CSS as ManifestData::Text, the way the EPUB reader does it.
+        let css_item = ManifestItem::new("epub-style", "styles/epub.css", "text/css")
+            .with_text("body { margin: 2em; }\nh1 { color: navy; }");
+        book.manifest.insert(css_item);
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Verify the ZIP contains style.css with the EPUB CSS content
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut css_file = archive.by_name("style.css").expect("style.css should exist");
+        let mut css_content = String::new();
+        css_file.read_to_string(&mut css_content).unwrap();
+        assert!(
+            css_content.contains("margin: 2em"),
+            "style.css should contain EPUB CSS, not just the default. Got: {}",
+            css_content
+        );
+        assert!(
+            css_content.contains("color: navy"),
+            "style.css should contain all EPUB CSS rules. Got: {}",
+            css_content
+        );
+        // It should NOT fall back to the default stylesheet
+        assert!(
+            !css_content.contains("font-family: serif"),
+            "style.css should use EPUB CSS, not the default stylesheet. Got: {}",
+            css_content
+        );
+    }
+
+    #[test]
+    fn htmlz_writer_concatenates_multiple_text_css() {
+        // When an EPUB has multiple CSS files (all loaded as ManifestData::Text),
+        // the HTMLZ writer should concatenate them all into style.css.
+        use crate::domain::ManifestItem;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Multi CSS".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let css1 = ManifestItem::new("css1", "styles/reset.css", "text/css")
+            .with_text("* { margin: 0; padding: 0; }");
+        let css2 = ManifestItem::new("css2", "styles/main.css", "text/css")
+            .with_text("body { font-size: 16px; }");
+        book.manifest.insert(css1);
+        book.manifest.insert(css2);
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut css_file = archive.by_name("style.css").unwrap();
+        let mut css_content = String::new();
+        css_file.read_to_string(&mut css_content).unwrap();
+
+        assert!(
+            css_content.contains("margin: 0") && css_content.contains("font-size: 16px"),
+            "style.css should contain CSS from both files. Got: {}",
+            css_content
+        );
+    }
 }
