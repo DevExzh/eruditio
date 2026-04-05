@@ -30,6 +30,13 @@ pub fn book_to_rtf(book: &Book) -> String {
     // Info group (metadata).
     write_info_group(book, &mut rtf);
 
+    // Cover image (embedded as RTF picture group before chapter content).
+    if let Some(cover_item) = find_cover_image(book) {
+        if let Some(image_data) = cover_item.data.as_bytes() {
+            write_cover_image(&mut rtf, image_data, &cover_item.media_type);
+        }
+    }
+
     // Default font and size.
     rtf.push_str("\\f0\\fs24\n");
 
@@ -101,6 +108,120 @@ fn write_info_group(book: &Book, rtf: &mut String) {
     }
 
     rtf.push_str("}\n");
+}
+
+/// Finds the cover image manifest item from the book.
+///
+/// Searches in order of priority:
+/// 1. Item whose ID matches `book.metadata.cover_image_id`
+/// 2. Item with the EPUB3 `cover-image` property
+/// 3. Item with "cover" in its ID or href and an image media type
+fn find_cover_image(book: &Book) -> Option<&crate::domain::manifest::ManifestItem> {
+    // 1. Explicit cover image ID from metadata.
+    if let Some(ref id) = book.metadata.cover_image_id {
+        if let Some(item) = book.manifest.get(id) {
+            if item.media_type.starts_with("image/") {
+                return Some(item);
+            }
+        }
+    }
+
+    // 2. EPUB3 cover-image property.
+    let by_property = book.manifest.iter().find(|item| {
+        item.has_property("cover-image") && item.media_type.starts_with("image/")
+    });
+    if by_property.is_some() {
+        return by_property;
+    }
+
+    // 3. Heuristic: "cover" in ID or href.
+    book.manifest.iter().find(|item| {
+        item.media_type.starts_with("image/")
+            && (item.id.contains("cover") || item.href.contains("cover"))
+    })
+}
+
+/// Writes an RTF `\pict` group for the cover image.
+fn write_cover_image(rtf: &mut String, image_data: &[u8], media_type: &str) {
+    let blip_tag = match media_type {
+        "image/png" => "\\pngblip",
+        _ => "\\jpegblip", // JPEG is the default/fallback
+    };
+
+    let (width_px, height_px) = if media_type == "image/png" {
+        parse_png_dimensions(image_data)
+    } else {
+        parse_jpeg_dimensions(image_data)
+    }
+    .unwrap_or((600, 800));
+
+    // Convert pixels to twips: twips = pixels / 96 dpi * 1440
+    let width_twips = (width_px as u32) * 1440 / 96;
+    let height_twips = (height_px as u32) * 1440 / 96;
+
+    use std::fmt::Write;
+    let _ = write!(
+        rtf,
+        "{{\\pict{blip_tag}\\picw{width_twips}\\pich{height_twips}\n"
+    );
+
+    // Hex-encode image data with line breaks every 80 hex characters (40 bytes).
+    for (i, byte) in image_data.iter().enumerate() {
+        let _ = write!(rtf, "{:02X}", byte);
+        if (i + 1) % 40 == 0 {
+            rtf.push('\n');
+        }
+    }
+
+    rtf.push_str("}\n");
+}
+
+/// Parses JPEG dimensions from the SOF0/SOF2 marker.
+///
+/// Scans for `0xFF 0xC0` (baseline) or `0xFF 0xC2` (progressive),
+/// then reads height and width as big-endian u16 values.
+fn parse_jpeg_dimensions(data: &[u8]) -> Option<(u16, u16)> {
+    let len = data.len();
+    let mut i = 0;
+    while i + 1 < len {
+        if data[i] == 0xFF && (data[i + 1] == 0xC0 || data[i + 1] == 0xC2) {
+            // SOF marker found. Layout after marker:
+            //   2 bytes: segment length
+            //   1 byte:  precision
+            //   2 bytes: height (big-endian)
+            //   2 bytes: width  (big-endian)
+            if i + 9 < len {
+                let height = u16::from_be_bytes([data[i + 5], data[i + 6]]);
+                let width = u16::from_be_bytes([data[i + 7], data[i + 8]]);
+                if width > 0 && height > 0 {
+                    return Some((width, height));
+                }
+            }
+            break;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parses PNG dimensions from the IHDR chunk.
+///
+/// PNG files start with an 8-byte signature, then the first chunk is IHDR
+/// which contains width (4 bytes BE) and height (4 bytes BE) at offsets 16 and 20.
+fn parse_png_dimensions(data: &[u8]) -> Option<(u16, u16)> {
+    // PNG signature (8 bytes) + IHDR chunk length (4 bytes) + "IHDR" (4 bytes)
+    // + width (4) + height (4) = 24 bytes minimum
+    if data.len() < 24 {
+        return None;
+    }
+    // Verify PNG signature.
+    if &data[0..4] != b"\x89PNG" {
+        return None;
+    }
+    let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    // Clamp to u16; images larger than 65535px are unlikely for ebook covers.
+    Some((width.min(65535) as u16, height.min(65535) as u16))
 }
 
 /// Converts simple HTML content to RTF control words.
@@ -474,5 +595,173 @@ mod tests {
             rtf.contains("\\par\\pard\\s0\\f0\\fs24\\par"),
             "Normal style should be restored after chapter title, got: {rtf}"
         );
+    }
+
+    /// Builds a minimal valid JPEG with the given dimensions.
+    /// Contains SOI, SOF0 with dimensions, and EOI markers.
+    fn make_fake_jpeg(width: u16, height: u16) -> Vec<u8> {
+        let mut data = vec![
+            0xFF, 0xD8, // SOI
+            0xFF, 0xC0, // SOF0 marker
+            0x00, 0x0B, // segment length (11 bytes)
+            0x08, // precision (8-bit)
+        ];
+        data.extend_from_slice(&height.to_be_bytes());
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]); // 1 component
+        data.extend_from_slice(&[0xFF, 0xD9]); // EOI
+        data
+    }
+
+    /// Builds a minimal valid PNG with the given dimensions.
+    fn make_fake_png(width: u32, height: u32) -> Vec<u8> {
+        let mut data = vec![
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR chunk length (13)
+            b'I', b'H', b'D', b'R', // chunk type
+        ];
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data.extend_from_slice(&[0x08, 0x02, 0x00, 0x00, 0x00]); // bit depth, color type, etc.
+        data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // CRC placeholder
+        data
+    }
+
+    #[test]
+    fn cover_image_jpeg_embedded_via_metadata_id() {
+        let jpeg_data = make_fake_jpeg(800, 600);
+        let mut book = Book::new();
+        book.metadata.title = Some("Test".into());
+        book.metadata.cover_image_id = Some("cover-img".into());
+        book.add_resource("cover-img", "images/cover.jpg", jpeg_data, "image/jpeg");
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("\\pict\\jpegblip"),
+            "RTF should contain a JPEG pict group, got: {rtf}"
+        );
+        // 800px at 96dpi = 800*1440/96 = 12000 twips
+        assert!(
+            rtf.contains("\\picw12000"),
+            "Picture width should be 12000 twips, got: {rtf}"
+        );
+        // 600px at 96dpi = 600*1440/96 = 9000 twips
+        assert!(
+            rtf.contains("\\pich9000"),
+            "Picture height should be 9000 twips, got: {rtf}"
+        );
+        // Cover should appear before chapter content.
+        let pict_pos = rtf.find("\\pict").unwrap();
+        let chapter_pos = rtf.find("Ch 1").unwrap();
+        assert!(
+            pict_pos < chapter_pos,
+            "Cover image should appear before chapter content"
+        );
+    }
+
+    #[test]
+    fn cover_image_png_embedded() {
+        let png_data = make_fake_png(640, 480);
+        let mut book = Book::new();
+        book.metadata.cover_image_id = Some("cover-png".into());
+        book.add_resource("cover-png", "images/cover.png", png_data, "image/png");
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("\\pict\\pngblip"),
+            "RTF should contain a PNG pict group, got: {rtf}"
+        );
+        // 640px at 96dpi = 640*1440/96 = 9600 twips
+        assert!(
+            rtf.contains("\\picw9600"),
+            "Picture width should be 9600 twips, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn cover_image_found_by_heuristic() {
+        let jpeg_data = make_fake_jpeg(400, 500);
+        let mut book = Book::new();
+        // No cover_image_id set — fallback to heuristic matching.
+        book.add_resource("my-cover", "images/cover.jpg", jpeg_data, "image/jpeg");
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("\\pict\\jpegblip"),
+            "RTF should find cover image by heuristic, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn no_pict_when_no_cover() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            !rtf.contains("\\pict"),
+            "RTF should not contain \\pict when there is no cover image"
+        );
+    }
+
+    #[test]
+    fn cover_image_hex_encoding() {
+        // Use a small known JPEG to verify hex encoding.
+        let jpeg_data = make_fake_jpeg(100, 200);
+        let mut book = Book::new();
+        book.metadata.cover_image_id = Some("cover".into());
+        book.add_resource("cover", "cover.jpg", jpeg_data.clone(), "image/jpeg");
+
+        let rtf = book_to_rtf(&book);
+        // The hex data should start with FFD8FFC0 (SOI + SOF0).
+        assert!(
+            rtf.contains("FFD8FFC0"),
+            "Hex-encoded JPEG should start with FFD8FFC0, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn parse_jpeg_dimensions_basic() {
+        let data = make_fake_jpeg(1024, 768);
+        let (w, h) = parse_jpeg_dimensions(&data).unwrap();
+        assert_eq!(w, 1024);
+        assert_eq!(h, 768);
+    }
+
+    #[test]
+    fn parse_png_dimensions_basic() {
+        let data = make_fake_png(1920, 1080);
+        let (w, h) = parse_png_dimensions(&data).unwrap();
+        assert_eq!(w, 1920);
+        assert_eq!(h, 1080);
+    }
+
+    #[test]
+    fn parse_jpeg_dimensions_returns_none_for_invalid() {
+        assert!(parse_jpeg_dimensions(&[0x00, 0x01, 0x02]).is_none());
+    }
+
+    #[test]
+    fn parse_png_dimensions_returns_none_for_invalid() {
+        assert!(parse_png_dimensions(&[0x00, 0x01, 0x02]).is_none());
     }
 }
