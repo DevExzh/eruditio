@@ -229,8 +229,18 @@ fn generate_htmlz_opf(book: &Book) -> String {
         xml.push_str(&escape_html(title));
         xml.push_str("</dc:title>\n");
     }
-    for author in &m.authors {
-        xml.push_str("    <dc:creator>");
+    for (i, author) in m.authors.iter().enumerate() {
+        if i == 0 {
+            if let Some(ref sort) = m.author_sort {
+                xml.push_str("    <dc:creator opf:file-as=\"");
+                xml.push_str(&escape_html(sort));
+                xml.push_str("\">");
+            } else {
+                xml.push_str("    <dc:creator>");
+            }
+        } else {
+            xml.push_str("    <dc:creator>");
+        }
         xml.push_str(&escape_html(author));
         xml.push_str("</dc:creator>\n");
     }
@@ -269,6 +279,12 @@ fn generate_htmlz_opf(book: &Book) -> String {
         xml.push_str(&escape_html(rights));
         xml.push_str("</dc:rights>\n");
     }
+    if let Some(ref date) = m.publication_date {
+        xml.push_str(&format!(
+            "    <dc:date>{}</dc:date>\n",
+            date.format("%Y-%m-%d")
+        ));
+    }
     if let Some(ref series) = m.series {
         xml.push_str("    <meta name=\"calibre:series\" content=\"");
         xml.push_str(&escape_html(series));
@@ -280,8 +296,29 @@ fn generate_htmlz_opf(book: &Book) -> String {
             idx
         ));
     }
+    if let Some(ref cover_id) = m.cover_image_id {
+        xml.push_str("    <meta name=\"cover\" content=\"");
+        xml.push_str(&escape_html(cover_id));
+        xml.push_str("\"/>\n");
+    }
 
     xml.push_str("  </metadata>\n");
+
+    // Guide section (cover and other reference types)
+    if !book.guide.is_empty() {
+        xml.push_str("  <guide>\n");
+        for r in &book.guide.references {
+            xml.push_str("    <reference type=\"");
+            xml.push_str(&escape_html(r.ref_type.as_str()));
+            xml.push_str("\" title=\"");
+            xml.push_str(&escape_html(&r.title));
+            xml.push_str("\" href=\"");
+            xml.push_str(&escape_html(&r.href));
+            xml.push_str("\"/>\n");
+        }
+        xml.push_str("  </guide>\n");
+    }
+
     xml.push_str("</package>\n");
     xml
 }
@@ -313,6 +350,7 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
     let mut current_text = String::new();
     let mut in_metadata = false;
     let mut current_scheme: Option<String> = None;
+    let mut current_file_as: Option<String> = None;
     let mut opf_authors: Vec<String> = Vec::new();
 
     loop {
@@ -331,6 +369,12 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                     if tag == "identifier" {
                         current_scheme = xml_utils::get_attribute(e, "opf:scheme")
                             .or_else(|| xml_utils::get_attribute(e, "scheme"));
+                    }
+
+                    // Track the opf:file-as attribute on <dc:creator>
+                    if tag == "creator" {
+                        current_file_as = xml_utils::get_attribute(e, "opf:file-as")
+                            .or_else(|| xml_utils::get_attribute(e, "file-as"));
                     }
                 }
             }
@@ -353,6 +397,11 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                     if let Ok(idx) = content.parse::<f64>() {
                                         book.metadata.series_index = Some(idx);
                                     }
+                                }
+                            }
+                            "cover" => {
+                                if book.metadata.cover_image_id.is_none() {
+                                    book.metadata.cover_image_id = Some(content);
                                 }
                             }
                             _ => {}
@@ -380,6 +429,12 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                 }
                             }
                             "creator" => {
+                                // Capture opf:file-as from the first creator
+                                if book.metadata.author_sort.is_none() {
+                                    if let Some(ref fa) = current_file_as {
+                                        book.metadata.author_sort = Some(fa.clone());
+                                    }
+                                }
                                 opf_authors.push(text);
                             }
                             "language" => {
@@ -416,6 +471,29 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                             "rights" => {
                                 if book.metadata.rights.is_none() {
                                     book.metadata.rights = Some(text);
+                                }
+                            }
+                            "date" => {
+                                if book.metadata.publication_date.is_none() {
+                                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&text) {
+                                        book.metadata.publication_date =
+                                            Some(dt.with_timezone(&chrono::Utc));
+                                    } else if let Ok(date) =
+                                        chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+                                    {
+                                        book.metadata.publication_date = date
+                                            .and_hms_opt(0, 0, 0)
+                                            .and_then(|ndt| {
+                                                ndt.and_local_timezone(chrono::Utc).single()
+                                            });
+                                    } else if let Ok(year) = text.parse::<i32>() {
+                                        book.metadata.publication_date =
+                                            chrono::NaiveDate::from_ymd_opt(year, 1, 1)
+                                                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                                                .and_then(|ndt| {
+                                                    ndt.and_local_timezone(chrono::Utc).single()
+                                                });
+                                    }
                                 }
                             }
                             _ => {}
@@ -917,6 +995,187 @@ mod tests {
                 .unwrap()
                 .contains("font-size: 2em"),
             "CSS content should be preserved"
+        );
+    }
+
+    #[test]
+    fn htmlz_opf_writes_date_author_sort_cover_and_guide() {
+        use crate::domain::guide::{Guide, GuideReference, GuideType};
+        use chrono::TimeZone;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Extended Meta".into());
+        book.metadata.authors.push("Alice Author".into());
+        book.metadata.authors.push("Bob Writer".into());
+        book.metadata.author_sort = Some("Author, Alice".into());
+        book.metadata.publication_date =
+            Some(chrono::Utc.with_ymd_and_hms(2024, 6, 15, 0, 0, 0).unwrap());
+        book.metadata.cover_image_id = Some("cover-img".into());
+        book.guide = Guide {
+            references: vec![
+                GuideReference {
+                    ref_type: GuideType::Cover,
+                    title: "Cover".into(),
+                    href: "cover.xhtml".into(),
+                },
+                GuideReference {
+                    ref_type: GuideType::Toc,
+                    title: "Table of Contents".into(),
+                    href: "toc.xhtml".into(),
+                },
+            ],
+        };
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let opf = generate_htmlz_opf(&book);
+
+        // Verify date
+        assert!(
+            opf.contains("<dc:date>2024-06-15</dc:date>"),
+            "OPF should contain publication date. Got:\n{}",
+            opf
+        );
+
+        // Verify file-as on first author only
+        assert!(
+            opf.contains("opf:file-as=\"Author, Alice\">Alice Author</dc:creator>"),
+            "First author should have opf:file-as attribute. Got:\n{}",
+            opf
+        );
+        // Second author should NOT have file-as
+        assert!(
+            opf.contains("<dc:creator>Bob Writer</dc:creator>"),
+            "Second author should not have file-as. Got:\n{}",
+            opf
+        );
+
+        // Verify cover meta
+        assert!(
+            opf.contains("<meta name=\"cover\" content=\"cover-img\"/>"),
+            "OPF should contain cover meta. Got:\n{}",
+            opf
+        );
+
+        // Verify guide section
+        assert!(
+            opf.contains("<guide>"),
+            "OPF should contain guide section. Got:\n{}",
+            opf
+        );
+        assert!(
+            opf.contains("type=\"cover\""),
+            "Guide should contain cover reference. Got:\n{}",
+            opf
+        );
+        assert!(
+            opf.contains("title=\"Cover\""),
+            "Guide cover should have title. Got:\n{}",
+            opf
+        );
+        assert!(
+            opf.contains("href=\"cover.xhtml\""),
+            "Guide cover should have href. Got:\n{}",
+            opf
+        );
+        assert!(
+            opf.contains("type=\"toc\""),
+            "Guide should contain toc reference. Got:\n{}",
+            opf
+        );
+        assert!(
+            opf.contains("</guide>"),
+            "Guide section should be closed. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn merge_opf_parses_date_file_as_and_cover() {
+        let opf = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Date Test</dc:title>
+    <dc:creator opf:file-as="Doe, Jane">Jane Doe</dc:creator>
+    <dc:date>2024-06-15</dc:date>
+    <meta name="cover" content="cover-img"/>
+  </metadata>
+</package>"#;
+
+        let mut book = Book::new();
+        merge_opf_metadata(opf, &mut book);
+
+        assert_eq!(book.metadata.title.as_deref(), Some("Date Test"));
+        assert_eq!(book.metadata.authors, vec!["Jane Doe"]);
+        assert_eq!(
+            book.metadata.author_sort.as_deref(),
+            Some("Doe, Jane"),
+            "author_sort should be parsed from opf:file-as"
+        );
+        assert!(
+            book.metadata.publication_date.is_some(),
+            "publication_date should be parsed from dc:date"
+        );
+        let date = book.metadata.publication_date.unwrap();
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-06-15");
+        assert_eq!(
+            book.metadata.cover_image_id.as_deref(),
+            Some("cover-img"),
+            "cover_image_id should be parsed from meta cover"
+        );
+    }
+
+    #[test]
+    fn htmlz_round_trip_extended_metadata() {
+        use crate::domain::guide::{Guide, GuideReference, GuideType};
+        use chrono::TimeZone;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Round Trip Extended".into());
+        book.metadata.authors.push("Jane Doe".into());
+        book.metadata.author_sort = Some("Doe, Jane".into());
+        book.metadata.publication_date =
+            Some(chrono::Utc.with_ymd_and_hms(2024, 3, 20, 0, 0, 0).unwrap());
+        book.metadata.cover_image_id = Some("cover-img".into());
+        book.guide = Guide {
+            references: vec![GuideReference {
+                ref_type: GuideType::Cover,
+                title: "Cover".into(),
+                href: "cover.xhtml".into(),
+            }],
+        };
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Write
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back
+        let mut cursor = Cursor::new(output);
+        let decoded = HtmlzReader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(
+            decoded.metadata.author_sort.as_deref(),
+            Some("Doe, Jane"),
+            "author_sort should round-trip"
+        );
+        assert!(
+            decoded.metadata.publication_date.is_some(),
+            "publication_date should round-trip"
+        );
+        let date = decoded.metadata.publication_date.unwrap();
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-03-20");
+        assert_eq!(
+            decoded.metadata.cover_image_id.as_deref(),
+            Some("cover-img"),
+            "cover_image_id should round-trip"
         );
     }
 }
