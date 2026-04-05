@@ -117,11 +117,22 @@ fn collect_toc_hrefs_into(items: &[TocItem], out: &mut HashSet<String>) {
     let mut stack: Vec<&[TocItem]> = vec![items];
     while let Some(current) = stack.pop() {
         for item in current {
-            out.insert(item.href.clone());
+            // Strip fragment identifiers (e.g. "chapter1.html#section1" → "chapter1.html")
+            // so that TOC entries with anchors still match bare spine/manifest hrefs.
+            let base_href = strip_fragment(&item.href);
+            out.insert(base_href);
             if !item.children.is_empty() {
                 stack.push(&item.children);
             }
         }
+    }
+}
+
+/// Returns the href with any `#fragment` removed.
+fn strip_fragment(href: &str) -> String {
+    match href.find('#') {
+        Some(pos) => href[..pos].to_string(),
+        None => href.to_string(),
     }
 }
 
@@ -198,6 +209,63 @@ mod tests {
 
         // Items without headings should be skipped entirely.
         assert_eq!(result.toc.len(), 0);
+    }
+
+    #[test]
+    fn strip_fragment_removes_anchor() {
+        assert_eq!(strip_fragment("chapter1.html#section2"), "chapter1.html");
+        assert_eq!(strip_fragment("chapter1.html"), "chapter1.html");
+        assert_eq!(strip_fragment("#only-fragment"), "");
+    }
+
+    #[test]
+    fn collect_toc_hrefs_strips_fragments() {
+        let items = vec![
+            TocItem::new("Ch 1", "chapter1.html#sec1"),
+            TocItem::new("Ch 2", "chapter2.html"),
+        ];
+        let hrefs = collect_toc_hrefs(&items);
+        // Fragment should be stripped, so bare href matches.
+        assert!(hrefs.contains("chapter1.html"));
+        assert!(hrefs.contains("chapter2.html"));
+        // The original href with fragment should NOT be in the set.
+        assert!(!hrefs.contains("chapter1.html#sec1"));
+    }
+
+    #[test]
+    fn generator_no_duplicates_when_toc_has_fragment_hrefs() {
+        // Simulates the EPUB round-trip scenario: NCX entries have fragment hrefs
+        // (e.g. "ch1.xhtml#anchor") but spine/manifest items have bare hrefs
+        // (e.g. "ch1.xhtml"). Without fragment stripping, the generator would
+        // add duplicate entries for already-covered chapters.
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<h1>Chapter One</h1><p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<h1>Chapter Two</h1><p>Content</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        // Manually set TOC entries with fragment hrefs (as NCX would produce).
+        book.toc = vec![
+            TocItem::new("Chapter One", "ch1.xhtml#anchor1"),
+            TocItem::new("Chapter Two", "ch2.xhtml#anchor2"),
+        ];
+
+        let toc_gen = TocGenerator;
+        let result = toc_gen.apply(book).unwrap();
+
+        // No new entries should be added since the chapters are already covered.
+        assert_eq!(
+            result.toc.len(),
+            2,
+            "TocGenerator should not add duplicates when existing TOC hrefs have fragments; got {:?}",
+            result.toc.iter().map(|t| &t.title).collect::<Vec<_>>()
+        );
     }
 
     #[test]
