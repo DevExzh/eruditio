@@ -119,6 +119,18 @@ impl FormatReader for Fb2Reader {
                                 desc.push('\n');
                             }
                             desc.push_str(&current_text);
+                        } else if path_buf == "FictionBook/description/publish-info/publisher" {
+                            book.metadata.publisher = Some(current_text.clone());
+                        } else if path_buf == "FictionBook/description/publish-info/isbn" {
+                            book.metadata.isbn = Some(current_text.clone());
+                        } else if path_buf == "FictionBook/description/publish-info/year" {
+                            if let Ok(year) = current_text.trim().parse::<i32>() {
+                                use chrono::NaiveDate;
+                                if let Some(date) = NaiveDate::from_ymd_opt(year, 1, 1) {
+                                    book.metadata.publication_date =
+                                        Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
+                                }
+                            }
                         }
                     } else {
                         // Parse content
@@ -242,6 +254,31 @@ fn generate_fb2(book: &Book) -> String {
     }
 
     xml.push_str("    </title-info>\n");
+
+    // Publish-info (publisher, isbn, year)
+    let has_publisher = book.metadata.publisher.is_some();
+    let has_isbn = book.metadata.isbn.is_some();
+    let has_pub_date = book.metadata.publication_date.is_some();
+    if has_publisher || has_isbn || has_pub_date {
+        xml.push_str("    <publish-info>\n");
+        if let Some(ref publisher) = book.metadata.publisher {
+            xml.push_str("      <publisher>");
+            xml.push_str(&escape_html(publisher));
+            xml.push_str("</publisher>\n");
+        }
+        if let Some(ref isbn) = book.metadata.isbn {
+            xml.push_str("      <isbn>");
+            xml.push_str(&escape_html(isbn));
+            xml.push_str("</isbn>\n");
+        }
+        if let Some(ref pub_date) = book.metadata.publication_date {
+            xml.push_str("      <year>");
+            xml.push_str(&pub_date.format("%Y").to_string());
+            xml.push_str("</year>\n");
+        }
+        xml.push_str("    </publish-info>\n");
+    }
+
     xml.push_str("  </description>\n");
 
     // Body
@@ -342,5 +379,162 @@ mod tests {
         let chapters = decoded.chapters();
         assert!(!chapters.is_empty());
         assert_eq!(chapters[0].title.as_deref(), Some("Section One"));
+    }
+
+    #[test]
+    fn fb2_writer_generates_publish_info() {
+        use chrono::NaiveDate;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Test Book".into());
+        book.metadata.publisher = Some("Test Press".into());
+        book.metadata.isbn = Some("978-0-123456-78-9".into());
+        book.metadata.publication_date = Some(
+            NaiveDate::from_ymd_opt(2024, 6, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(xml.contains("<publish-info>"), "missing <publish-info>");
+        assert!(
+            xml.contains("<publisher>Test Press</publisher>"),
+            "missing publisher"
+        );
+        assert!(
+            xml.contains("<isbn>978-0-123456-78-9</isbn>"),
+            "missing isbn"
+        );
+        assert!(xml.contains("<year>2024</year>"), "missing year");
+        assert!(
+            xml.contains("</publish-info>"),
+            "missing </publish-info>"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_omits_publish_info_when_empty() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Publish Info".into());
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            !xml.contains("<publish-info>"),
+            "publish-info should not be present when all fields are None"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_partial_publish_info() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Partial".into());
+        book.metadata.publisher = Some("Only Publisher".into());
+        // isbn and publication_date are None
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(xml.contains("<publish-info>"));
+        assert!(xml.contains("<publisher>Only Publisher</publisher>"));
+        assert!(!xml.contains("<isbn>"));
+        assert!(!xml.contains("<year>"));
+    }
+
+    #[test]
+    fn fb2_reader_parses_publish_info() {
+        let fb2_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <book-title>Parsed Book</book-title>
+    </title-info>
+    <publish-info>
+      <publisher>Acme Publishing</publisher>
+      <isbn>978-1-234567-89-0</isbn>
+      <year>2023</year>
+    </publish-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Ch1</p></title>
+      <p>Content here</p>
+    </section>
+  </body>
+</FictionBook>"#;
+
+        let mut cursor = Cursor::new(fb2_xml.as_bytes());
+        let book = Fb2Reader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(book.metadata.title.as_deref(), Some("Parsed Book"));
+        assert_eq!(
+            book.metadata.publisher.as_deref(),
+            Some("Acme Publishing")
+        );
+        assert_eq!(
+            book.metadata.isbn.as_deref(),
+            Some("978-1-234567-89-0")
+        );
+        assert!(book.metadata.publication_date.is_some());
+        assert_eq!(
+            book.metadata.publication_date.unwrap().format("%Y").to_string(),
+            "2023"
+        );
+    }
+
+    #[test]
+    fn fb2_publish_info_round_trip() {
+        use chrono::NaiveDate;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Round Trip Publish".into());
+        book.metadata.authors.push("Jane Doe".into());
+        book.metadata.publisher = Some("Test Press".into());
+        book.metadata.isbn = Some("978-0-123456-78-9".into());
+        book.metadata.publication_date = Some(
+            NaiveDate::from_ymd_opt(2024, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Write
+        let mut fb2_bytes = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut fb2_bytes).unwrap();
+
+        // Read back
+        let mut cursor = Cursor::new(fb2_bytes);
+        let decoded = Fb2Reader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(decoded.metadata.publisher.as_deref(), Some("Test Press"));
+        assert_eq!(
+            decoded.metadata.isbn.as_deref(),
+            Some("978-0-123456-78-9")
+        );
+        assert!(decoded.metadata.publication_date.is_some());
+        assert_eq!(
+            decoded
+                .metadata
+                .publication_date
+                .unwrap()
+                .format("%Y")
+                .to_string(),
+            "2024"
+        );
     }
 }
