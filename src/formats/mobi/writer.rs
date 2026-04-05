@@ -341,8 +341,8 @@ fn build_record0(
 
 /// Builds EXTH header from Book metadata, writing directly into a single buffer.
 ///
-/// `thumb_offset` controls EXTH 202: 0 = same as cover, 1 = separate thumbnail
-/// record immediately after the cover.
+/// `thumb_offset` controls EXTH 202: 0 = same as cover, N = index of separate
+/// thumbnail record relative to the first image record.
 fn build_metadata_exth(book: &Book, has_cover: bool, thumb_offset: u32) -> Vec<u8> {
     // Collect (type, data_slice) pairs without cloning the data.
     // We need to be careful about the cover offset bytes lifetime.
