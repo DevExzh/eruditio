@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn txt_writer_spaces_between_paragraphs() {
-        // Block-level elements should produce spaces in the plain text output,
+        // Block-level elements should produce line breaks in the plain text output,
         // not concatenated words.
         let mut book = Book::new();
         book.add_chapter(&Chapter {
@@ -215,8 +215,8 @@ mod tests {
         });
         let text = book_to_plain_text(&book);
         assert!(
-            text.contains("First paragraph. Second paragraph."),
-            "Expected space between paragraphs in: {text}"
+            text.contains("First paragraph.\nSecond paragraph."),
+            "Expected newline between paragraphs in: {text}"
         );
     }
 }

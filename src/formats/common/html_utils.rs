@@ -95,7 +95,11 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let normalised_heading = normalise(heading_text.as_ref());
     let normalised_title = normalise(title);
 
-    if normalised_heading.eq_ignore_ascii_case(&normalised_title) {
+    if normalised_heading.eq_ignore_ascii_case(&normalised_title)
+        || normalised_heading
+            .to_ascii_lowercase()
+            .starts_with(&normalised_title.to_ascii_lowercase())
+    {
         let after_close = search_start + close_pos + close_tag.len();
         let result = content[after_close..].trim_start();
         // If we're in a full XHTML document, also trim the closing </body>...</html>.
@@ -262,6 +266,14 @@ mod tests {
         let content = "<h1>CHAPTER I.<br/>Down the Rabbit-Hole</h1><p>Body</p>";
         let result = strip_leading_heading(content, "CHAPTER I. Down the Rabbit-Hole");
         assert_eq!(result, "<p>Body</p>");
+    }
+
+    #[test]
+    fn strip_leading_heading_title_is_prefix_of_heading() {
+        // TOC title "CHAPTER I." is a prefix of the full heading text.
+        let content = "<h2>CHAPTER I. Down the Rabbit-Hole</h2><p>Alice was beginning</p>";
+        let result = strip_leading_heading(content, "CHAPTER I.");
+        assert_eq!(result, "<p>Alice was beginning</p>");
     }
 
     #[test]

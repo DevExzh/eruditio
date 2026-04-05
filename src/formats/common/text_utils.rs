@@ -157,7 +157,7 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
                     Some(end_offset) => {
                         let tag_bytes = &bytes[tag_start..tag_start + end_offset + 1];
                         if is_block_level_tag(tag_bytes) {
-                            result.push(' ');
+                            result.push('\n');
                         }
                         pos = tag_start + end_offset + 1;
                     },
@@ -244,25 +244,32 @@ fn is_block_level_tag(tag: &[u8]) -> bool {
     }
 }
 
-/// Collapses runs of ASCII whitespace into a single space and trims
-/// leading/trailing whitespace.
+/// Collapses runs of ASCII whitespace and trims leading/trailing whitespace.
+///
+/// When a run of whitespace contains at least one newline, it collapses to a
+/// single `\n` (preserving paragraph breaks).  Otherwise it collapses to a
+/// single space.
 fn collapse_whitespace(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut prev_was_space = true; // treat start as space so leading spaces are trimmed
+    let mut in_ws = true; // treat start as whitespace so leading is trimmed
+    let mut run_has_newline = false;
     for ch in s.chars() {
         if ch.is_ascii_whitespace() {
-            if !prev_was_space {
-                result.push(' ');
-                prev_was_space = true;
+            if ch == '\n' {
+                run_has_newline = true;
+            }
+            if !in_ws {
+                in_ws = true;
+                run_has_newline = ch == '\n';
             }
         } else {
+            if in_ws && !result.is_empty() {
+                result.push(if run_has_newline { '\n' } else { ' ' });
+            }
             result.push(ch);
-            prev_was_space = false;
+            in_ws = false;
+            run_has_newline = false;
         }
-    }
-    // Trim trailing space.
-    if result.ends_with(' ') {
-        result.pop();
     }
     result
 }
@@ -532,7 +539,7 @@ mod tests {
 
     #[test]
     fn strip_tags_nested() {
-        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "A B");
+        assert_eq!(strip_tags("<div><p>A</p><p>B</p></div>"), "A\nB");
     }
 
     #[test]
@@ -549,22 +556,22 @@ mod tests {
     fn strip_tags_br_inserts_space() {
         assert_eq!(
             strip_tags("CHAPTER I.<br/>Down the Rabbit-Hole"),
-            "CHAPTER I. Down the Rabbit-Hole"
+            "CHAPTER I.\nDown the Rabbit-Hole"
         );
     }
 
     #[test]
     fn strip_tags_br_variants() {
-        assert_eq!(strip_tags("A<br>B"), "A B");
-        assert_eq!(strip_tags("A<br/>B"), "A B");
-        assert_eq!(strip_tags("A<br />B"), "A B");
-        assert_eq!(strip_tags("A<BR>B"), "A B");
+        assert_eq!(strip_tags("A<br>B"), "A\nB");
+        assert_eq!(strip_tags("A<br/>B"), "A\nB");
+        assert_eq!(strip_tags("A<br />B"), "A\nB");
+        assert_eq!(strip_tags("A<BR>B"), "A\nB");
     }
 
     #[test]
     fn strip_tags_headings_insert_space() {
-        assert_eq!(strip_tags("<h1>Title</h1>Body"), "Title Body");
-        assert_eq!(strip_tags("<h3>Sub</h3>Text"), "Sub Text");
+        assert_eq!(strip_tags("<h1>Title</h1>Body"), "Title\nBody");
+        assert_eq!(strip_tags("<h3>Sub</h3>Text"), "Sub\nText");
     }
 
     #[test]
