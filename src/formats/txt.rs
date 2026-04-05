@@ -96,9 +96,13 @@ fn strip_title_prefix<'a>(text: &'a str, title: &str) -> &'a str {
     if normalised_title.is_empty() {
         return text;
     }
-    // Only search within the first ~500 chars to avoid stripping content
-    // mid-chapter on a false match.
-    let search_limit = text.len().min(500);
+    // Only search within the first ~500 bytes to avoid stripping content
+    // mid-chapter on a false match.  Adjust to a valid char boundary to
+    // avoid panicking on multi-byte UTF-8 sequences.
+    let mut search_limit = text.len().min(500);
+    while search_limit > 0 && !text.is_char_boundary(search_limit) {
+        search_limit -= 1;
+    }
     let search_area = &text[..search_limit];
 
     // Build a whitespace-normalised, lowercased version of the search area
@@ -352,6 +356,17 @@ mod tests {
         let text = "CHAPTER   I.   Down  the  Rabbit-Hole\n\nBody text";
         let result = strip_title_prefix(text, "CHAPTER I. Down the Rabbit-Hole");
         assert_eq!(result, "Body text");
+    }
+
+    #[test]
+    fn strip_title_prefix_multibyte_at_boundary() {
+        // Regression: if a multi-byte UTF-8 character straddles byte 500,
+        // the function must not panic.
+        let mut text = "A".repeat(499);
+        text.push('\u{00E9}'); // é = 2-byte UTF-8, straddles byte 499-500
+        text.push_str("\n\nBody");
+        let result = strip_title_prefix(&text, "Not Found");
+        assert_eq!(result, text.as_str());
     }
 
     #[test]

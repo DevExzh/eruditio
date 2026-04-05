@@ -169,21 +169,23 @@ fn try_resolve_embed(after_kindle: &str, image_paths: &[String]) -> Option<(Stri
     Some((path.clone(), total_consumed))
 }
 
-/// Tries to resolve a kindle:flow:NNNN reference.
+/// Tries to resolve a kindle:flow:XXXX reference.
+/// Flow indices use the same Kindle base-32 encoding as embed references
+/// (digits 0-9 plus letters A-V).
 /// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
 fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option<(String, usize)> {
     let rest = after_kindle.strip_prefix("flow:")?;
     let consumed_prefix = 5; // "flow:"
 
-    // Extract the decimal index.
+    // Extract the base-32 encoded index (digits 0-9 and letters A-V).
     let code_end = rest
-        .find(|c: char| !c.is_ascii_digit())
+        .find(|c: char| !c.is_ascii_alphanumeric() || c > 'V' && c <= 'Z' || c > 'v' && c <= 'z')
         .unwrap_or(rest.len());
     if code_end == 0 {
         return None;
     }
     let code = &rest[..code_end];
-    let index: usize = code.parse().ok()?;
+    let index = decode_kindle_base32(code)?;
 
     // Skip optional ?mime=... query string.
     let mut total_consumed = consumed_prefix + code_end;
@@ -203,15 +205,17 @@ fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option
 /// Detects the content type and file extension of a KF8 flow resource.
 fn detect_flow_type(data: &[u8]) -> (&'static str, &'static str) {
     let trimmed = trim_start_whitespace(data);
-    if trimmed.starts_with(b"<svg") || trimmed.starts_with(b"<SVG") || trimmed.starts_with(b"<?xml") {
-        // Could be SVG or XML; check for SVG indicators.
-        if data.windows(4).any(|w| w == b"<svg" || w == b"<SVG") {
+    if trimmed.starts_with(b"<svg") || trimmed.starts_with(b"<SVG") {
+        ("svg", "image/svg+xml")
+    } else if trimmed.starts_with(b"<?xml") {
+        // XML content: check if it contains an SVG element, otherwise treat as CSS
+        // (KF8 sometimes wraps CSS in CDATA within XML).
+        if data.windows(4).any(|w| w.eq_ignore_ascii_case(b"<svg")) {
             ("svg", "image/svg+xml")
         } else {
-            ("svg", "image/svg+xml") // default XML to SVG for KF8 flows
+            ("css", "text/css")
         }
     } else {
-        // Assume CSS for everything else.
         ("css", "text/css")
     }
 }
@@ -1209,6 +1213,21 @@ mod tests {
         let html = r#"<link href="kindle:flow:0001?mime=text/css">"#;
         let result = resolve_kindle_references(html, &image_paths, &flow_paths);
         assert_eq!(result, r#"<link href="flows/flow_1.css">"#);
+    }
+
+    #[test]
+    fn resolve_kindle_flow_base32() {
+        // Regression: kindle:flow uses base-32 encoding (0-9, A-V), not decimal.
+        // 000A in base-32 = 10 in decimal.
+        let image_paths: Vec<String> = vec![];
+        let mut flow_paths: Vec<Option<String>> = vec![None]; // flow 0 = main
+        for i in 1..=10 {
+            flow_paths.push(Some(format!("flows/flow_{}.css", i)));
+        }
+
+        let html = r#"<link href="kindle:flow:000A?mime=text/css">"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        assert_eq!(result, r#"<link href="flows/flow_10.css">"#);
     }
 
     #[test]
