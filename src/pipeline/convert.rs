@@ -4,7 +4,8 @@ use crate::domain::Book;
 use crate::domain::format::Format;
 use crate::error::{EruditioError, Result};
 use crate::transforms::{
-    CoverHandler, HtmlNormalizer, ManifestTrimmer, MetadataMerger, StructureDetector, TocGenerator,
+    CoverHandler, DataUriExtractor, HtmlNormalizer, ManifestTrimmer, MetadataMerger,
+    StructureDetector, TocGenerator,
 };
 use std::io::{Read, Write};
 
@@ -110,7 +111,13 @@ impl Pipeline {
     fn build_transform_chain(&self, options: &ConversionOptions) -> Vec<Box<dyn Transform>> {
         let mut chain: Vec<Box<dyn Transform>> = Vec::new();
 
-        // Order matters: normalize first, then detect structure, then generate TOC.
+        // Order matters: extract data URIs first (simplifies HTML, makes images
+        // available as manifest resources), then normalize, detect structure,
+        // and generate TOC.
+
+        if options.extract_data_uris {
+            chain.push(Box::new(DataUriExtractor));
+        }
 
         if options.normalize_html {
             chain.push(Box::new(HtmlNormalizer));

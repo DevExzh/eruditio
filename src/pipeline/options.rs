@@ -23,6 +23,9 @@ pub struct ConversionOptions {
 
     /// Whether to detect and set the cover image.
     pub detect_cover: bool,
+
+    /// Whether to extract data URI images into manifest resources.
+    pub extract_data_uris: bool,
 }
 
 impl ConversionOptions {
@@ -35,6 +38,7 @@ impl ConversionOptions {
             normalize_html: true,
             trim_manifest: true,
             detect_cover: true,
+            extract_data_uris: true,
         }
     }
 
@@ -80,6 +84,7 @@ mod tests {
         assert!(!opts.normalize_html);
         assert!(!opts.trim_manifest);
         assert!(!opts.detect_cover);
+        assert!(!opts.extract_data_uris);
         assert!(opts.metadata_overrides.is_none());
     }
 
@@ -91,5 +96,6 @@ mod tests {
         assert!(opts.normalize_html);
         assert!(opts.trim_manifest);
         assert!(opts.detect_cover);
+        assert!(opts.extract_data_uris);
     }
 }

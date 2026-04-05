@@ -20,6 +20,7 @@ zip = "8.1.0"
 lzxd = "0.2"
 pulldown-cmark = "0.12"
 encoding_rs = "0.8"
+clap = { version = "4", features = ["derive"] }
 
 [features]
 default = ["native-fs", "cbr", "cb7"]
@@ -35,6 +36,10 @@ optional = true
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 dhat = "0.3"
+
+[[bin]]
+name = "eruditio-convert"
+path = "src/bin/convert.rs"
 
 [[bin]]
 name = "memory_profile"
