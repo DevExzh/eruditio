@@ -10,8 +10,9 @@ use crate::formats::common::html_utils::strip_tags;
 use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be};
 
 use super::exth::{
-    self, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_DESCRIPTION, EXTH_ISBN,
-    EXTH_LANGUAGE, EXTH_PUBLISHER, EXTH_SUBJECT, EXTH_UPDATED_TITLE,
+    self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_DESCRIPTION, EXTH_ISBN,
+    EXTH_LANGUAGE, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_SUBJECT,
+    EXTH_UPDATED_TITLE,
 };
 use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 
@@ -303,6 +304,25 @@ fn build_metadata_exth(book: &Book, has_cover: bool) -> Vec<u8> {
         refs.push((EXTH_LANGUAGE, lang.as_bytes()));
     }
 
+    // Publication date (ISO 8601 / RFC 3339).
+    let date_string = book
+        .metadata
+        .publication_date
+        .map(|d| d.to_rfc3339());
+    if let Some(ref ds) = date_string {
+        refs.push((EXTH_PUBLISHED_DATE, ds.as_bytes()));
+    }
+
+    // Rights.
+    if let Some(ref rights) = book.metadata.rights {
+        refs.push((EXTH_RIGHTS, rights.as_bytes()));
+    }
+
+    // ASIN / identifier.
+    if let Some(ref identifier) = book.metadata.identifier {
+        refs.push((EXTH_ASIN, identifier.as_bytes()));
+    }
+
     // Cover offset (first image = index 0).
     if has_cover {
         refs.push((EXTH_COVER_OFFSET, &cover_offset_bytes));
@@ -534,5 +554,54 @@ mod tests {
         let mut buf = String::new();
         push_html_escaped(&mut buf, "a & b < c > d");
         assert_eq!(buf, "a &amp; b &lt; c &gt; d");
+    }
+
+    #[test]
+    fn mobi_round_trip_extended_metadata() {
+        use chrono::NaiveDate;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Extended Meta".into());
+        book.metadata.authors.push("Bob".into());
+        book.metadata.publication_date = Some(
+            NaiveDate::from_ymd_opt(2024, 6, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+        book.metadata.rights = Some("CC BY 4.0".into());
+        book.metadata.identifier = Some("B00TEST1234".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Content for extended metadata test.</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        // Write.
+        let mobi_data = write_mobi(&book).unwrap();
+
+        // Read back.
+        let mut cursor = std::io::Cursor::new(mobi_data);
+        let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
+
+        // Verify the three new fields round-trip correctly.
+        assert!(
+            decoded.metadata.publication_date.is_some(),
+            "publication_date should be present after round-trip"
+        );
+        let decoded_date = decoded.metadata.publication_date.unwrap();
+        assert_eq!(decoded_date.format("%Y-%m-%d").to_string(), "2024-06-15");
+
+        assert_eq!(
+            decoded.metadata.rights.as_deref(),
+            Some("CC BY 4.0"),
+            "rights should round-trip"
+        );
+        assert_eq!(
+            decoded.metadata.identifier.as_deref(),
+            Some("B00TEST1234"),
+            "identifier should round-trip"
+        );
     }
 }

@@ -18,8 +18,8 @@ use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 
 use self::exth::{
-    EXTH_AUTHOR, EXTH_DESCRIPTION, EXTH_ISBN, EXTH_LANGUAGE, EXTH_PUBLISHER, EXTH_SUBJECT,
-    EXTH_UPDATED_TITLE, ExthHeader,
+    EXTH_ASIN, EXTH_AUTHOR, EXTH_DESCRIPTION, EXTH_ISBN, EXTH_LANGUAGE, EXTH_PUBLISHED_DATE,
+    EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_SUBJECT, EXTH_UPDATED_TITLE, ExthHeader,
 };
 use self::header::{
     COMPRESSION_HUFFCDIC, COMPRESSION_NONE, COMPRESSION_PALMDOC, MobiHeader, NULL_INDEX,
@@ -317,6 +317,33 @@ fn populate_metadata(book: &mut Book, mobi: Option<&MobiHeader>, exth: Option<&E
             && !lang.is_empty()
         {
             book.metadata.language = Some(lang);
+        }
+
+        // Publication date.
+        if let Some(date_str) = ex.get_string(EXTH_PUBLISHED_DATE)
+            && !date_str.is_empty()
+        {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&date_str) {
+                book.metadata.publication_date = Some(dt.with_timezone(&chrono::Utc));
+            } else if let Ok(date) = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
+                book.metadata.publication_date = date
+                    .and_hms_opt(0, 0, 0)
+                    .and_then(|ndt| ndt.and_local_timezone(chrono::Utc).single());
+            }
+        }
+
+        // Rights.
+        if let Some(rights) = ex.get_string(EXTH_RIGHTS)
+            && !rights.is_empty()
+        {
+            book.metadata.rights = Some(rights);
+        }
+
+        // Identifier (ASIN).
+        if let Some(identifier) = ex.get_string(EXTH_ASIN)
+            && !identifier.is_empty()
+        {
+            book.metadata.identifier = Some(identifier);
         }
     }
 }
