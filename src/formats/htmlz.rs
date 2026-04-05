@@ -192,7 +192,7 @@ fn generate_htmlz_content(book: &Book) -> String {
             body.push_str("<hr />\n");
         }
         if let Some(ref ch_title) = chapter.title {
-            body.push_str(&format!("<h1>{}</h1>\n", escape_html(ch_title)));
+            body.push_str(&format!("<h2>{}</h2>\n", escape_html(ch_title)));
         }
         let content = match chapter.title {
             Some(ref t) => strip_leading_heading(&chapter.content, t),
@@ -204,6 +204,11 @@ fn generate_htmlz_content(book: &Book) -> String {
 
     // DO NOT embed resources as data URIs — they are written as separate ZIP entries
 
+    // Rewrite <img> src attributes to add "images/" prefix where needed.
+    // Images are stored under images/ in the ZIP, but chapter HTML may reference
+    // them without the prefix (e.g. src="cover.jpg" instead of src="images/cover.jpg").
+    let body = rewrite_image_src(&body);
+
     let mut html =
         crate::formats::html::parser::build_html_document(title, &book.metadata, &body);
 
@@ -213,6 +218,59 @@ fn generate_htmlz_content(book: &Book) -> String {
     }
 
     html
+}
+
+/// Rewrites `<img` tag `src` attributes to prepend `images/` where needed.
+///
+/// Any `src` value that does not already start with `images/`, `http://`,
+/// `https://`, or `data:` gets the `images/` prefix prepended.
+fn rewrite_image_src(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut remaining = html;
+
+    while let Some(img_pos) = remaining.find("<img") {
+        // Copy everything up to and including `<img`
+        result.push_str(&remaining[..img_pos + 4]);
+        remaining = &remaining[img_pos + 4..];
+
+        // Look for src= within this tag (before the closing `>`)
+        if let Some(tag_end) = remaining.find('>') {
+            let tag_content = &remaining[..=tag_end];
+            if let Some(src_offset) = tag_content.find("src=\"") {
+                let after_src_start = &remaining[src_offset + 5..];
+                if let Some(quote_end) = after_src_start.find('"') {
+                    let src_value = &after_src_start[..quote_end];
+                    if !src_value.starts_with("images/")
+                        && !src_value.starts_with("http://")
+                        && !src_value.starts_with("https://")
+                        && !src_value.starts_with("data:")
+                    {
+                        result.push_str(&remaining[..src_offset + 5]);
+                        result.push_str("images/");
+                        result.push_str(src_value);
+                        result.push('"');
+                        remaining = &after_src_start[quote_end + 1..];
+                    } else {
+                        // src already has a valid prefix, copy the tag as-is
+                        result.push_str(&remaining[..=tag_end]);
+                        remaining = &remaining[tag_end + 1..];
+                    }
+                } else {
+                    result.push_str(&remaining[..=tag_end]);
+                    remaining = &remaining[tag_end + 1..];
+                }
+            } else {
+                // No src= in this img tag, copy the tag as-is
+                result.push_str(&remaining[..=tag_end]);
+                remaining = &remaining[tag_end + 1..];
+            }
+        }
+        // else: no closing `>` found — just continue (broken HTML, copy rest at end)
+    }
+
+    // Copy any remaining content after the last <img> tag
+    result.push_str(remaining);
+    result
 }
 
 /// Generates a simplified OPF metadata document for the HTMLZ archive.
@@ -234,9 +292,9 @@ fn generate_htmlz_opf(book: &Book) -> String {
             if let Some(ref sort) = m.author_sort {
                 xml.push_str("    <dc:creator opf:file-as=\"");
                 xml.push_str(&escape_html(sort));
-                xml.push_str("\">");
+                xml.push_str("\" opf:role=\"aut\">");
             } else {
-                xml.push_str("    <dc:creator>");
+                xml.push_str("    <dc:creator opf:role=\"aut\">");
             }
         } else {
             xml.push_str("    <dc:creator>");
@@ -313,7 +371,7 @@ fn generate_htmlz_opf(book: &Book) -> String {
             xml.push_str("\" title=\"");
             xml.push_str(&escape_html(&r.title));
             xml.push_str("\" href=\"");
-            xml.push_str(&escape_html(&r.href));
+            xml.push_str("index.html");
             xml.push_str("\"/>\n");
         }
         xml.push_str("  </guide>\n");
@@ -624,7 +682,7 @@ mod tests {
         opf.read_to_string(&mut opf_content).unwrap();
 
         assert!(opf_content.contains("<dc:title>OPF Test</dc:title>"));
-        assert!(opf_content.contains("<dc:creator>Bob</dc:creator>"));
+        assert!(opf_content.contains("opf:role=\"aut\">Bob</dc:creator>"));
     }
 
     #[test]
@@ -675,7 +733,7 @@ mod tests {
         let opf = generate_htmlz_opf(&book);
 
         assert!(opf.contains("<dc:title>Full Meta</dc:title>"));
-        assert!(opf.contains("<dc:creator>Author A</dc:creator>"));
+        assert!(opf.contains("<dc:creator opf:role=\"aut\">Author A</dc:creator>"));
         assert!(opf.contains("<dc:creator>Author B</dc:creator>"));
         assert!(opf.contains("<dc:language>fr</dc:language>"));
         assert!(opf.contains("<dc:publisher>Publisher X</dc:publisher>"));
@@ -1042,7 +1100,7 @@ mod tests {
 
         // Verify file-as on first author only
         assert!(
-            opf.contains("opf:file-as=\"Author, Alice\">Alice Author</dc:creator>"),
+            opf.contains("opf:file-as=\"Author, Alice\" opf:role=\"aut\">Alice Author</dc:creator>"),
             "First author should have opf:file-as attribute. Got:\n{}",
             opf
         );
@@ -1077,8 +1135,8 @@ mod tests {
             opf
         );
         assert!(
-            opf.contains("href=\"cover.xhtml\""),
-            "Guide cover should have href. Got:\n{}",
+            opf.contains("href=\"index.html\""),
+            "Guide cover should have href pointing to index.html. Got:\n{}",
             opf
         );
         assert!(
@@ -1260,6 +1318,209 @@ mod tests {
             css_content.contains("margin: 0") && css_content.contains("font-size: 16px"),
             "style.css should contain CSS from both files. Got: {}",
             css_content
+        );
+    }
+
+    #[test]
+    fn rewrite_image_src_adds_images_prefix() {
+        let input = r#"<p>Text</p><img src="cover.jpg"><img src="photo.png">"#;
+        let result = rewrite_image_src(input);
+        assert!(
+            result.contains(r#"src="images/cover.jpg""#),
+            "Should prepend images/ to cover.jpg. Got: {}",
+            result
+        );
+        assert!(
+            result.contains(r#"src="images/photo.png""#),
+            "Should prepend images/ to photo.png. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn rewrite_image_src_preserves_already_prefixed() {
+        let input = r#"<img src="images/cover.jpg"><img src="http://example.com/img.png"><img src="https://example.com/img.png"><img src="data:image/png;base64,abc">"#;
+        let result = rewrite_image_src(input);
+        assert!(
+            result.contains(r#"src="images/cover.jpg""#),
+            "Should not double-prefix images/. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains(r#"src="images/images/"#),
+            "Should not double-prefix images/. Got: {}",
+            result
+        );
+        assert!(
+            result.contains(r#"src="http://example.com/img.png""#),
+            "Should preserve http:// URLs. Got: {}",
+            result
+        );
+        assert!(
+            result.contains(r#"src="https://example.com/img.png""#),
+            "Should preserve https:// URLs. Got: {}",
+            result
+        );
+        assert!(
+            result.contains(r#"src="data:image/png;base64,abc""#),
+            "Should preserve data: URIs. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn rewrite_image_src_no_img_tags() {
+        let input = "<p>No images here</p>";
+        let result = rewrite_image_src(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn htmlz_content_uses_h2_for_chapter_titles() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Heading Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter One".into()),
+            content: "<p>First chapter content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter Two".into()),
+            content: "<p>Second chapter content</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        assert!(
+            html.contains("<h2>Chapter One</h2>"),
+            "Chapter titles should be h2, not h1. Got: {}",
+            html
+        );
+        assert!(
+            html.contains("<h2>Chapter Two</h2>"),
+            "Chapter titles should be h2, not h1. Got: {}",
+            html
+        );
+        // There should be no h1 tags for chapter titles
+        assert!(
+            !html.contains("<h1>Chapter One</h1>"),
+            "Should not use h1 for chapter titles. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_content_rewrites_image_src_paths() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Image Path Test".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: r#"<p>Before</p><img src="cover.jpg"><p>After</p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        assert!(
+            html.contains(r#"src="images/cover.jpg""#),
+            "Image src should be rewritten to images/cover.jpg. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_opf_guide_refs_point_to_index_html() {
+        use crate::domain::guide::{Guide, GuideReference, GuideType};
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Guide Test".into());
+        book.guide = Guide {
+            references: vec![
+                GuideReference {
+                    ref_type: GuideType::Cover,
+                    title: "Cover".into(),
+                    href: "wrap0000.html".into(),
+                },
+                GuideReference {
+                    ref_type: GuideType::Toc,
+                    title: "Table of Contents".into(),
+                    href: "11-h-0.htm.html".into(),
+                },
+            ],
+        };
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let opf = generate_htmlz_opf(&book);
+
+        // All guide hrefs should point to index.html
+        assert!(
+            !opf.contains("wrap0000.html"),
+            "Guide should not reference original EPUB filenames. Got:\n{}",
+            opf
+        );
+        assert!(
+            !opf.contains("11-h-0.htm.html"),
+            "Guide should not reference original EPUB filenames. Got:\n{}",
+            opf
+        );
+        // Count occurrences of index.html in guide section
+        assert!(
+            opf.contains("href=\"index.html\""),
+            "Guide references should point to index.html. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn htmlz_opf_first_author_has_role_aut() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Role Test".into());
+        book.metadata.authors.push("First Author".into());
+        book.metadata.authors.push("Second Author".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let opf = generate_htmlz_opf(&book);
+
+        assert!(
+            opf.contains("opf:role=\"aut\">First Author</dc:creator>"),
+            "First author should have opf:role=\"aut\". Got:\n{}",
+            opf
+        );
+        // Second author should NOT have role
+        assert!(
+            opf.contains("<dc:creator>Second Author</dc:creator>"),
+            "Second author should not have opf:role. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn htmlz_opf_first_author_role_with_file_as() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Role+Sort Test".into());
+        book.metadata.authors.push("Jane Doe".into());
+        book.metadata.author_sort = Some("Doe, Jane".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let opf = generate_htmlz_opf(&book);
+
+        assert!(
+            opf.contains("opf:file-as=\"Doe, Jane\" opf:role=\"aut\">Jane Doe</dc:creator>"),
+            "First author should have both opf:file-as and opf:role. Got:\n{}",
+            opf
         );
     }
 }
