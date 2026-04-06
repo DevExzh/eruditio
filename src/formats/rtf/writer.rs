@@ -572,6 +572,7 @@ fn alignment_from_tag(tag_str: &str, align_map: &HashMap<String, String>) -> &'s
     }
 
     // 2. Check class="..." and resolve against the CSS alignment map.
+    #[allow(clippy::collapsible_if)]
     if !align_map.is_empty() {
         if let Some(class_start) = tag_lower.find("class=") {
             let rest = &tag_lower[class_start + 6..];
