@@ -308,6 +308,7 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// Builds Record 0 with PalmDOC + MOBI + EXTH headers + title.
+#[allow(clippy::too_many_arguments)]
 fn build_record0(
     title: &str,
     text_length: u32,
@@ -670,6 +671,7 @@ fn book_to_mobi_html(book: &Book) -> String {
             })
             .unwrap_or(false);
 
+        #[allow(clippy::collapsible_if)]
         if let Some(title) = ch_title {
             if !content_has_heading {
                 html.push_str("<h2>");
