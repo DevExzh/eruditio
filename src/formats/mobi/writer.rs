@@ -89,6 +89,10 @@ fn encode_vwi(value: u32) -> Vec<u8> {
 ///
 /// Returns `(indx_header_record, indx_data_record, cncx_record)`.
 fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    // Cap entries to prevent u16 overflow in IDXT offsets.
+    // Each entry is ~18 bytes; with 192-byte header, u16 fits ~3600 entries.
+    let max_entries = 3000;
+    let chapters = &chapters[..chapters.len().min(max_entries)];
     let entry_count = chapters.len();
 
     // --- Build CNCX record (chapter title strings) ---
@@ -97,9 +101,11 @@ fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     for (title, _) in chapters {
         cncx_offsets.push(cncx.len());
         let title_bytes = title.as_bytes();
-        let len = title_bytes.len() as u16;
+        // Clamp to u16::MAX to avoid silent truncation on pathological titles.
+        let clamped_len = title_bytes.len().min(u16::MAX as usize);
+        let len = clamped_len as u16;
         cncx.extend_from_slice(&len.to_be_bytes());
-        cncx.extend_from_slice(title_bytes);
+        cncx.extend_from_slice(&title_bytes[..clamped_len]);
     }
 
     // --- Build INDX header record ---
@@ -370,16 +376,26 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     let thumbnail_record_count = if thumbnail_data.is_some() { 1 } else { 0 };
     let image_count = image_refs.len();
 
-    // Build INDX/CNCX records for NCX navigation.
-    let (indx_header_rec, indx_data_rec, cncx_rec) = build_ncx_indx(&chapter_entries);
-    let ncx_record_count = 3; // INDX header + INDX data + CNCX
+    // Build INDX/CNCX records for NCX navigation (skip if no chapters).
+    let ncx_records = if !chapter_entries.is_empty() {
+        let (h, d, c) = build_ncx_indx(&chapter_entries);
+        Some((h, d, c))
+    } else {
+        None
+    };
+    let ncx_record_count: usize = if ncx_records.is_some() { 3 } else { 0 };
 
-    // NCX index points to the first INDX record (right after images/thumbnail).
-    let ncx_index =
-        (1 + text_record_count + image_count + thumbnail_record_count) as u32;
+    // NCX index points to the first INDX record (right after images/thumbnail),
+    // or NULL_INDEX if no chapters to index.
+    let ncx_index = if ncx_records.is_some() {
+        (1 + text_record_count + image_count + thumbnail_record_count) as u32
+    } else {
+        NULL_INDEX
+    };
 
-    // FLIS/FCIS come after the INDX/CNCX records.
-    let flis_record_num = ncx_index + ncx_record_count as u32;
+    // FLIS/FCIS come after the INDX/CNCX records (if any).
+    let flis_record_num =
+        (1 + text_record_count + image_count + thumbnail_record_count + ncx_record_count) as u32;
     let fcis_record_num = flis_record_num + 1;
 
     // Build EXTH.
@@ -437,17 +453,15 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
         }
     }
 
-    // INDX header record
-    offsets.push(pos);
-    pos += indx_header_rec.len() as u32;
-
-    // INDX data record
-    offsets.push(pos);
-    pos += indx_data_rec.len() as u32;
-
-    // CNCX record
-    offsets.push(pos);
-    pos += cncx_rec.len() as u32;
+    // INDX/CNCX records (if present).
+    if let Some((ref h, ref d, ref c)) = ncx_records {
+        offsets.push(pos);
+        pos += h.len() as u32;
+        offsets.push(pos);
+        pos += d.len() as u32;
+        offsets.push(pos);
+        pos += c.len() as u32;
+    }
 
     // FLIS
     offsets.push(pos);
@@ -482,10 +496,12 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
             output.extend_from_slice(thumb);
         }
     }
-    // INDX/CNCX records.
-    output.extend_from_slice(&indx_header_rec);
-    output.extend_from_slice(&indx_data_rec);
-    output.extend_from_slice(&cncx_rec);
+    // INDX/CNCX records (if present).
+    if let Some((ref h, ref d, ref c)) = ncx_records {
+        output.extend_from_slice(h);
+        output.extend_from_slice(d);
+        output.extend_from_slice(c);
+    }
     // Structural records.
     output.extend_from_slice(FLIS_RECORD);
     output.extend_from_slice(&fcis);
