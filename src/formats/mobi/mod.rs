@@ -246,9 +246,11 @@ fn try_resolve_pos_fid(after_kindle: &str, chapter_count: usize) -> Option<(Stri
         return None;
     }
 
-    // Clamp fid to valid chapter range.
-    let chapter_idx = if fid < chapter_count { fid } else { 0 };
-    let replacement = format!("mobi_ch_{}.xhtml", chapter_idx);
+    // Out-of-range fid: leave the reference unresolved rather than misdirecting.
+    if fid >= chapter_count {
+        return None;
+    }
+    let replacement = format!("mobi_ch_{}.xhtml", fid);
 
     Some((replacement, total_consumed))
 }
@@ -823,6 +825,9 @@ fn find_all_case_insensitive(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
 /// of a new part. Content before the first position (if any) is included as the
 /// first part only if non-empty.
 fn split_at_positions<'a>(html: &'a str, positions: &[usize]) -> Vec<&'a str> {
+    if positions.is_empty() {
+        return vec![html];
+    }
     let mut parts = Vec::with_capacity(positions.len() + 1);
 
     // If there's content before the first boundary, include it.
@@ -1598,14 +1603,14 @@ mod tests {
     }
 
     #[test]
-    fn resolve_kindle_pos_fid_out_of_range_clamped() {
+    fn resolve_kindle_pos_fid_out_of_range_left_unchanged() {
         let image_paths: Vec<String> = vec![];
         let flow_paths: Vec<Option<String>> = vec![];
 
-        // fid=99 but only 10 chapters: clamped to chapter 0
+        // fid=99 but only 10 chapters: left unchanged rather than misdirecting.
         let html = r#"<a href="kindle:pos:fid:0033:off:0000000000">Link</a>"#;
         let result = resolve_kindle_references(html, &image_paths, &flow_paths, 10);
-        assert_eq!(result, r#"<a href="mobi_ch_0.xhtml">Link</a>"#);
+        assert_eq!(result, html);
     }
 
     #[test]
