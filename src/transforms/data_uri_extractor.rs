@@ -24,29 +24,29 @@ impl Transform for DataUriExtractor {
         let mut image_counter = 0u32;
 
         // Collect spine item IDs first to avoid borrow issues.
-        let spine_ids: Vec<String> = result
-            .spine
-            .iter()
-            .map(|s| s.manifest_id.clone())
-            .collect();
+        let spine_ids: Vec<String> = result.spine.iter().map(|s| s.manifest_id.clone()).collect();
 
         for manifest_id in &spine_ids {
-            if let Some(item) = result.manifest.get_mut(manifest_id) {
-                if let Some(text) = item.data.as_text() {
-                    let text = text.to_string(); // Clone to release borrow
-                    let (new_content, extracted) = extract_data_uris(&text, &mut image_counter);
+            if let Some(item) = result.manifest.get_mut(manifest_id)
+                && let Some(text) = item.data.as_text()
+            {
+                // Fast pre-check: skip the expensive clone + scan if no
+                // data URI is present in this chapter.
+                if memchr::memmem::find(text.as_bytes(), b"data:").is_none() {
+                    continue;
+                }
+                let text = text.to_string(); // Clone to release borrow
+                let (new_content, extracted) = extract_data_uris(&text, &mut image_counter);
 
-                    if !extracted.is_empty() {
-                        // Update the chapter content.
-                        item.data = ManifestData::Text(new_content);
+                if !extracted.is_empty() {
+                    // Update the chapter content.
+                    item.data = ManifestData::Text(new_content);
 
-                        // Add extracted images to manifest.
-                        for img in extracted {
-                            let manifest_item =
-                                ManifestItem::new(&img.id, &img.href, &img.media_type)
-                                    .with_data(img.data);
-                            result.manifest.insert(manifest_item);
-                        }
+                    // Add extracted images to manifest.
+                    for img in extracted {
+                        let manifest_item = ManifestItem::new(&img.id, &img.href, &img.media_type)
+                            .with_data(img.data);
+                        result.manifest.insert(manifest_item);
                     }
                 }
             }
@@ -102,7 +102,7 @@ fn extract_data_uris(html: &str, counter: &mut u32) -> (String, Vec<ExtractedIma
                     result.push_str(&html[pos..pos + offset + 1]);
                     pos = attr_start + 1;
                     continue;
-                }
+                },
             };
 
             let quote_pos = eq_pos + 1;
@@ -127,7 +127,7 @@ fn extract_data_uris(html: &str, counter: &mut u32) -> (String, Vec<ExtractedIma
                     result.push_str(&html[pos..data_start]);
                     pos = data_start;
                     continue;
-                }
+                },
             };
 
             // Extract the full data URI value between the quotes.
@@ -160,12 +160,12 @@ fn extract_data_uris(html: &str, counter: &mut u32) -> (String, Vec<ExtractedIma
                             media_type: parsed.mime,
                             data: decoded,
                         });
-                    }
+                    },
                     Err(_) => {
                         // Malformed base64 — leave the original data URI intact.
                         result.push_str(&html[pos..closing_quote]);
                         pos = closing_quote;
-                    }
+                    },
                 }
             } else {
                 // Not a valid data URI (e.g., no `;base64,` marker) — leave intact.
@@ -220,10 +220,7 @@ fn find_data_uri_src(bytes: &[u8]) -> Option<usize> {
     while i + 10 <= len {
         // Fast scan: find `s` or `S` using memchr2.
         let remaining = &bytes[i..];
-        let offset = match memchr::memchr2(b's', b'S', remaining) {
-            Some(o) => o,
-            None => return None,
-        };
+        let offset = memchr::memchr2(b's', b'S', remaining)?;
 
         let start = i + offset;
         // Check if we have enough room for `src="data:`.
@@ -236,10 +233,7 @@ fn find_data_uri_src(bytes: &[u8]) -> Option<usize> {
         let b2 = bytes[start + 2];
         let b3 = bytes[start + 3];
 
-        if (b1 == b'r' || b1 == b'R')
-            && (b2 == b'c' || b2 == b'C')
-            && b3 == b'='
-        {
+        if (b1 == b'r' || b1 == b'R') && (b2 == b'c' || b2 == b'C') && b3 == b'=' {
             let quote = bytes[start + 4];
             if (quote == b'"' || quote == b'\'')
                 && bytes[start + 5] == b'd'
@@ -264,8 +258,7 @@ mod tests {
     use crate::domain::{Book, Chapter};
 
     // 1x1 red pixel PNG encoded in base64.
-    const TINY_PNG_B64: &str =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+    const TINY_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
 
     fn decode_tiny_png() -> Vec<u8> {
         base64::engine::general_purpose::STANDARD
@@ -312,7 +305,8 @@ mod tests {
 
     #[test]
     fn no_data_uris() {
-        let html = r#"<html><body><img src="images/photo.jpg" /><p>No data URIs here</p></body></html>"#;
+        let html =
+            r#"<html><body><img src="images/photo.jpg" /><p>No data URIs here</p></body></html>"#;
         let mut counter = 0;
         let (result, images) = extract_data_uris(html, &mut counter);
 
@@ -322,10 +316,7 @@ mod tests {
 
     #[test]
     fn non_image_data_uri() {
-        let html = format!(
-            r#"<img src="data:text/plain;base64,{}" />"#,
-            TINY_PNG_B64
-        );
+        let html = format!(r#"<img src="data:text/plain;base64,{}" />"#, TINY_PNG_B64);
         let mut counter = 0;
         let (result, images) = extract_data_uris(&html, &mut counter);
 
@@ -355,10 +346,7 @@ mod tests {
 
     #[test]
     fn single_quoted_attribute() {
-        let html = format!(
-            "<img src='data:image/gif;base64,{}' />",
-            TINY_PNG_B64
-        );
+        let html = format!("<img src='data:image/gif;base64,{}' />", TINY_PNG_B64);
         let mut counter = 0;
         let (result, images) = extract_data_uris(&html, &mut counter);
 
@@ -386,7 +374,11 @@ mod tests {
 
         // The chapter content should have the relative path instead of data URI.
         let chapters = result.chapters();
-        assert!(chapters[0].content.contains(r#"src="images/extracted_0.png""#));
+        assert!(
+            chapters[0]
+                .content
+                .contains(r#"src="images/extracted_0.png""#)
+        );
         assert!(!chapters[0].content.contains("data:image"));
 
         // The extracted image should be in the manifest.

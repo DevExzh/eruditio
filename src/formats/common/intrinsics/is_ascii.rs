@@ -196,6 +196,7 @@ pub(crate) fn is_all_ascii_scalar(data: &[u8]) -> bool {
 ///
 /// Selects the best available SIMD implementation at runtime.
 #[allow(unreachable_code)]
+#[inline]
 pub(crate) fn is_all_ascii(data: &[u8]) -> bool {
     if data.is_empty() {
         return true;

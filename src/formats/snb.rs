@@ -5,6 +5,7 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::text_utils::ends_with_ascii_ci;
 use bzip2::Compression as BzCompression;
 use bzip2::read::BzDecoder;
 use bzip2::write::BzEncoder;
@@ -98,18 +99,17 @@ impl FormatReader for SnbReader {
 
         // Add image resources from the archive to the book.
         for (name, content) in &files {
-            let lower = name.to_lowercase();
-            let is_image = lower.ends_with(".jpg")
-                || lower.ends_with(".jpeg")
-                || lower.ends_with(".png")
-                || lower.ends_with(".gif")
-                || lower.ends_with(".bmp");
+            let is_image = ends_with_ascii_ci(name, ".jpg")
+                || ends_with_ascii_ci(name, ".jpeg")
+                || ends_with_ascii_ci(name, ".png")
+                || ends_with_ascii_ci(name, ".gif")
+                || ends_with_ascii_ci(name, ".bmp");
             if is_image {
-                let media_type = if lower.ends_with(".png") {
+                let media_type = if ends_with_ascii_ci(name, ".png") {
                     "image/png"
-                } else if lower.ends_with(".gif") {
+                } else if ends_with_ascii_ci(name, ".gif") {
                     "image/gif"
-                } else if lower.ends_with(".bmp") {
+                } else if ends_with_ascii_ci(name, ".bmp") {
                     "image/bmp"
                 } else {
                     "image/jpeg"

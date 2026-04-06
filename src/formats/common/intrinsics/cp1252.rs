@@ -116,10 +116,17 @@ mod x86 {
                     i += 32;
                     continue;
                 }
+                // Non-ASCII byte found -- copy ASCII prefix, decode the
+                // non-ASCII byte via lookup table, and stay in AVX2 loop.
+                let ascii_prefix = high_bits.trailing_zeros() as usize;
+                if ascii_prefix > 0 {
+                    // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                    result.push_str(ascii_slice);
+                }
+                result.push(CP1252_TABLE[data[i + ascii_prefix] as usize]);
+                i += ascii_prefix + 1;
             }
-            // Non-ASCII byte found in this 32-byte chunk -- fall through to
-            // SSE2 granularity.
-            break;
         }
 
         // --- 16-byte SSE2 tail ---
@@ -348,6 +355,7 @@ mod wasm {
 /// Selects the best available SIMD implementation at runtime for bulk-copying
 /// ASCII runs.  Non-ASCII bytes are resolved through [`CP1252_TABLE`].
 #[allow(unreachable_code)]
+#[inline]
 pub(crate) fn decode_cp1252(data: &[u8]) -> String {
     if data.is_empty() {
         return String::new();

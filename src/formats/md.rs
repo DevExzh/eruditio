@@ -100,7 +100,7 @@ fn html_to_markdown(html: &str, md: &mut String) {
                 None => break,
             };
             let raw_tag = &html[pos..tag_end];
-            let tag = raw_tag.to_lowercase();
+            let tag = raw_tag.to_ascii_lowercase();
 
             if tag == "<p>" || tag.starts_with("<p ") {
                 ensure_blank_line(md);
@@ -289,7 +289,7 @@ fn ensure_blank_line(md: &mut String) {
 
 /// Extracts an HTML attribute value from a tag string (case-insensitive name).
 fn extract_html_attr(tag: &str, attr_name: &str) -> Option<String> {
-    let lower = tag.to_lowercase();
+    let lower = tag.to_ascii_lowercase();
     for sep in ["=\"", "='"] {
         let pattern = format!("{}{}", attr_name, sep);
         if let Some(start) = lower.find(&pattern) {

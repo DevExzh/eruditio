@@ -33,10 +33,10 @@ pub fn book_to_rtf(book: &Book) -> String {
     write_info_group(book, &mut rtf);
 
     // Cover image (embedded as RTF picture group before chapter content).
-    if let Some(cover_item) = find_cover_image(book) {
-        if let Some(image_data) = cover_item.data.as_bytes() {
-            write_cover_image(&mut rtf, image_data, &cover_item.media_type);
-        }
+    if let Some(cover_item) = find_cover_image(book)
+        && let Some(image_data) = cover_item.data.as_bytes()
+    {
+        write_cover_image(&mut rtf, image_data, &cover_item.media_type);
     }
 
     // Default font and size.
@@ -124,18 +124,18 @@ fn write_info_group(book: &Book, rtf: &mut String) {
 /// 3. Item with "cover" in its ID or href and an image media type
 fn find_cover_image(book: &Book) -> Option<&crate::domain::manifest::ManifestItem> {
     // 1. Explicit cover image ID from metadata.
-    if let Some(ref id) = book.metadata.cover_image_id {
-        if let Some(item) = book.manifest.get(id) {
-            if item.media_type.starts_with("image/") {
-                return Some(item);
-            }
-        }
+    if let Some(ref id) = book.metadata.cover_image_id
+        && let Some(item) = book.manifest.get(id)
+        && item.media_type.starts_with("image/")
+    {
+        return Some(item);
     }
 
     // 2. EPUB3 cover-image property.
-    let by_property = book.manifest.iter().find(|item| {
-        item.has_property("cover-image") && item.media_type.starts_with("image/")
-    });
+    let by_property = book
+        .manifest
+        .iter()
+        .find(|item| item.has_property("cover-image") && item.media_type.starts_with("image/"));
     if by_property.is_some() {
         return by_property;
     }
@@ -168,9 +168,9 @@ fn write_cover_image(rtf: &mut String, image_data: &[u8], media_type: &str) {
     let height_twips = (height_px as u32) * 1440 / 96;
 
     use std::fmt::Write;
-    let _ = write!(
+    let _ = writeln!(
         rtf,
-        "{{\\pict{blip_tag}\\picwgoal{width_twips}\\pichgoal{height_twips}\n"
+        "{{\\pict{blip_tag}\\picwgoal{width_twips}\\pichgoal{height_twips}"
     );
 
     // Hex-encode image data with line breaks every 80 hex characters (40 bytes).
@@ -364,7 +364,12 @@ fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
 ///
 /// `align_map` maps CSS class names to their `text-align` values (e.g.
 /// `"right"` -> `"right"`) so that `<p class="right">` emits `\qr`.
-fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &HashMap<String, String>) {
+fn html_to_rtf(
+    html: &str,
+    rtf: &mut String,
+    after_break: bool,
+    align_map: &HashMap<String, String>,
+) {
     let mut pos = 0;
     let bytes = html.as_bytes();
     let len = bytes.len();
@@ -737,7 +742,10 @@ mod tests {
         let rtf = book_to_rtf(&book);
         // The title "Ch 1" should appear exactly once as a styled heading.
         let count = rtf.matches("Ch 1").count();
-        assert_eq!(count, 1, "Expected 'Ch 1' once, found {count} times in: {rtf}");
+        assert_eq!(
+            count, 1,
+            "Expected 'Ch 1' once, found {count} times in: {rtf}"
+        );
         assert!(rtf.contains("Body text"));
     }
 
@@ -1020,7 +1028,12 @@ mod tests {
     fn headings_have_space_before_and_after() {
         let mut rtf = String::new();
         let empty_map = HashMap::new();
-        html_to_rtf("<h1>H1</h1><h3>H3</h3><h6>H6</h6>", &mut rtf, false, &empty_map);
+        html_to_rtf(
+            "<h1>H1</h1><h3>H3</h3><h6>H6</h6>",
+            &mut rtf,
+            false,
+            &empty_map,
+        );
 
         // H1: sb360, sa120
         assert!(
@@ -1101,7 +1114,12 @@ mod tests {
     fn first_paragraph_after_heading_suppresses_indent() {
         let mut rtf = String::new();
         let empty_map = HashMap::new();
-        html_to_rtf("<h2>Title</h2><p>First</p><p>Second</p>", &mut rtf, false, &empty_map);
+        html_to_rtf(
+            "<h2>Title</h2><p>First</p><p>Second</p>",
+            &mut rtf,
+            false,
+            &empty_map,
+        );
 
         // The first <p> after heading should use \sb0 and no \fi (suppress_indent).
         assert!(
@@ -1317,10 +1335,7 @@ mod tests {
         );
         // The \qr paragraph should contain the text directly, without a
         // spurious \par from the leading newline.
-        assert!(
-            rtf.contains("\\qr"),
-            "Should contain \\qr, got: {rtf}"
-        );
+        assert!(rtf.contains("\\qr"), "Should contain \\qr, got: {rtf}");
         assert!(
             !rtf.contains("\\qr\\sa120\\fi360\\f0\\fs24 \\par"),
             "Leading newline should not produce \\par before text, got: {rtf}"
@@ -1335,12 +1350,7 @@ mod tests {
     fn leading_whitespace_trimmed_for_left_aligned_paragraph() {
         let mut rtf = String::new();
         let empty_map = HashMap::new();
-        html_to_rtf(
-            "<p>\n  Hello world</p>",
-            &mut rtf,
-            false,
-            &empty_map,
-        );
+        html_to_rtf("<p>\n  Hello world</p>", &mut rtf, false, &empty_map);
         // Should not start with \par from the leading newline.
         assert!(
             !rtf.contains("\\fs24 \\par"),

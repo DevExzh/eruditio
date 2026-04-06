@@ -17,15 +17,18 @@ impl Transform for ManifestTrimmer {
     }
 
     fn apply(&self, book: Book) -> Result<Book> {
-        let referenced = collect_referenced_ids(&book);
+        let ids_to_remove: Vec<String> = {
+            let referenced = collect_referenced_ids(&book);
+            book.manifest
+                .iter()
+                .filter(|item| !referenced.contains(item.id.as_str()))
+                .map(|item| item.id.clone())
+                .collect()
+        };
 
         let mut result = book;
-        let all_ids: Vec<String> = result.manifest.iter().map(|item| item.id.clone()).collect();
-
-        for id in &all_ids {
-            if !referenced.contains(id.as_str()) {
-                result.manifest.remove(id);
-            }
+        for id in &ids_to_remove {
+            result.manifest.remove(id);
         }
 
         Ok(result)
@@ -33,7 +36,7 @@ impl Transform for ManifestTrimmer {
 }
 
 /// Collects all manifest IDs that are referenced somewhere in the book.
-fn collect_referenced_ids(book: &Book) -> HashSet<String> {
+fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
     let mut ids = HashSet::new();
 
     // Build a href→id index once, replacing O(n) linear scans per lookup.
@@ -45,18 +48,18 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
 
     // Spine references.
     for spine_item in book.spine.iter() {
-        ids.insert(spine_item.manifest_id.clone());
+        ids.insert(spine_item.manifest_id.as_str());
     }
 
     // Cover image reference.
     if let Some(ref cover_id) = book.metadata.cover_image_id {
-        ids.insert(cover_id.clone());
+        ids.insert(cover_id.as_str());
     }
 
     // Guide references (resolve href → manifest ID).
     for guide_ref in &book.guide.references {
         if let Some(&id) = href_to_id.get(guide_ref.href.as_str()) {
-            ids.insert(id.to_string());
+            ids.insert(id);
         }
     }
 
@@ -64,7 +67,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
     collect_toc_refs(&book.toc, &href_to_id, &mut ids);
 
     // Content references: scan XHTML content for hrefs to other manifest items.
-    let content_ids: Vec<String> = ids.iter().cloned().collect();
+    let content_ids: Vec<&str> = ids.iter().copied().collect();
     for id in &content_ids {
         if let Some(item) = book.manifest.get(id)
             && let Some(text) = item.data.as_text()
@@ -77,16 +80,16 @@ fn collect_referenced_ids(book: &Book) -> HashSet<String> {
 }
 
 /// Recursively collects manifest IDs referenced by TOC entries.
-fn collect_toc_refs(
+fn collect_toc_refs<'a>(
     items: &[crate::domain::toc::TocItem],
-    href_to_id: &std::collections::HashMap<&str, &str>,
-    ids: &mut HashSet<String>,
+    href_to_id: &std::collections::HashMap<&str, &'a str>,
+    ids: &mut HashSet<&'a str>,
 ) {
     for toc_item in items {
         // Strip fragment from href for matching.
         let href = toc_item.href.split('#').next().unwrap_or(&toc_item.href);
         if let Some(&id) = href_to_id.get(href) {
-            ids.insert(id.to_string());
+            ids.insert(id);
         }
         collect_toc_refs(&toc_item.children, href_to_id, ids);
     }
@@ -96,12 +99,23 @@ fn collect_toc_refs(
 ///
 /// Uses byte-level scanning via `memchr` to avoid the overhead of Rust's
 /// `str::pattern` machinery on every iteration.
-fn collect_href_references(
+fn collect_href_references<'a>(
     text: &str,
-    href_to_id: &std::collections::HashMap<&str, &str>,
-    book: &Book,
-    ids: &mut HashSet<String>,
+    href_to_id: &std::collections::HashMap<&str, &'a str>,
+    book: &'a Book,
+    ids: &mut HashSet<&'a str>,
 ) {
+    // Build a filename→id suffix index for O(1) fallback lookups,
+    // replacing the O(M) linear scan per unmatched href.
+    let filename_to_id: std::collections::HashMap<&str, &str> = book
+        .manifest
+        .iter()
+        .map(|item| {
+            let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
+            (filename, item.id.as_str())
+        })
+        .collect();
+
     let bytes = text.as_bytes();
     // Attribute patterns to search for, with their byte representations.
     let patterns: &[&[u8]] = &[b"href=\"", b"src=\""];
@@ -133,11 +147,12 @@ fn collect_href_references(
                 let path = value.split('#').next().unwrap_or(value);
                 // Fast O(1) lookup by exact href match.
                 if let Some(&id) = href_to_id.get(path) {
-                    ids.insert(id.to_string());
+                    ids.insert(id);
                 } else {
-                    // Fallback: suffix match for relative paths.
-                    if let Some(item) = book.manifest.iter().find(|i| i.href.ends_with(path)) {
-                        ids.insert(item.id.clone());
+                    // Fallback: O(1) filename-based suffix match for relative paths.
+                    let search_name = path.rsplit('/').next().unwrap_or(path);
+                    if let Some(&id) = filename_to_id.get(search_name) {
+                        ids.insert(id);
                     }
                 }
                 search_from = value_start + end;

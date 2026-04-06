@@ -184,7 +184,7 @@ fn test_all_medium_formats_no_panics() {
     let entries: Vec<_> = std::fs::read_dir(&dir)
         .expect("Failed to read medium directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| !ext.is_empty()))
+        .filter(|e| e.path().extension().is_some_and(|ext| !ext.is_empty()))
         .collect();
 
     let total = entries.len();

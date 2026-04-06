@@ -189,7 +189,7 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
         };
 
         let tag = &head[abs_pos..=tag_end];
-        let tag_lower = tag.to_lowercase();
+        let tag_lower = tag.to_ascii_lowercase();
 
         if let Some(name) = extract_attribute(&tag_lower, "name")
             && let Some(content) = extract_attribute_ci(&tag_lower, tag, "content")
@@ -289,7 +289,6 @@ fn strip_outer_tags(html: &str) -> String {
 }
 
 /// Escapes text for safe use in HTML attributes and content.
-
 #[cfg(test)]
 mod tests {
     use super::*;

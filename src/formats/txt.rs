@@ -1,7 +1,7 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::html_utils::{strip_tags, unescape_basic_entities};
 use crate::formats::common::MAX_INPUT_SIZE;
+use crate::formats::common::html_utils::{strip_tags, unescape_basic_entities};
 use std::io::{Read, Write};
 
 /// TXT format reader.
@@ -17,7 +17,9 @@ impl TxtReader {
 impl FormatReader for TxtReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_string(&mut contents)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_string(&mut contents)?;
 
         let mut book = Book::new();
 
@@ -92,7 +94,7 @@ fn strip_title_prefix<'a>(text: &'a str, title: &str) -> &'a str {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .to_lowercase();
+        .to_ascii_lowercase();
     if normalised_title.is_empty() {
         return text;
     }
@@ -172,7 +174,7 @@ fn is_cover_only_chapter(chapter: &Chapter) -> bool {
         Some(ref t) => {
             let t = t.trim();
             t.is_empty() || t.eq_ignore_ascii_case("cover")
-        }
+        },
         None => true,
     };
     if !title_is_cover {
@@ -279,7 +281,10 @@ mod tests {
         let text = book_to_plain_text(&book);
         // The title "Ch 1" should appear exactly once.
         let count = text.matches("Ch 1").count();
-        assert_eq!(count, 1, "Expected 'Ch 1' once, but found {count} times in: {text}");
+        assert_eq!(
+            count, 1,
+            "Expected 'Ch 1' once, but found {count} times in: {text}"
+        );
         assert!(text.contains("Body text"));
     }
 
@@ -288,7 +293,8 @@ mod tests {
         let mut book = Book::new();
         book.add_chapter(&Chapter {
             title: Some("Test".into()),
-            content: "<p>&amp; &lt; &gt; &quot; &#8212; &#8220;curly&#8221; &#169; &#174;</p>".into(),
+            content: "<p>&amp; &lt; &gt; &quot; &#8212; &#8220;curly&#8221; &#169; &#174;</p>"
+                .into(),
             id: Some("ch1".into()),
         });
         let text = book_to_plain_text(&book);

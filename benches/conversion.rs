@@ -50,7 +50,7 @@ fn make_rtf(size: usize) -> Vec<u8> {
     let ctrl = b"\\par\\b Bold content here\\b0 \\i italic\\i0 ";
     let mut i = 0u32;
     while rtf.len() < size.saturating_sub(10) {
-        if i % 5 == 0 {
+        if i.is_multiple_of(5) {
             rtf.extend_from_slice(ctrl);
         } else {
             rtf.extend_from_slice(text);
@@ -278,45 +278,45 @@ fn bench_pipeline_conversion(c: &mut Criterion) {
     }
 
     // FB2 -> EPUB
-    if let Some(fb2_data) = load_asset("fb2/alice_wonderland.fb2") {
-        if try_convert(&fb2_data, Format::Fb2, Format::Epub, &opts_all) {
-            group.bench_function("fb2_to_epub/1m", |b| {
-                b.iter(|| {
-                    let mut input = Cursor::new(black_box(fb2_data.as_slice()));
-                    let mut output = Vec::with_capacity(fb2_data.len());
-                    pipeline
-                        .convert(
-                            Format::Fb2,
-                            Format::Epub,
-                            &mut input,
-                            &mut output,
-                            &opts_all,
-                        )
-                        .unwrap()
-                })
-            });
-        }
+    if let Some(fb2_data) = load_asset("fb2/alice_wonderland.fb2")
+        && try_convert(&fb2_data, Format::Fb2, Format::Epub, &opts_all)
+    {
+        group.bench_function("fb2_to_epub/1m", |b| {
+            b.iter(|| {
+                let mut input = Cursor::new(black_box(fb2_data.as_slice()));
+                let mut output = Vec::with_capacity(fb2_data.len());
+                pipeline
+                    .convert(
+                        Format::Fb2,
+                        Format::Epub,
+                        &mut input,
+                        &mut output,
+                        &opts_all,
+                    )
+                    .unwrap()
+            })
+        });
     }
 
     // EPUB -> FB2
-    if let Some(epub_data) = load_asset("epub/pg-alice-in-wonderland.epub") {
-        if try_convert(&epub_data, Format::Epub, Format::Fb2, &opts_all) {
-            group.bench_function("epub_to_fb2/135k", |b| {
-                b.iter(|| {
-                    let mut input = Cursor::new(black_box(epub_data.as_slice()));
-                    let mut output = Vec::with_capacity(epub_data.len());
-                    pipeline
-                        .convert(
-                            Format::Epub,
-                            Format::Fb2,
-                            &mut input,
-                            &mut output,
-                            &opts_all,
-                        )
-                        .unwrap()
-                })
-            });
-        }
+    if let Some(epub_data) = load_asset("epub/pg-alice-in-wonderland.epub")
+        && try_convert(&epub_data, Format::Epub, Format::Fb2, &opts_all)
+    {
+        group.bench_function("epub_to_fb2/135k", |b| {
+            b.iter(|| {
+                let mut input = Cursor::new(black_box(epub_data.as_slice()));
+                let mut output = Vec::with_capacity(epub_data.len());
+                pipeline
+                    .convert(
+                        Format::Epub,
+                        Format::Fb2,
+                        &mut input,
+                        &mut output,
+                        &opts_all,
+                    )
+                    .unwrap()
+            })
+        });
     }
 
     // RTF -> EPUB (synthetic)
@@ -360,26 +360,26 @@ fn bench_pipeline_read(c: &mut Criterion) {
         pipeline.read(fmt, &mut cursor, opts).is_ok()
     };
 
-    if let Some(epub_data) = load_asset("epub/pg-alice-in-wonderland.epub") {
-        if try_read(&epub_data, Format::Epub, &opts_all) {
-            group.bench_function("epub/135k_all_transforms", |b| {
-                b.iter(|| {
-                    let mut cursor = Cursor::new(black_box(epub_data.as_slice()));
-                    pipeline.read(Format::Epub, &mut cursor, &opts_all).unwrap()
-                })
-            });
-        }
+    if let Some(epub_data) = load_asset("epub/pg-alice-in-wonderland.epub")
+        && try_read(&epub_data, Format::Epub, &opts_all)
+    {
+        group.bench_function("epub/135k_all_transforms", |b| {
+            b.iter(|| {
+                let mut cursor = Cursor::new(black_box(epub_data.as_slice()));
+                pipeline.read(Format::Epub, &mut cursor, &opts_all).unwrap()
+            })
+        });
     }
 
-    if let Some(html_data) = load_asset("html/emma.html") {
-        if try_read(&html_data, Format::Html, &opts_all) {
-            group.bench_function("html/941k_all_transforms", |b| {
-                b.iter(|| {
-                    let mut cursor = Cursor::new(black_box(html_data.as_slice()));
-                    pipeline.read(Format::Html, &mut cursor, &opts_all).unwrap()
-                })
-            });
-        }
+    if let Some(html_data) = load_asset("html/emma.html")
+        && try_read(&html_data, Format::Html, &opts_all)
+    {
+        group.bench_function("html/941k_all_transforms", |b| {
+            b.iter(|| {
+                let mut cursor = Cursor::new(black_box(html_data.as_slice()));
+                pipeline.read(Format::Html, &mut cursor, &opts_all).unwrap()
+            })
+        });
     }
 
     group.finish();

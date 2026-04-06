@@ -280,6 +280,7 @@ pub(crate) fn eq_ignore_ascii_case_scalar(a: &[u8], b: &[u8]) -> bool {
 ///
 /// Selects the best available SIMD implementation at runtime.
 #[allow(unreachable_code)]
+#[inline]
 pub(crate) fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

@@ -299,6 +299,7 @@ pub(crate) fn find_short_pattern_scalar(haystack: &[u8], needle: &[u8]) -> Optio
 ///
 /// Selects the best available SIMD implementation at runtime.
 #[allow(unreachable_code)]
+#[inline]
 pub(crate) fn find_short_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     debug_assert!(
         needle.len() >= 2 && needle.len() <= 4,

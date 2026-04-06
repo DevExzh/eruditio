@@ -32,9 +32,7 @@ fn test_tcr_parsing() {
     data.push(b'd');
 
     // Fill remaining 248 entries with empty strings
-    for _ in 8..256 {
-        data.push(0);
-    }
+    data.extend(std::iter::repeat_n(0u8, 248));
 
     // Encoded text: "Hello World"
     data.extend_from_slice(&[0, 1, 2, 2, 3, 4, 5, 3, 6, 2, 7]);

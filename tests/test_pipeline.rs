@@ -250,9 +250,11 @@ fn conversion_with_metadata_override() {
         .expect("write EPUB");
 
     // Convert with metadata overrides.
-    let mut overrides = Metadata::default();
-    overrides.title = Some("Overridden Title".into());
-    overrides.authors = vec!["New Author".into()];
+    let overrides = Metadata {
+        title: Some("Overridden Title".into()),
+        authors: vec!["New Author".into()],
+        ..Default::default()
+    };
 
     let options = ConversionOptions::all().with_metadata(overrides);
 

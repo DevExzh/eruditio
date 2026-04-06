@@ -706,7 +706,6 @@ fn ensure_paragraph(html: &mut String, in_paragraph: &mut bool) {
 }
 
 /// Escapes text for HTML output.
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -239,7 +239,7 @@ mod tests {
         );
         // Python: mssha1.new(b'x' * 66).digest().hex()
         assert_eq!(
-            hex(&mssha1_digest(&vec![b'x'; 66])),
+            hex(&mssha1_digest(&[b'x'; 66])),
             "c2f5037436691955c5724b56a2a806a087c27add"
         );
     }

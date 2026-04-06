@@ -21,7 +21,9 @@ impl CbzReader {
 impl FormatReader for CbzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_end(&mut buffer)?;
         let cursor = std::io::Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)?;

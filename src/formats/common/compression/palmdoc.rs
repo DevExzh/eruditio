@@ -52,34 +52,63 @@ const NO_ENTRY: u16 = 0xFFFF;
 /// `head[hash]` stores the most recent position with that hash value.
 /// `prev[pos % RECORD_SIZE]` chains earlier positions with the same hash.
 ///
-/// This struct is 16 KB. To avoid placing it on the stack, the
+/// Uses a generation counter to avoid 16 KB `memset` on every `reset()`.
+/// `head_gen[h]` records the generation in which `head[h]` was last written;
+/// stale entries (generation mismatch) are treated as `NO_ENTRY`.  `prev[]`
+/// entries are implicitly invalidated because they are only reachable through
+/// a current-generation `head[]` entry.
+///
+/// This struct is ~24 KB. To avoid placing it on the stack, the
 /// [`PalmDocCompressor`] wraps it in a `Box` for heap allocation and reuse.
 struct HashChain {
     head: [u16; HASH_SIZE],
     prev: [u16; RECORD_SIZE],
+    head_gen: [u16; HASH_SIZE],
+    generation: u16,
 }
 
 impl HashChain {
     /// Resets the hash chain for reuse without reallocating.
+    ///
+    /// In the common case this is O(1): just increment the generation counter.
+    /// A full memset only happens on the rare u16 wrap-around (every 65 535
+    /// records ≈ 256 MB of uncompressed text).
     fn reset(&mut self) {
-        self.head.fill(NO_ENTRY);
-        self.prev.fill(NO_ENTRY);
+        let next = self.generation.wrapping_add(1);
+        if next == 0 {
+            // Wrapped: all head_gen entries are indistinguishable from the new
+            // generation (0), so we must do a real reset.
+            self.head.fill(NO_ENTRY);
+            self.prev.fill(NO_ENTRY);
+            self.head_gen.fill(0);
+            self.generation = 1;
+        } else {
+            self.generation = next;
+        }
     }
 
     /// Creates a new, heap-allocated hash chain.
     fn new_boxed() -> Box<Self> {
-        let mut chain = Box::new(Self {
-            head: [0u16; HASH_SIZE],
-            prev: [0u16; RECORD_SIZE],
-        });
-        chain.reset();
-        chain
+        // head_gen is 0 everywhere but generation is 1 → all entries start stale.
+        Box::new(Self {
+            head: [NO_ENTRY; HASH_SIZE],
+            prev: [NO_ENTRY; RECORD_SIZE],
+            head_gen: [0u16; HASH_SIZE],
+            generation: 1,
+        })
     }
 
     /// Computes a fast 12-bit hash of three consecutive bytes.
+    ///
+    /// Uses a multiplicative hash for better bucket distribution than
+    /// XOR-shift, reducing chain lengths for common English trigrams.
     #[inline]
     fn hash3(data: &[u8], pos: usize) -> usize {
-        let h = ((data[pos] as u32) << 10) ^ ((data[pos + 1] as u32) << 5) ^ (data[pos + 2] as u32);
+        let h = (data[pos] as u32)
+            .wrapping_mul(1117)
+            .wrapping_add(data[pos + 1] as u32)
+            .wrapping_mul(1117)
+            .wrapping_add(data[pos + 2] as u32);
         (h as usize) & (HASH_SIZE - 1)
     }
 
@@ -88,8 +117,15 @@ impl HashChain {
     fn insert(&mut self, data: &[u8], pos: usize) {
         if pos + 2 < data.len() {
             let h = Self::hash3(data, pos);
-            self.prev[pos] = self.head[h];
+            // Only chain to the previous head if it belongs to the current
+            // generation; otherwise start a fresh chain.
+            self.prev[pos] = if self.head_gen[h] == self.generation {
+                self.head[h]
+            } else {
+                NO_ENTRY
+            };
             self.head[h] = pos as u16;
+            self.head_gen[h] = self.generation;
         }
     }
 
@@ -104,6 +140,10 @@ impl HashChain {
         }
 
         let h = Self::hash3(data, pos);
+        // Stale head entry → no matches in the current generation.
+        if self.head_gen[h] != self.generation {
+            return None;
+        }
         let mut candidate = self.head[h];
         let mut best_distance: usize = 0;
         let mut best_length: usize = 0;
@@ -120,11 +160,14 @@ impl HashChain {
                 continue;
             }
 
-            let length = crate::formats::common::intrinsics::match_length::common_prefix_length(
-                &data[cand..],
-                &data[pos..],
-                max_len,
-            );
+            // Inline scalar match: MAX_MATCH=10 makes SIMD overhead
+            // (64-byte load + movemask) exceed a simple 10-iteration loop.
+            let a = &data[cand..];
+            let b = &data[pos..];
+            let mut length = 0;
+            while length < max_len && a[length] == b[length] {
+                length += 1;
+            }
 
             if length >= MIN_MATCH && length > best_length {
                 best_distance = pos - cand;
@@ -171,12 +214,12 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         // This is the overwhelmingly common case for text-heavy ebook content
         // (plain ASCII letters, digits, punctuation). We bulk-copy entire runs
         // instead of pushing one byte at a time.
-        if c >= 0x09 && c <= 0x7F {
+        if (0x09..=0x7F).contains(&c) {
             let run_start = i;
             i += 1;
             while i < len {
                 let b = input[i];
-                if b >= 0x09 && b <= 0x7F {
+                if (0x09..=0x7F).contains(&b) {
                     i += 1;
                 } else {
                     break;
@@ -321,9 +364,9 @@ pub fn compress(input: &[u8]) -> Vec<u8> {
 // Reusable compressor (avoids 16 KB HashChain re-init per record)
 // ---------------------------------------------------------------------------
 
-/// A reusable PalmDoc compressor that amortises the 16 KB `HashChain`
-/// initialisation cost across multiple records.  For a typical MOBI book
-/// with 50 text records, this eliminates 50 x 16 KB = 800 KB of memset.
+/// A reusable PalmDoc compressor that amortises the `HashChain` heap
+/// allocation across multiple records.  The hash chain uses a generation
+/// counter so that `reset()` is O(1) — no 16 KB memset per record.
 ///
 /// The `HashChain` is heap-allocated via `Box` to avoid placing 16 KB on
 /// the stack.
@@ -372,10 +415,13 @@ impl PalmDocCompressor {
                 && input_len - i >= MIN_MATCH
                 && let Some((distance, length)) = self.chain.find_best_match(input, i)
             {
-                // Update the hash chain for every position consumed by this match.
-                for p in i..i + length {
+                // Update hash chain at every other position + the last position.
+                // Halves insert overhead for MAX_MATCH=10 with minimal
+                // compression ratio impact.
+                for p in (i..i + length - 1).step_by(2) {
                     self.chain.insert(input, p);
                 }
+                self.chain.insert(input, i + length - 1);
 
                 let compound = ((distance << 3) | (length - 3)) as u16;
                 output.push(0x80 | ((compound >> 8) as u8));
@@ -412,10 +458,7 @@ impl PalmDocCompressor {
                 && count < 8
                 && !(input[i] == 0x00 || (0x09..=0x7F).contains(&input[i]))
             {
-                if input[i] == b' '
-                    && i + 1 < input_len
-                    && (0x40..=0x7F).contains(&input[i + 1])
-                {
+                if input[i] == b' ' && i + 1 < input_len && (0x40..=0x7F).contains(&input[i + 1]) {
                     break;
                 }
                 self.chain.insert(input, i);

@@ -9,15 +9,15 @@ use crate::formats::common::compression::palmdoc;
 use crate::formats::common::html_utils::strip_tags;
 use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_be};
 
-use image::imageops::FilterType;
 use image::ImageEncoder;
+use image::imageops::FilterType;
 
 use super::exth::{
     self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_CREATOR_BUILD,
     EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR, EXTH_CREATOR_SOFTWARE, EXTH_DESCRIPTION,
-    EXTH_HAS_FAKE_COVER, EXTH_ISBN, EXTH_KF8_COVER_URI, EXTH_LANGUAGE,
-    EXTH_OVERRIDE_KINDLE_FONTS, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS,
-    EXTH_START_READING, EXTH_SUBJECT, EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
+    EXTH_HAS_FAKE_COVER, EXTH_ISBN, EXTH_KF8_COVER_URI, EXTH_LANGUAGE, EXTH_OVERRIDE_KINDLE_FONTS,
+    EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_START_READING, EXTH_SUBJECT,
+    EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
 };
 use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 
@@ -148,8 +148,7 @@ fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     // Remaining header fields (56-191) are zeros.
 
     // Write TAGX section after header.
-    indx_header[INDX_HEADER_LEN..INDX_HEADER_LEN + tagx_data.len()]
-        .copy_from_slice(&tagx_data);
+    indx_header[INDX_HEADER_LEN..INDX_HEADER_LEN + tagx_data.len()].copy_from_slice(&tagx_data);
 
     // Write IDXT stub after TAGX.
     let idxt_start = INDX_HEADER_LEN + tagx_data.len();
@@ -215,8 +214,7 @@ fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     // Remaining header fields are zeros.
 
     // Write entry data after header.
-    indx_data[INDX_HEADER_LEN..INDX_HEADER_LEN + entry_data.len()]
-        .copy_from_slice(&entry_data);
+    indx_data[INDX_HEADER_LEN..INDX_HEADER_LEN + entry_data.len()].copy_from_slice(&entry_data);
 
     // Write IDXT section.
     indx_data[idxt_offset..idxt_offset + data_idxt.len()].copy_from_slice(&data_idxt);
@@ -242,7 +240,7 @@ fn build_tagx_section() -> Vec<u8> {
     tagx.extend_from_slice(&[1, 1, 0x01, 0]); // Tag 1: position
     tagx.extend_from_slice(&[2, 1, 0x02, 0]); // Tag 2: length
     tagx.extend_from_slice(&[3, 1, 0x04, 0]); // Tag 3: label offset
-    tagx.extend_from_slice(&[0, 0, 0, 1]);    // End-of-table marker
+    tagx.extend_from_slice(&[0, 0, 0, 1]); // End-of-table marker
     tagx
 }
 
@@ -285,12 +283,15 @@ fn generate_thumbnail(image_data: &[u8]) -> Option<Vec<u8>> {
 
     let rgb = resized.to_rgb8();
     let mut jpeg_buf = std::io::Cursor::new(Vec::new());
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-        &mut jpeg_buf,
-        THUMBNAIL_JPEG_QUALITY,
-    );
+    let encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_buf, THUMBNAIL_JPEG_QUALITY);
     encoder
-        .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+        .write_image(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
         .ok()?;
     Some(jpeg_buf.into_inner())
 }
@@ -421,8 +422,8 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
 
     // Calculate total number of records and pre-compute total output size.
     // record0 + text + images + thumbnail + INDX_header + INDX_data + CNCX + FLIS + FCIS + EOF
-    let num_records = 1 + text_record_count + image_count + thumbnail_record_count
-        + ncx_record_count + 3;
+    let num_records =
+        1 + text_record_count + image_count + thumbnail_record_count + ncx_record_count + 3;
     let header_table_size = 78 + num_records * 8 + 2;
 
     // Calculate record offsets and total data size in a single pass.
@@ -530,15 +531,12 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
     let num_records = (text.len() + RECORD_SIZE - 1) / RECORD_SIZE.max(1);
     let mut records = Vec::with_capacity(num_records.max(1));
     let mut compressor = palmdoc::PalmDocCompressor::new();
-    let mut buf = Vec::with_capacity(RECORD_SIZE);
     let mut offset = 0;
 
     while offset < text.len() {
         let end = (offset + RECORD_SIZE).min(text.len());
         let chunk = &text[offset..end];
-        buf.clear();
-        compressor.compress_record_into(chunk, &mut buf);
-        records.push(buf.clone());
+        records.push(compressor.compress_record(chunk));
         offset = end;
     }
 
@@ -726,10 +724,7 @@ fn build_metadata_exth(
     }
 
     // Publication date (ISO 8601 / RFC 3339).
-    let date_string = book
-        .metadata
-        .publication_date
-        .map(|d| d.to_rfc3339());
+    let date_string = book.metadata.publication_date.map(|d| d.to_rfc3339());
     if let Some(ref ds) = date_string {
         refs.push((EXTH_PUBLISHED_DATE, ds.as_bytes()));
     }
@@ -804,7 +799,11 @@ const FILEPOS_PLACEHOLDER: &str = "0000000000";
 /// and INDX entries).
 fn flatten_toc_tree(items: &[crate::domain::toc::TocItem]) -> Vec<(usize, String, String)> {
     let mut result = Vec::new();
-    fn walk(items: &[crate::domain::toc::TocItem], depth: usize, out: &mut Vec<(usize, String, String)>) {
+    fn walk(
+        items: &[crate::domain::toc::TocItem],
+        depth: usize,
+        out: &mut Vec<(usize, String, String)>,
+    ) {
         for item in items {
             out.push((depth, item.title.clone(), item.href.clone()));
             walk(&item.children, depth + 1, out);
@@ -942,12 +941,13 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 
     // Flatten the FULL TOC tree to get all entries at all depths.
     let all_toc_entries = flatten_toc_tree(toc);
-    let has_toc_entries = !all_toc_entries.is_empty()
-        || chapter_info.iter().any(|(_, t)| t.is_some());
+    let has_toc_entries =
+        !all_toc_entries.is_empty() || chapter_info.iter().any(|(_, t)| t.is_some());
 
     // Build a map: spine manifest href -> spine index in chapter_info.
     // This lets us resolve TOC entry hrefs to the correct spine item.
-    let mut href_to_chapter_info_idx: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut href_to_chapter_info_idx: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for (info_idx, (spine_idx, _)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
         if let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) {
@@ -957,8 +957,10 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 
     // Group TOC entries by their base href (spine item) to identify which
     // fragment IDs need pagebreaks within each chapter.
-    let mut fragments_by_chapter: std::collections::HashMap<String, std::collections::HashSet<String>> =
-        std::collections::HashMap::new();
+    let mut fragments_by_chapter: std::collections::HashMap<
+        String,
+        std::collections::HashSet<String>,
+    > = std::collections::HashMap::new();
     for (_depth, _title, href) in &all_toc_entries {
         if let Some(hash_pos) = href.find('#') {
             let base = &href[..hash_pos];
@@ -981,7 +983,8 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
             Some(item.data.as_text()?.len() + 200)
         })
         .sum::<usize>()
-        + 2048 + all_toc_entries.len() * 80; // extra room for TOC + guide + sub-entries
+        + 2048
+        + all_toc_entries.len() * 80; // extra room for TOC + guide + sub-entries
     let mut html = String::with_capacity(estimated.max(4096));
 
     // --- <head> with guide ---
@@ -1037,7 +1040,8 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     let mut first_chapter_offset: Option<usize> = None;
 
     // Track fragment offsets within serialized content: "base_href#frag" -> byte_offset.
-    let mut fragment_offsets: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut fragment_offsets: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     for (content_idx, (spine_idx, ch_title)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
@@ -1066,9 +1070,12 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
             .as_deref()
             .map(|c| {
                 let trimmed = c.trim_start();
-                trimmed.starts_with("<h1") || trimmed.starts_with("<h2")
-                    || trimmed.starts_with("<h3") || trimmed.starts_with("<H1")
-                    || trimmed.starts_with("<H2") || trimmed.starts_with("<H3")
+                trimmed.starts_with("<h1")
+                    || trimmed.starts_with("<h2")
+                    || trimmed.starts_with("<h3")
+                    || trimmed.starts_with("<H1")
+                    || trimmed.starts_with("<H2")
+                    || trimmed.starts_with("<H3")
             })
             .unwrap_or(false);
 
@@ -1236,7 +1243,24 @@ fn push_html_escaped(buf: &mut String, text: &str) {
 /// body content remains. This removes XML processing instructions, DOCTYPE
 /// declarations, `<html>`, `<head>` (with contents), and `<body>` tags that
 /// are present in EPUB XHTML source files.
+///
+/// Uses a single-pass approach: find the `<body>` content region and extract
+/// it, rather than repeatedly calling `replace_range` which shifts bytes.
 fn strip_xhtml_wrapper(content: &str) -> String {
+    // Find the end of the <body ...> opening tag.
+    if let Some(body_start) = content.find("<body")
+        && let Some(gt) = content[body_start..].find('>')
+    {
+        let inner_start = body_start + gt + 1;
+        // Find the closing </body> tag.
+        let inner_end = content[inner_start..]
+            .find("</body>")
+            .map(|pos| inner_start + pos)
+            .unwrap_or(content.len());
+        return content[inner_start..inner_end].to_string();
+    }
+
+    // No <body> found — strip individual wrapper elements as fallback.
     let mut s = content.to_string();
 
     // Remove <?xml ...?> processing instructions.
@@ -1249,31 +1273,13 @@ fn strip_xhtml_wrapper(content: &str) -> String {
     }
 
     // Remove <!DOCTYPE ...> declarations.
-    while let Some(start) = s.find("<!DOCTYPE") {
-        if let Some(end) = s[start..].find('>') {
-            s.replace_range(start..start + end + 1, "");
-        } else {
-            break;
-        }
-    }
-    // Also handle lowercase variant.
-    while let Some(start) = s.find("<!doctype") {
-        if let Some(end) = s[start..].find('>') {
-            s.replace_range(start..start + end + 1, "");
-        } else {
-            break;
-        }
-    }
-
-    // Remove <head>...</head> blocks (including contents).
-    while let Some(start) = s.find("<head") {
-        if let Some(end) = s[start..].find("</head>") {
-            s.replace_range(start..start + end + 7, "");
-        } else if let Some(end) = s[start..].find("/>") {
-            // Self-closing <head/>
-            s.replace_range(start..start + end + 2, "");
-        } else {
-            break;
+    for pat in &["<!DOCTYPE", "<!doctype"] {
+        while let Some(start) = s.find(pat) {
+            if let Some(end) = s[start..].find('>') {
+                s.replace_range(start..start + end + 1, "");
+            } else {
+                break;
+            }
         }
     }
 
@@ -1289,18 +1295,6 @@ fn strip_xhtml_wrapper(content: &str) -> String {
         s.replace_range(start..start + 7, "");
     }
 
-    // Remove <body ...> and </body> tags.
-    while let Some(start) = s.find("<body") {
-        if let Some(end) = s[start..].find('>') {
-            s.replace_range(start..start + end + 1, "");
-        } else {
-            break;
-        }
-    }
-    while let Some(start) = s.find("</body>") {
-        s.replace_range(start..start + 7, "");
-    }
-
     s
 }
 
@@ -1310,9 +1304,7 @@ fn truncate_pdb_name(title: &str) -> String {
     // Fast path: check if title is already valid (all ASCII graphic or space, len <= 31).
     if title.len() <= 31
         && !title.is_empty()
-        && title
-            .bytes()
-            .all(|b| b.is_ascii_graphic() || b == b' ')
+        && title.bytes().all(|b| b.is_ascii_graphic() || b == b' ')
     {
         return title.replace(' ', "_");
     }
@@ -1421,7 +1413,10 @@ mod tests {
 
     #[test]
     fn truncate_pdb_name_replaces_spaces_with_underscores() {
-        assert_eq!(truncate_pdb_name("Alice in Wonderland"), "Alice_in_Wonderland");
+        assert_eq!(
+            truncate_pdb_name("Alice in Wonderland"),
+            "Alice_in_Wonderland"
+        );
         assert_eq!(truncate_pdb_name("A B"), "A_B");
     }
 
@@ -1437,16 +1432,34 @@ mod tests {
 </body>
 </html>"#;
         let result = strip_xhtml_wrapper(input);
-        assert!(!result.contains("<?xml"), "XML declaration should be stripped");
+        assert!(
+            !result.contains("<?xml"),
+            "XML declaration should be stripped"
+        );
         assert!(!result.contains("<!DOCTYPE"), "DOCTYPE should be stripped");
         assert!(!result.contains("<html"), "html tag should be stripped");
         assert!(!result.contains("<head"), "head tag should be stripped");
-        assert!(!result.contains("<title>"), "title should be stripped with head");
+        assert!(
+            !result.contains("<title>"),
+            "title should be stripped with head"
+        );
         assert!(!result.contains("<body"), "body tag should be stripped");
-        assert!(!result.contains("</html>"), "closing html should be stripped");
-        assert!(!result.contains("</body>"), "closing body should be stripped");
-        assert!(result.contains("<h1>Chapter 1</h1>"), "content should remain");
-        assert!(result.contains("<p>Hello world.</p>"), "content should remain");
+        assert!(
+            !result.contains("</html>"),
+            "closing html should be stripped"
+        );
+        assert!(
+            !result.contains("</body>"),
+            "closing body should be stripped"
+        );
+        assert!(
+            result.contains("<h1>Chapter 1</h1>"),
+            "content should remain"
+        );
+        assert!(
+            result.contains("<p>Hello world.</p>"),
+            "content should remain"
+        );
     }
 
     #[test]
@@ -1513,7 +1526,7 @@ mod tests {
 
     #[test]
     fn cover_image_writes_exth_201_and_202() {
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::exth::{EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -1549,12 +1562,15 @@ mod tests {
         let thumb_offset = exth
             .get_u32(EXTH_THUMB_OFFSET)
             .expect("EXTH 202 (thumbnail offset) should be present");
-        assert_eq!(thumb_offset, 1, "thumbnail offset should be 1 (separate thumbnail)");
+        assert_eq!(
+            thumb_offset, 1,
+            "thumbnail offset should be 1 (separate thumbnail)"
+        );
     }
 
     #[test]
     fn cover_image_undecodable_falls_back_to_thumb_offset_zero() {
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::exth::{EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -1611,11 +1627,18 @@ mod tests {
         // Record layout: [record0, text..., cover, thumbnail, INDX_hdr, INDX_data, CNCX, FLIS, FCIS, EOF]
         // With 1 text record: record0=0, text=1, cover=2, thumbnail=3, INDX_hdr=4, INDX_data=5, CNCX=6, FLIS=7, FCIS=8, EOF=9
         let num_records = pdb.record_count();
-        assert!(num_records >= 10, "should have at least 10 records (record0 + text + cover + thumb + INDX*3 + FLIS + FCIS + EOF), got {num_records}");
+        assert!(
+            num_records >= 10,
+            "should have at least 10 records (record0 + text + cover + thumb + INDX*3 + FLIS + FCIS + EOF), got {num_records}"
+        );
 
         // The cover is at index 2 (after record0 and 1 text record).
         let cover_record = pdb.record_data(2).unwrap();
-        assert_eq!(cover_record.len(), cover_size, "cover record should match original cover data");
+        assert_eq!(
+            cover_record.len(),
+            cover_size,
+            "cover record should match original cover data"
+        );
 
         // The thumbnail is at index 3.
         let thumb_record = pdb.record_data(3).unwrap();
@@ -1627,12 +1650,25 @@ mod tests {
         );
 
         // Verify the thumbnail is a valid JPEG (starts with FFD8).
-        assert_eq!(&thumb_record[..2], &[0xFF, 0xD8], "thumbnail should be a valid JPEG");
+        assert_eq!(
+            &thumb_record[..2],
+            &[0xFF, 0xD8],
+            "thumbnail should be a valid JPEG"
+        );
 
         // Verify thumbnail dimensions are within bounds.
-        let thumb_img = image::load_from_memory(thumb_record).expect("thumbnail should be decodable");
-        assert!(thumb_img.width() <= 180, "thumbnail width {} should be <= 180", thumb_img.width());
-        assert!(thumb_img.height() <= 240, "thumbnail height {} should be <= 240", thumb_img.height());
+        let thumb_img =
+            image::load_from_memory(thumb_record).expect("thumbnail should be decodable");
+        assert!(
+            thumb_img.width() <= 180,
+            "thumbnail width {} should be <= 180",
+            thumb_img.width()
+        );
+        assert!(
+            thumb_img.height() <= 240,
+            "thumbnail height {} should be <= 240",
+            thumb_img.height()
+        );
     }
 
     /// Creates a test JPEG image of the given dimensions using the image crate.
@@ -1658,7 +1694,7 @@ mod tests {
     fn thumbnail_appended_after_all_images_no_index_shift() {
         // Regression test: thumbnail must be appended AFTER all original images
         // so that recindex references in the HTML are not shifted.
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::exth::{EXTH_THUMB_OFFSET, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -1682,27 +1718,41 @@ mod tests {
         let pdb = PdbFile::parse(mobi_data).unwrap();
 
         // Record layout: [record0, text, img*3, thumbnail, INDX_hdr, INDX_data, CNCX, FLIS, FCIS, EOF] = 12 records
-        assert_eq!(pdb.record_count(), 12, "expected 12 records (1+1+3+1+3+3), got {}", pdb.record_count());
+        assert_eq!(
+            pdb.record_count(),
+            12,
+            "expected 12 records (1+1+3+1+3+3), got {}",
+            pdb.record_count()
+        );
 
         // The thumbnail is the 4th image record (index 5 = record0 + 1 text + 3 images).
         // It's a JPEG and should be smaller than the large cover.
         let thumb_record = pdb.record_data(5).unwrap();
-        assert_eq!(&thumb_record[..2], &[0xFF, 0xD8], "thumbnail should be a valid JPEG");
+        assert_eq!(
+            &thumb_record[..2],
+            &[0xFF, 0xD8],
+            "thumbnail should be a valid JPEG"
+        );
 
         // EXTH 202 should point to index 3 (= number of original images, 0-based from first image).
         let record0 = pdb.record_data(0).unwrap();
         let mobi_hdr = MobiHeader::parse(record0).unwrap();
         let exth_start = mobi_hdr.exth_offset();
         let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
-        let thumb_offset = exth.get_u32(EXTH_THUMB_OFFSET).expect("EXTH 202 should be present");
-        assert_eq!(thumb_offset, 3, "thumbnail offset should be 3 (after 3 original images)");
+        let thumb_offset = exth
+            .get_u32(EXTH_THUMB_OFFSET)
+            .expect("EXTH 202 should be present");
+        assert_eq!(
+            thumb_offset, 3,
+            "thumbnail offset should be 3 (after 3 original images)"
+        );
     }
 
     #[test]
     fn small_cover_skips_thumbnail_generation() {
         // If the cover is already within 180x240 bounds, no separate thumbnail
         // should be generated (avoids lossy re-encoding).
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::exth::{EXTH_THUMB_OFFSET, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -1721,20 +1771,29 @@ mod tests {
         let pdb = PdbFile::parse(mobi_data).unwrap();
 
         // Record layout without thumbnail: [record0, text, cover, INDX_hdr, INDX_data, CNCX, FLIS, FCIS, EOF] = 9 records
-        assert_eq!(pdb.record_count(), 9, "no thumbnail record should be generated for small cover");
+        assert_eq!(
+            pdb.record_count(),
+            9,
+            "no thumbnail record should be generated for small cover"
+        );
 
         // EXTH 202 should fall back to 0 (same as cover).
         let record0 = pdb.record_data(0).unwrap();
         let mobi_hdr = MobiHeader::parse(record0).unwrap();
         let exth_start = mobi_hdr.exth_offset();
         let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
-        let thumb_offset = exth.get_u32(EXTH_THUMB_OFFSET).expect("EXTH 202 should be present");
-        assert_eq!(thumb_offset, 0, "thumbnail offset should be 0 (no separate thumbnail)");
+        let thumb_offset = exth
+            .get_u32(EXTH_THUMB_OFFSET)
+            .expect("EXTH 202 should be present");
+        assert_eq!(
+            thumb_offset, 0,
+            "thumbnail offset should be 0 (no separate thumbnail)"
+        );
     }
 
     #[test]
     fn no_cover_omits_exth_201_and_202() {
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET};
+        use crate::formats::mobi::exth::{EXTH_COVER_OFFSET, EXTH_THUMB_OFFSET, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -1786,7 +1845,10 @@ mod tests {
         let mobi_hdr = MobiHeader::parse(record0).unwrap();
 
         // The unique_id should NOT be the old static 0xCAFE sentinel.
-        assert_ne!(mobi_hdr.unique_id, 0x0000_CAFE, "unique_id should not be static 0xCAFE");
+        assert_ne!(
+            mobi_hdr.unique_id, 0x0000_CAFE,
+            "unique_id should not be static 0xCAFE"
+        );
         assert_ne!(mobi_hdr.unique_id, 0, "unique_id should be non-zero");
     }
 
@@ -1806,9 +1868,21 @@ mod tests {
 
         // PalmDB timestamps at offsets 36-43 may differ between calls,
         // so compare everything except those 8 bytes.
-        assert_eq!(data1.len(), data2.len(), "same book should produce same-length MOBI output");
-        assert_eq!(&data1[..36], &data2[..36], "header before timestamps should match");
-        assert_eq!(&data1[44..], &data2[44..], "data after timestamps should match");
+        assert_eq!(
+            data1.len(),
+            data2.len(),
+            "same book should produce same-length MOBI output"
+        );
+        assert_eq!(
+            &data1[..36],
+            &data2[..36],
+            "header before timestamps should match"
+        );
+        assert_eq!(
+            &data1[44..],
+            &data2[44..],
+            "data after timestamps should match"
+        );
     }
 
     #[test]
@@ -1834,7 +1908,10 @@ mod tests {
         let mobi_hdr = MobiHeader::parse(record0).unwrap();
 
         // first_content_record should be 1 (first text record).
-        assert_eq!(mobi_hdr.first_content_record, 1, "first content record should be 1");
+        assert_eq!(
+            mobi_hdr.first_content_record, 1,
+            "first content record should be 1"
+        );
 
         // last_content_record should equal the text record count.
         // For a small book, there should be exactly 1 text record.
@@ -1876,11 +1953,19 @@ mod tests {
 
         // Verify FLIS record contains FLIS magic.
         let flis_record = pdb.record_data(flis_num as usize).unwrap();
-        assert_eq!(&flis_record[0..4], b"FLIS", "FLIS record should start with FLIS magic");
+        assert_eq!(
+            &flis_record[0..4],
+            b"FLIS",
+            "FLIS record should start with FLIS magic"
+        );
 
         // Verify FCIS record contains FCIS magic.
         let fcis_record = pdb.record_data(fcis_num as usize).unwrap();
-        assert_eq!(&fcis_record[0..4], b"FCIS", "FCIS record should start with FCIS magic");
+        assert_eq!(
+            &fcis_record[0..4],
+            b"FCIS",
+            "FCIS record should start with FCIS magic"
+        );
     }
 
     #[test]
@@ -1927,14 +2012,17 @@ mod tests {
         let record0 = pdb.record_data(0).unwrap();
         let mobi_hdr = MobiHeader::parse(record0).unwrap();
 
-        assert_eq!(mobi_hdr.header_length, 232, "MOBI header length should be 232");
+        assert_eq!(
+            mobi_hdr.header_length, 232,
+            "MOBI header length should be 232"
+        );
     }
 
     #[test]
     fn exth_has_creator_software_records() {
         use crate::formats::mobi::exth::{
-            ExthHeader, EXTH_CREATOR_BUILD, EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR,
-            EXTH_CREATOR_SOFTWARE,
+            EXTH_CREATOR_BUILD, EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR, EXTH_CREATOR_SOFTWARE,
+            ExthHeader,
         };
         use crate::formats::mobi::header::MobiHeader;
 
@@ -1974,7 +2062,7 @@ mod tests {
 
     #[test]
     fn exth_has_start_reading_offset() {
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_START_READING};
+        use crate::formats::mobi::exth::{EXTH_START_READING, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -2011,7 +2099,7 @@ mod tests {
 
     #[test]
     fn exth_start_reading_offset_for_single_chapter() {
-        use crate::formats::mobi::exth::{ExthHeader, EXTH_START_READING};
+        use crate::formats::mobi::exth::{EXTH_START_READING, ExthHeader};
         use crate::formats::mobi::header::MobiHeader;
 
         let mut book = Book::new();
@@ -2130,7 +2218,9 @@ mod tests {
         for mat in html.match_indices("<li><a filepos=") {
             let start = mat.0 + "<li><a filepos=".len();
             let offset_str = &html[start..start + 10];
-            let offset: usize = offset_str.parse().expect("filepos should be a valid number");
+            let offset: usize = offset_str
+                .parse()
+                .expect("filepos should be a valid number");
             toc_offsets.push(offset);
         }
         assert_eq!(toc_offsets.len(), 2, "should have 2 TOC filepos entries");
@@ -2170,8 +2260,14 @@ mod tests {
         let (html, _) = book_to_mobi_html(&book);
 
         // Guide section should exist.
-        assert!(html.contains("<guide>"), "HTML should contain a <guide> section");
-        assert!(html.contains("</guide>"), "HTML should contain closing </guide>");
+        assert!(
+            html.contains("<guide>"),
+            "HTML should contain a <guide> section"
+        );
+        assert!(
+            html.contains("</guide>"),
+            "HTML should contain closing </guide>"
+        );
 
         // Should have a TOC reference.
         assert!(
@@ -2187,9 +2283,12 @@ mod tests {
 
         // The guide TOC filepos should point to the TOC section in body.
         let toc_ref_pos = html.find("type=\"toc\"").unwrap();
-        let filepos_start = html[toc_ref_pos..].find("filepos=").unwrap() + toc_ref_pos + "filepos=".len();
+        let filepos_start =
+            html[toc_ref_pos..].find("filepos=").unwrap() + toc_ref_pos + "filepos=".len();
         let filepos_str = &html[filepos_start..filepos_start + 10];
-        let toc_offset: usize = filepos_str.parse().expect("guide toc filepos should be valid");
+        let toc_offset: usize = filepos_str
+            .parse()
+            .expect("guide toc filepos should be valid");
         let at_toc = &html[toc_offset..];
         assert!(
             at_toc.starts_with("<div><h2><b>Table of Contents</b></h2>"),
@@ -2199,9 +2298,12 @@ mod tests {
 
         // The guide text filepos should point to the first chapter.
         let text_ref_pos = html.find("type=\"text\"").unwrap();
-        let text_fp_start = html[text_ref_pos..].find("filepos=").unwrap() + text_ref_pos + "filepos=".len();
+        let text_fp_start =
+            html[text_ref_pos..].find("filepos=").unwrap() + text_ref_pos + "filepos=".len();
         let text_fp_str = &html[text_fp_start..text_fp_start + 10];
-        let text_offset: usize = text_fp_str.parse().expect("guide text filepos should be valid");
+        let text_offset: usize = text_fp_str
+            .parse()
+            .expect("guide text filepos should be valid");
         let at_text = &html[text_offset..];
         assert!(
             at_text.starts_with("<h2>Intro</h2>"),
@@ -2222,8 +2324,12 @@ mod tests {
 
         let (html, _) = book_to_mobi_html(&book);
 
-        let toc_pos = html.find("Table of Contents").expect("should have TOC heading");
-        let content_pos = html.find("<p>Content</p>").expect("should have chapter content");
+        let toc_pos = html
+            .find("Table of Contents")
+            .expect("should have TOC heading");
+        let content_pos = html
+            .find("<p>Content</p>")
+            .expect("should have chapter content");
         assert!(
             toc_pos < content_pos,
             "TOC should appear before chapter content"
@@ -2317,7 +2423,11 @@ mod tests {
         // Read back and extract the decompressed text.
         let mut cursor = std::io::Cursor::new(mobi_data);
         let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
-        let all_content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+        let all_content: String = decoded
+            .chapters()
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
 
         // The decompressed/decoded text should preserve filepos references.
         // At minimum, verify the original HTML contains them (pre-compression).
@@ -2373,44 +2483,48 @@ mod tests {
         let (indx_header, indx_data, cncx) = build_ncx_indx(&chapters);
 
         // All three records should be non-empty.
-        assert!(!indx_header.is_empty(), "INDX header record should not be empty");
-        assert!(!indx_data.is_empty(), "INDX data record should not be empty");
+        assert!(
+            !indx_header.is_empty(),
+            "INDX header record should not be empty"
+        );
+        assert!(
+            !indx_data.is_empty(),
+            "INDX data record should not be empty"
+        );
         assert!(!cncx.is_empty(), "CNCX record should not be empty");
     }
 
     #[test]
     fn indx_header_starts_with_magic_and_contains_tagx() {
-        let chapters = vec![
-            ("Ch1".to_string(), 0),
-            ("Ch2".to_string(), 1000),
-        ];
+        let chapters = vec![("Ch1".to_string(), 0), ("Ch2".to_string(), 1000)];
         let (indx_header, _, _) = build_ncx_indx(&chapters);
 
         // Starts with "INDX" magic.
-        assert_eq!(&indx_header[0..4], b"INDX", "INDX header should start with INDX magic");
+        assert_eq!(
+            &indx_header[0..4],
+            b"INDX",
+            "INDX header should start with INDX magic"
+        );
 
         // Contains "TAGX" section.
-        let has_tagx = indx_header
-            .windows(4)
-            .any(|w| w == b"TAGX");
+        let has_tagx = indx_header.windows(4).any(|w| w == b"TAGX");
         assert!(has_tagx, "INDX header should contain TAGX section");
     }
 
     #[test]
     fn indx_data_starts_with_magic_and_contains_idxt() {
-        let chapters = vec![
-            ("Ch1".to_string(), 0),
-            ("Ch2".to_string(), 1000),
-        ];
+        let chapters = vec![("Ch1".to_string(), 0), ("Ch2".to_string(), 1000)];
         let (_, indx_data, _) = build_ncx_indx(&chapters);
 
         // Starts with "INDX" magic.
-        assert_eq!(&indx_data[0..4], b"INDX", "INDX data should start with INDX magic");
+        assert_eq!(
+            &indx_data[0..4],
+            b"INDX",
+            "INDX data should start with INDX magic"
+        );
 
         // Contains "IDXT" section.
-        let has_idxt = indx_data
-            .windows(4)
-            .any(|w| w == b"IDXT");
+        let has_idxt = indx_data.windows(4).any(|w| w == b"IDXT");
         assert!(has_idxt, "INDX data should contain IDXT section");
     }
 
@@ -2468,14 +2582,16 @@ mod tests {
         // The record at ncx_index should start with "INDX" magic.
         let indx_record = pdb.record_data(ncx_index as usize).unwrap();
         assert_eq!(
-            &indx_record[0..4], b"INDX",
+            &indx_record[0..4],
+            b"INDX",
             "record at ncx_index should start with INDX magic"
         );
 
         // The next record should also be INDX (the data record).
         let indx_data_record = pdb.record_data(ncx_index as usize + 1).unwrap();
         assert_eq!(
-            &indx_data_record[0..4], b"INDX",
+            &indx_data_record[0..4],
+            b"INDX",
             "record after ncx_index should be INDX data record"
         );
 
@@ -2483,7 +2599,8 @@ mod tests {
         // Verify FLIS follows after the 3 NCX records.
         let flis_record = pdb.record_data(ncx_index as usize + 3).unwrap();
         assert_eq!(
-            &flis_record[0..4], b"FLIS",
+            &flis_record[0..4],
+            b"FLIS",
             "FLIS should follow the 3 NCX records"
         );
     }
@@ -2505,7 +2622,10 @@ mod tests {
         let record0 = pdb.record_data(0).unwrap();
 
         let ncx_index = read_u32_be(record0, 244);
-        assert_ne!(ncx_index, NULL_INDEX, "single-chapter book should still have NCX index");
+        assert_ne!(
+            ncx_index, NULL_INDEX,
+            "single-chapter book should still have NCX index"
+        );
 
         // Verify the INDX header record is valid.
         let indx_header = pdb.record_data(ncx_index as usize).unwrap();
@@ -2513,7 +2633,10 @@ mod tests {
 
         // Total entry count (at header offset 36) should be 1.
         let entry_count = read_u32_be(indx_header, 36);
-        assert_eq!(entry_count, 1, "single-chapter book should have 1 INDX entry");
+        assert_eq!(
+            entry_count, 1,
+            "single-chapter book should have 1 INDX entry"
+        );
     }
 
     #[test]
@@ -2561,20 +2684,14 @@ mod tests {
         // Verify the INDX data record has the correct entry count.
         let indx_data = pdb.record_data(ncx_index as usize + 1).unwrap();
         let data_entries = crate::formats::common::palm_db::read_u32_be(indx_data, 24);
-        assert_eq!(
-            data_entries, 5,
-            "INDX data record should have 5 entries"
-        );
+        assert_eq!(data_entries, 5, "INDX data record should have 5 entries");
     }
 
     #[test]
     fn indx_header_has_correct_cncx_count() {
         use crate::formats::common::palm_db::read_u32_be;
 
-        let chapters = vec![
-            ("Ch1".to_string(), 0),
-            ("Ch2".to_string(), 1000),
-        ];
+        let chapters = vec![("Ch1".to_string(), 0), ("Ch2".to_string(), 1000)];
         let (indx_header, _, _) = build_ncx_indx(&chapters);
 
         // CNCX record count at header offset 52 should be 1.

@@ -1,5 +1,6 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::text_utils::ends_with_ascii_ci;
 use crate::formats::fb2::{Fb2Reader, Fb2Writer};
 use std::io::{Cursor, Read, Seek, Write};
 use zip::write::FileOptions;
@@ -69,7 +70,7 @@ fn find_fb2_file<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Option<String> 
     for i in 0..archive.len() {
         if let Ok(file) = archive.by_index(i) {
             let name = file.name().to_string();
-            if name.to_lowercase().ends_with(".fb2") {
+            if ends_with_ascii_ci(&name, ".fb2") {
                 return Some(name);
             }
         }

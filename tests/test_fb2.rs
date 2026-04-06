@@ -65,7 +65,9 @@ fn fb2_writer_closes_emphasis_at_paragraph_boundary() {
     // the </em> comes in the second <p>, so the writer must auto-close and reopen.
     book.add_chapter(&Chapter {
         title: Some("Ch1".into()),
-        content: r#"<p>Normal text <em>emphasized text</p><p>still emphasized</em> normal again</p>"#.into(),
+        content:
+            r#"<p>Normal text <em>emphasized text</p><p>still emphasized</em> normal again</p>"#
+                .into(),
         id: Some("ch1".into()),
     });
 
@@ -84,7 +86,10 @@ fn fb2_writer_closes_emphasis_at_paragraph_boundary() {
         "emphasis should be reopened in next paragraph and closed when </em> is hit, got:\n{}",
         xml
     );
-    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis tags found:\n{xml}");
+    assert!(
+        !xml.contains("<emphasis></emphasis>"),
+        "spurious empty emphasis tags found:\n{xml}"
+    );
 }
 
 #[test]
@@ -113,7 +118,10 @@ fn fb2_writer_closes_strong_at_paragraph_boundary() {
         "strong should be reopened in next paragraph and closed when </b> is hit, got:\n{}",
         xml
     );
-    assert!(!xml.contains("<strong></strong>"), "spurious empty strong tags found:\n{xml}");
+    assert!(
+        !xml.contains("<strong></strong>"),
+        "spurious empty strong tags found:\n{xml}"
+    );
 }
 
 #[test]
@@ -123,7 +131,8 @@ fn fb2_writer_handles_nested_emphasis_strong_across_paragraphs() {
     // Both emphasis AND strong span across a paragraph boundary simultaneously
     book.add_chapter(&Chapter {
         title: Some("Ch1".into()),
-        content: r#"<p>Normal <em><b>bold italic text</p><p>still bold italic</b></em> normal</p>"#.into(),
+        content: r#"<p>Normal <em><b>bold italic text</p><p>still bold italic</b></em> normal</p>"#
+            .into(),
         id: Some("ch1".into()),
     });
 
@@ -142,8 +151,14 @@ fn fb2_writer_handles_nested_emphasis_strong_across_paragraphs() {
         "both should be reopened in next paragraph, got:\n{}",
         xml
     );
-    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis tags found:\n{xml}");
-    assert!(!xml.contains("<strong></strong>"), "spurious empty strong tags found:\n{xml}");
+    assert!(
+        !xml.contains("<emphasis></emphasis>"),
+        "spurious empty emphasis tags found:\n{xml}"
+    );
+    assert!(
+        !xml.contains("<strong></strong>"),
+        "spurious empty strong tags found:\n{xml}"
+    );
 }
 
 #[test]
@@ -161,11 +176,23 @@ fn fb2_writer_emphasis_spanning_multiple_paragraphs() {
     let xml = String::from_utf8(output).unwrap();
 
     // Should have emphasis properly closed/reopened across all paragraphs
-    assert!(xml.contains("<emphasis>B</emphasis>"), "first para should have emphasis, got:\n{xml}");
-    assert!(xml.contains("<emphasis>C</emphasis>"), "middle para should have emphasis, got:\n{xml}");
-    assert!(xml.contains("<emphasis>D</emphasis>"), "last para should have emphasis before close, got:\n{xml}");
+    assert!(
+        xml.contains("<emphasis>B</emphasis>"),
+        "first para should have emphasis, got:\n{xml}"
+    );
+    assert!(
+        xml.contains("<emphasis>C</emphasis>"),
+        "middle para should have emphasis, got:\n{xml}"
+    );
+    assert!(
+        xml.contains("<emphasis>D</emphasis>"),
+        "last para should have emphasis before close, got:\n{xml}"
+    );
     // No spurious empty paragraphs
-    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis found:\n{xml}");
+    assert!(
+        !xml.contains("<emphasis></emphasis>"),
+        "spurious empty emphasis found:\n{xml}"
+    );
 }
 
 #[test]
@@ -189,5 +216,8 @@ fn fb2_writer_emphasis_across_br_boundary() {
         "br inside paragraph should be soft break, emphasis stays intact, got:\n{}",
         xml
     );
-    assert!(!xml.contains("<empty-line/>"), "br inside paragraph should not produce empty-line:\n{xml}");
+    assert!(
+        !xml.contains("<empty-line/>"),
+        "br inside paragraph should not produce empty-line:\n{xml}"
+    );
 }

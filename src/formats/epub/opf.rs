@@ -64,7 +64,9 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                     "package" => {
                         // Capture the OPF version attribute for roundtrip preservation.
                         if let Some(ver) = xml_utils::get_attribute(e, "version") {
-                            data.metadata.extended.insert("opf:version".to_string(), ver);
+                            data.metadata
+                                .extended
+                                .insert("opf:version".to_string(), ver);
                         }
                     },
                     "metadata" => section = Section::Metadata,
@@ -121,7 +123,8 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
             },
             Ok(Event::Text(ref e)) => {
                 if section == Section::Metadata && !current_dc_tag.is_empty() {
-                    current_text = xml_utils::bytes_to_string(e.as_ref());
+                    current_text.clear();
+                    current_text.push_str(&xml_utils::bytes_to_string(e.as_ref()));
                 }
             },
             Ok(Event::End(ref e)) => {
@@ -133,10 +136,9 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         // Store every dc:date element for roundtrip preservation,
                         // regardless of the event attribute.
                         if current_dc_tag == "date" && !current_text.is_empty() {
-                            data.metadata.additional_dates.push((
-                                current_date_event.clone(),
-                                current_text.clone(),
-                            ));
+                            data.metadata
+                                .additional_dates
+                                .push((current_date_event.clone(), current_text.clone()));
                         }
                         // Skip dc:date elements with opf:event="conversion";
                         // don't overwrite an already-set publication_date unless
@@ -145,12 +147,9 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                             let event = current_date_event.as_deref();
                             if event == Some("conversion") {
                                 true
-                            } else if data.metadata.publication_date.is_some()
-                                && event != Some("publication")
-                            {
-                                true
                             } else {
-                                false
+                                data.metadata.publication_date.is_some()
+                                    && event != Some("publication")
                             }
                         } else {
                             false
@@ -159,10 +158,11 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                             apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
                         }
                         // Capture opf:file-as from the first creator
-                        if current_dc_tag == "creator" && data.metadata.author_sort.is_none() {
-                            if let Some(ref fa) = current_file_as {
-                                data.metadata.author_sort = Some(fa.clone());
-                            }
+                        if current_dc_tag == "creator"
+                            && data.metadata.author_sort.is_none()
+                            && let Some(ref fa) = current_file_as
+                        {
+                            data.metadata.author_sort = Some(fa.clone());
                         }
                         current_date_event = None;
                         current_dc_tag.clear();
@@ -638,9 +638,15 @@ mod tests {
   <spine/>
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
-        let date = data.metadata.publication_date.expect("publication_date should be set");
-        assert_eq!(date.format("%Y-%m-%d").to_string(), "2008-06-27",
-            "publication_date should be the publication date, not the conversion date");
+        let date = data
+            .metadata
+            .publication_date
+            .expect("publication_date should be set");
+        assert_eq!(
+            date.format("%Y-%m-%d").to_string(),
+            "2008-06-27",
+            "publication_date should be the publication date, not the conversion date"
+        );
     }
 
     #[test]
@@ -656,8 +662,10 @@ mod tests {
   <spine/>
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
-        assert!(data.metadata.publication_date.is_none(),
-            "publication_date should not be set when only a conversion date is present");
+        assert!(
+            data.metadata.publication_date.is_none(),
+            "publication_date should not be set when only a conversion date is present"
+        );
     }
 
     #[test]
@@ -673,9 +681,15 @@ mod tests {
   <spine/>
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
-        let date = data.metadata.publication_date.expect("publication_date should be set");
-        assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-01-15",
-            "dc:date without opf:event should still be parsed as publication_date");
+        let date = data
+            .metadata
+            .publication_date
+            .expect("publication_date should be set");
+        assert_eq!(
+            date.format("%Y-%m-%d").to_string(),
+            "2024-01-15",
+            "dc:date without opf:event should still be parsed as publication_date"
+        );
     }
 
     #[test]
@@ -693,9 +707,15 @@ mod tests {
   <spine/>
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
-        let date = data.metadata.publication_date.expect("publication_date should be set");
-        assert_eq!(date.format("%Y-%m-%d").to_string(), "2008-06-27",
-            "publication_date should be set from event=publication regardless of element order");
+        let date = data
+            .metadata
+            .publication_date
+            .expect("publication_date should be set");
+        assert_eq!(
+            date.format("%Y-%m-%d").to_string(),
+            "2008-06-27",
+            "publication_date should be set from event=publication regardless of element order"
+        );
     }
 
     #[test]
@@ -711,7 +731,10 @@ mod tests {
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
         assert_eq!(
-            data.metadata.extended.get("opf:version").map(|s| s.as_str()),
+            data.metadata
+                .extended
+                .get("opf:version")
+                .map(|s| s.as_str()),
             Some("2.0"),
             "OPF version should be captured from the <package> element"
         );
@@ -721,7 +744,10 @@ mod tests {
     fn parses_opf_version_3() {
         let data = parse_opf_xml(sample_opf()).unwrap();
         assert_eq!(
-            data.metadata.extended.get("opf:version").map(|s| s.as_str()),
+            data.metadata
+                .extended
+                .get("opf:version")
+                .map(|s| s.as_str()),
             Some("3.0"),
             "OPF version 3.0 should be captured from the sample OPF"
         );
@@ -741,12 +767,22 @@ mod tests {
   <spine/>
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
-        assert_eq!(data.metadata.additional_dates.len(), 2,
-            "Both dc:date elements should be stored in additional_dates");
-        assert_eq!(data.metadata.additional_dates[0],
-            (Some("publication".to_string()), "2008-06-27".to_string()));
-        assert_eq!(data.metadata.additional_dates[1],
-            (Some("conversion".to_string()), "2026-03-01T08:32:03.786809+00:00".to_string()));
+        assert_eq!(
+            data.metadata.additional_dates.len(),
+            2,
+            "Both dc:date elements should be stored in additional_dates"
+        );
+        assert_eq!(
+            data.metadata.additional_dates[0],
+            (Some("publication".to_string()), "2008-06-27".to_string())
+        );
+        assert_eq!(
+            data.metadata.additional_dates[1],
+            (
+                Some("conversion".to_string()),
+                "2026-03-01T08:32:03.786809+00:00".to_string()
+            )
+        );
     }
 
     #[test]
@@ -763,7 +799,9 @@ mod tests {
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
         assert_eq!(data.metadata.additional_dates.len(), 1);
-        assert_eq!(data.metadata.additional_dates[0],
-            (None, "2024-01-15".to_string()));
+        assert_eq!(
+            data.metadata.additional_dates[0],
+            (None, "2024-01-15".to_string())
+        );
     }
 }

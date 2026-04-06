@@ -145,14 +145,23 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
     // Depth counter for <head> nesting.  While > 0, suppress all text output
     // so that content inside <head> (including <title>) is not emitted.
     let mut head_depth: u32 = 0;
+    // Whitespace collapsing state (integrated to avoid second allocation).
+    let mut in_ws = true; // treat start as whitespace so leading is trimmed
+    let mut newline_count: usize = 0;
 
     loop {
         // Find the next '<' (tag start).
         match memchr(b'<', &bytes[pos..]) {
             Some(offset) => {
-                // Copy text before the tag (only when outside <head>).
+                // Copy text before the tag (only when outside <head>),
+                // collapsing whitespace inline via byte iteration.
                 if offset > 0 && head_depth == 0 {
-                    result.push_str(&html[pos..pos + offset]);
+                    append_ws_collapsed(
+                        &html[pos..pos + offset],
+                        &mut result,
+                        &mut in_ws,
+                        &mut newline_count,
+                    );
                 }
                 let tag_start = pos + offset;
                 // Find the closing '>'.
@@ -166,7 +175,14 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
                             head_depth = head_depth.saturating_sub(1);
                         }
                         if head_depth == 0 && is_block_level_tag(tag_bytes) {
-                            result.push('\n');
+                            // Feed block-level newline into whitespace state
+                            // instead of pushing directly into result.
+                            if !in_ws {
+                                in_ws = true;
+                                newline_count = 1;
+                            } else {
+                                newline_count += 1;
+                            }
                         }
                         pos = tag_start + end_offset + 1;
                     },
@@ -179,16 +195,65 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
             None => {
                 // No more tags -- copy remaining text.
                 if head_depth == 0 {
-                    result.push_str(&html[pos..]);
+                    append_ws_collapsed(&html[pos..], &mut result, &mut in_ws, &mut newline_count);
                 }
                 break;
             },
         }
     }
 
-    // Collapse runs of whitespace into a single space, then trim.
-    let collapsed = collapse_whitespace(&result);
-    Cow::Owned(collapsed)
+    Cow::Owned(result)
+}
+
+/// Appends `chunk` to `result` while collapsing whitespace runs.
+///
+/// Uses byte iteration since all ASCII whitespace characters are single-byte,
+/// so splitting at whitespace boundaries cannot break multi-byte UTF-8
+/// sequences. Non-whitespace runs are copied in bulk via `push_str`.
+#[inline]
+fn append_ws_collapsed(
+    chunk: &str,
+    result: &mut String,
+    in_ws: &mut bool,
+    newline_count: &mut usize,
+) {
+    let bytes = chunk.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i].is_ascii_whitespace() {
+            if bytes[i] == b'\n' {
+                *newline_count += 1;
+            }
+            if !*in_ws {
+                *in_ws = true;
+                *newline_count = if bytes[i] == b'\n' { 1 } else { 0 };
+            }
+            i += 1;
+        } else {
+            // Emit pending whitespace separator.
+            if *in_ws && !result.is_empty() {
+                if *newline_count >= 2 {
+                    result.push_str("\n\n");
+                } else if *newline_count == 1 {
+                    result.push('\n');
+                } else {
+                    result.push(' ');
+                }
+            }
+            *in_ws = false;
+            *newline_count = 0;
+
+            // Find end of non-whitespace run and copy in bulk.
+            let start = i;
+            i += 1;
+            while i < len && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            result.push_str(&chunk[start..i]);
+        }
+    }
 }
 
 /// Returns `true` if the tag is an opening `<head` tag (case-insensitive).
@@ -236,94 +301,90 @@ fn is_block_level_tag(tag: &[u8]) -> bool {
         return false;
     }
     // Skip '<' and optional '/'.
-    let start = if tag.len() > 1 && tag[1] == b'/' { 2 } else { 1 };
+    let start = if tag.len() > 1 && tag[1] == b'/' {
+        2
+    } else {
+        1
+    };
     // Find end of tag name: first space, '/', or '>'.
     let rest = &tag[start..];
     let name_end = rest
         .iter()
-        .position(|&b| b == b' ' || b == b'>' || b == b'/' || b == b'\t' || b == b'\n' || b == b'\r')
+        .position(|&b| {
+            b == b' ' || b == b'>' || b == b'/' || b == b'\t' || b == b'\n' || b == b'\r'
+        })
         .unwrap_or(rest.len());
     let name = &rest[..name_end];
 
     // Case-insensitive comparison against known block-level tag names.
-    matches!(
-        name.len(),
-        1..=10
-    ) && match name.len() {
-        2 => {
-            // br, li, td, th, tr, h1-h6, hr
-            let a = name[0].to_ascii_lowercase();
-            let b = name[1].to_ascii_lowercase();
-            matches!(
-                (a, b),
-                (b'b', b'r')
-                    | (b'l', b'i')
-                    | (b't', b'd')
-                    | (b't', b'h')
-                    | (b't', b'r')
-                    | (b'h', b'r')
-                    | (b'h', b'1')
-                    | (b'h', b'2')
-                    | (b'h', b'3')
-                    | (b'h', b'4')
-                    | (b'h', b'5')
-                    | (b'h', b'6')
-            )
+    matches!(name.len(), 1..=10)
+        && match name.len() {
+            2 => {
+                // br, li, td, th, tr, h1-h6, hr
+                let a = name[0].to_ascii_lowercase();
+                let b = name[1].to_ascii_lowercase();
+                matches!(
+                    (a, b),
+                    (b'b', b'r')
+                        | (b'l', b'i')
+                        | (b't', b'd')
+                        | (b't', b'h')
+                        | (b't', b'r')
+                        | (b'h', b'r')
+                        | (b'h', b'1')
+                        | (b'h', b'2')
+                        | (b'h', b'3')
+                        | (b'h', b'4')
+                        | (b'h', b'5')
+                        | (b'h', b'6')
+                )
+            },
+            1 => {
+                // p
+                name[0].eq_ignore_ascii_case(&b'p')
+            },
+            3 => {
+                // div
+                let a = name[0].to_ascii_lowercase();
+                let b = name[1].to_ascii_lowercase();
+                let c = name[2].to_ascii_lowercase();
+                (a, b, c) == (b'd', b'i', b'v')
+            },
+            10 => {
+                // blockquote
+                name.eq_ignore_ascii_case(b"blockquote")
+            },
+            _ => false,
         }
-        1 => {
-            // p
-            name[0].to_ascii_lowercase() == b'p'
-        }
-        3 => {
-            // div
-            let a = name[0].to_ascii_lowercase();
-            let b = name[1].to_ascii_lowercase();
-            let c = name[2].to_ascii_lowercase();
-            (a, b, c) == (b'd', b'i', b'v')
-        }
-        10 => {
-            // blockquote
-            name.eq_ignore_ascii_case(b"blockquote")
-        }
-        _ => false,
-    }
 }
 
-/// Collapses runs of ASCII whitespace and trims leading/trailing whitespace.
+// ---------------------------------------------------------------------------
+// Case-insensitive ASCII helpers (zero allocation)
+// ---------------------------------------------------------------------------
+
+/// Case-insensitive ASCII suffix check without heap allocation.
 ///
-/// When a run of whitespace contains two or more newlines, it collapses to
-/// `\n\n` (blank line = paragraph break).  When it contains exactly one
-/// newline, it collapses to a single `\n`.  Otherwise it collapses to a
-/// single space.
-fn collapse_whitespace(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_ws = true; // treat start as whitespace so leading is trimmed
-    let mut newline_count: usize = 0;
-    for ch in s.chars() {
-        if ch.is_ascii_whitespace() {
-            if ch == '\n' {
-                newline_count += 1;
-            }
-            if !in_ws {
-                in_ws = true;
-                newline_count = if ch == '\n' { 1 } else { 0 };
-            }
-        } else {
-            if in_ws && !result.is_empty() {
-                if newline_count >= 2 {
-                    result.push_str("\n\n");
-                } else if newline_count == 1 {
-                    result.push('\n');
-                } else {
-                    result.push(' ');
-                }
-            }
-            result.push(ch);
-            in_ws = false;
-            newline_count = 0;
-        }
+/// Equivalent to `s.to_lowercase().ends_with(suffix)` for ASCII suffixes,
+/// but avoids allocating a temporary `String`.
+#[inline]
+pub fn ends_with_ascii_ci(s: &str, suffix: &str) -> bool {
+    s.len() >= suffix.len()
+        && s.as_bytes()[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix.as_bytes())
+}
+
+/// Case-insensitive ASCII substring check without heap allocation.
+///
+/// Equivalent to `haystack.to_lowercase().contains(needle)` for ASCII needles,
+/// but avoids allocating a temporary `String`.
+#[inline]
+pub fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
     }
-    result
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 // ---------------------------------------------------------------------------
@@ -366,24 +427,25 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                             // Try numeric entity: &#NNN; or &#xHHH;
                             if entity.starts_with("&#") {
                                 let num_part = &entity[2..entity.len() - 1]; // strip "&#" and ";"
-                                let code_point = if let Some(hex) =
-                                    num_part.strip_prefix('x').or_else(|| num_part.strip_prefix('X'))
+                                let code_point = if let Some(hex) = num_part
+                                    .strip_prefix('x')
+                                    .or_else(|| num_part.strip_prefix('X'))
                                 {
                                     u32::from_str_radix(hex, 16).ok()
                                 } else {
                                     num_part.parse::<u32>().ok()
                                 };
-                                if let Some(cp) = code_point {
-                                    if let Some(ch) = char::from_u32(cp) {
-                                        result.push(ch);
-                                        pos = entity_start + semi + 1;
-                                        continue;
-                                    }
+                                if let Some(cp) = code_point
+                                    && let Some(ch) = char::from_u32(cp)
+                                {
+                                    result.push(ch);
+                                    pos = entity_start + semi + 1;
+                                    continue;
                                 }
                             }
                             // Still unknown -- keep as-is
                             result.push_str(entity);
-                        }
+                        },
                     }
                     pos = entity_start + semi + 1;
                 } else {
@@ -796,8 +858,14 @@ mod tests {
     fn strip_tags_suppresses_head_with_meta() {
         let html = r#"<html><HEAD><title>Title</title><meta name="author" content="Me"/></HEAD><body><p>Body</p></body></html>"#;
         let result = strip_tags(html);
-        assert!(!result.contains("Title"), "HEAD content should be suppressed: {result}");
-        assert!(result.contains("Body"), "Body content should remain: {result}");
+        assert!(
+            !result.contains("Title"),
+            "HEAD content should be suppressed: {result}"
+        );
+        assert!(
+            result.contains("Body"),
+            "Body content should remain: {result}"
+        );
     }
 
     #[test]

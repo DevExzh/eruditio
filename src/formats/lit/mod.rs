@@ -403,7 +403,7 @@ impl LitContainer {
                     items.push(LitManifestItem {
                         internal,
                         path,
-                        mime_type: mime_type.to_lowercase(),
+                        mime_type: mime_type.to_ascii_lowercase(),
                         state: state_name.to_string(),
                     });
                 }
@@ -746,7 +746,7 @@ fn parse_opf_metadata(opf_xml: &str, metadata: &mut Metadata) {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                current_tag = bytes_to_cow_str(e.name().as_ref()).to_lowercase();
+                current_tag = bytes_to_cow_str(e.name().as_ref()).to_ascii_lowercase();
             },
             Ok(Event::Text(e)) => {
                 let text = bytes_to_cow_str(&e.into_inner()).trim().to_string();

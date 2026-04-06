@@ -10,11 +10,11 @@ pub mod writer;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::compression::huffcdic::HuffCdicReader;
 use crate::formats::common::compression::palmdoc;
-use crate::formats::common::palm_db::{read_u32_be, PdbFile};
+use crate::formats::common::palm_db::{PdbFile, read_u32_be};
 use crate::formats::common::text_utils;
-use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 
 use self::exth::{
@@ -73,10 +73,11 @@ fn find_fdst_record(pdb: &PdbFile, first_image: usize) -> Option<usize> {
     // Scan records after the image records for the FDST signature.
     // Start from the first image record and look forward.
     for i in first_image..pdb.record_count() {
-        if let Ok(data) = pdb.record_data(i) {
-            if data.len() >= 4 && &data[..4] == b"FDST" {
-                return Some(i);
-            }
+        if let Ok(data) = pdb.record_data(i)
+            && data.len() >= 4
+            && &data[..4] == b"FDST"
+        {
+            return Some(i);
         }
     }
     None
@@ -351,8 +352,7 @@ fn parse_div_insert_positions(pdb: &PdbFile, fragment_index: usize) -> Option<Ve
             if pos_offset + 2 > rec_data.len() {
                 break;
             }
-            let pos =
-                ((rec_data[pos_offset] as usize) << 8) | (rec_data[pos_offset + 1] as usize);
+            let pos = ((rec_data[pos_offset] as usize) << 8) | (rec_data[pos_offset + 1] as usize);
             idx_positions.push(pos);
         }
         idx_positions.push(idxt_pos); // sentinel: last entry ends at IDXT
@@ -383,7 +383,10 @@ fn parse_div_insert_positions(pdb: &PdbFile, fragment_index: usize) -> Option<Ve
             let key_bytes = &entry[1..1 + key_len];
 
             // The text key is a zero-padded numeric string (the insert position).
-            match std::str::from_utf8(key_bytes).ok().and_then(|s| s.parse::<usize>().ok()) {
+            match std::str::from_utf8(key_bytes)
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
                 Some(pos) => insert_positions.push(pos),
                 None => insert_positions.push(0),
             }
@@ -406,9 +409,7 @@ fn split_bytes_at_xml_boundaries(data: &[u8]) -> Vec<(usize, usize)> {
 
     let mut search_from = 0;
     while search_from + xml_needle.len() <= data.len() {
-        if let Some(offset) =
-            text_utils::find_case_insensitive(&data[search_from..], xml_needle)
-        {
+        if let Some(offset) = text_utils::find_case_insensitive(&data[search_from..], xml_needle) {
             positions.push(search_from + offset);
             search_from = search_from + offset + 1;
         } else {
@@ -474,9 +475,10 @@ impl PosFidResolver {
         let pos = insert_pos.checked_add(offset)?;
 
         // Find which chapter contains this absolute position.
-        let chapter_idx = self.chapter_byte_ranges.iter().position(|(start, end)| {
-            pos >= *start && pos < *end
-        })?;
+        let chapter_idx = self
+            .chapter_byte_ranges
+            .iter()
+            .position(|(start, end)| pos >= *start && pos < *end)?;
 
         let (ch_start, _) = self.chapter_byte_ranges[chapter_idx];
         let chapter_data = &self.chapter_bytes[chapter_idx];
@@ -513,11 +515,7 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
 
     // Iterate over tags in reverse order.
     let mut end = block.len();
-    loop {
-        let pgt = match block[..end].iter().rposition(|&b| b == b'>') {
-            Some(p) => p,
-            None => break,
-        };
+    while let Some(pgt) = block[..end].iter().rposition(|&b| b == b'>') {
         let plt = match block[..pgt].iter().rposition(|&b| b == b'<') {
             Some(p) => p,
             None => break,
@@ -525,19 +523,19 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
         let tag = &block[plt..pgt + 1];
 
         // Check for id="..." (on any tag) or name="..." (only on <a> tags).
-        if let Some(val) = extract_attr_value(tag, b"id") {
-            if !val.is_empty() {
-                return Some(val);
-            }
+        if let Some(val) = extract_attr_value(tag, b"id")
+            && !val.is_empty()
+        {
+            return Some(val);
         }
         // Only check name= on <a> tags to avoid matching <meta name="..."> etc.
         let tag_lower_start: Vec<u8> = tag.iter().take(3).map(|b| b.to_ascii_lowercase()).collect();
-        if tag_lower_start.starts_with(b"<a") && (tag.len() <= 2 || tag[2].is_ascii_whitespace()) {
-            if let Some(val) = extract_attr_value(tag, b"name") {
-                if !val.is_empty() {
-                    return Some(val);
-                }
-            }
+        if tag_lower_start.starts_with(b"<a")
+            && (tag.len() <= 2 || tag[2].is_ascii_whitespace())
+            && let Some(val) = extract_attr_value(tag, b"name")
+            && !val.is_empty()
+        {
+            return Some(val);
         }
 
         end = plt;
@@ -586,7 +584,9 @@ fn extract_attr_value(tag: &[u8], attr_name: &[u8]) -> Option<String> {
 
     let value_bytes = &trimmed[1..];
     let end = value_bytes.iter().position(|&b| b == quote)?;
-    std::str::from_utf8(&value_bytes[..end]).ok().map(|s| s.to_string())
+    std::str::from_utf8(&value_bytes[..end])
+        .ok()
+        .map(|s| s.to_string())
 }
 
 /// Resolves remaining `kindle:pos:fid` references in HTML content using
@@ -668,7 +668,9 @@ impl MobiReader {
 impl FormatReader for MobiReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_end(&mut buffer)?;
 
         let pdb = PdbFile::parse(buffer)?;
 
@@ -740,8 +742,8 @@ impl FormatReader for MobiReader {
                 .filter(|&idx| idx != NULL_INDEX as usize)
                 .unwrap_or(pdb.record_count());
 
-            let fdst_entries = find_fdst_record(&pdb, first_image)
-                .and_then(|idx| parse_fdst(&pdb, idx));
+            let fdst_entries =
+                find_fdst_record(&pdb, first_image).and_then(|idx| parse_fdst(&pdb, idx));
 
             let (main_html_bytes, flow_paths) = if let Some(ref entries) = fdst_entries {
                 // Extract flow 0 as main HTML, flows 1+ as resources.
@@ -755,7 +757,10 @@ impl FormatReader for MobiReader {
                 fpaths.push(None); // Flow 0 is the main content.
 
                 for (i, entry) in entries.iter().enumerate().skip(1) {
-                    if entry.start <= text.len() && entry.end <= text.len() && entry.start < entry.end {
+                    if entry.start <= text.len()
+                        && entry.end <= text.len()
+                        && entry.start < entry.end
+                    {
                         let flow_data = &text[entry.start..entry.end];
                         let (ext, media_type) = detect_flow_type(flow_data);
                         let flow_id = format!("flow_{}", i);
@@ -821,18 +826,25 @@ impl FormatReader for MobiReader {
             // When a PosFidResolver is available, skip the naive first-pass
             // fid→chapter mapping (which lacks anchor precision) so ALL
             // kindle:pos:fid references go through the anchor-aware second pass.
-            let effective_chapter_count =
-                if pos_fid_resolver.is_some() { 0 } else { chapter_count };
+            let effective_chapter_count = if pos_fid_resolver.is_some() {
+                0
+            } else {
+                chapter_count
+            };
             for (i, ch) in raw_chapters.iter().enumerate() {
-                let mut resolved =
-                    resolve_kindle_references(&ch.content, &image_paths, &flow_paths, effective_chapter_count);
+                let mut resolved = resolve_kindle_references(
+                    &ch.content,
+                    &image_paths,
+                    &flow_paths,
+                    effective_chapter_count,
+                );
 
                 // Second pass: use the full PosFidResolver for any remaining
                 // kindle:pos:fid references (cross-file TOC links, etc.).
-                if let Some(ref resolver) = pos_fid_resolver {
-                    if resolved.contains("kindle:pos:fid:") {
-                        resolved = resolve_remaining_pos_fid(&resolved, resolver);
-                    }
+                if let Some(ref resolver) = pos_fid_resolver
+                    && resolved.contains("kindle:pos:fid:")
+                {
+                    resolved = resolve_remaining_pos_fid(&resolved, resolver);
                 }
 
                 book.add_chapter(&Chapter {
@@ -1175,7 +1187,7 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
 
     let mut chapters = Vec::with_capacity(parts.len());
     let mut untitled_counter = 0usize;
-    for (_i, part) in parts.iter().enumerate() {
+    for part in parts.iter() {
         let trimmed = part.trim();
         if trimmed.is_empty() {
             continue;
@@ -1250,20 +1262,19 @@ fn reassemble_kf8_xhtml(part: &str) -> String {
     let skeleton = &part[..html_tag_end];
 
     // Find the </body> close tag in the skeleton (case-insensitive).
-    let body_close_pos =
-        match text_utils::find_case_insensitive(skeleton.as_bytes(), b"</body") {
-            Some(pos) => pos,
-            None => {
-                // No </body> tag: fall back to inserting before </html>.
-                let mut result = String::with_capacity(part.len());
-                result.push_str(&part[..html_close_pos]);
-                result.push('\n');
-                result.push_str(trailing);
-                result.push('\n');
-                result.push_str(&part[html_close_pos..html_tag_end]);
-                return result;
-            }
-        };
+    let body_close_pos = match text_utils::find_case_insensitive(skeleton.as_bytes(), b"</body") {
+        Some(pos) => pos,
+        None => {
+            // No </body> tag: fall back to inserting before </html>.
+            let mut result = String::with_capacity(part.len());
+            result.push_str(&part[..html_close_pos]);
+            result.push('\n');
+            result.push_str(trailing);
+            result.push('\n');
+            result.push_str(&part[html_close_pos..html_tag_end]);
+            return result;
+        },
+    };
 
     // Build the fixed XHTML: skeleton up to </body>, then trailing content,
     // then </body></html>.
@@ -1310,9 +1321,7 @@ fn find_all_case_insensitive(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
     let mut search_from = 0;
     while search_from + needle.len() <= haystack.len() {
-        if let Some(offset) =
-            text_utils::find_case_insensitive(&haystack[search_from..], needle)
-        {
+        if let Some(offset) = text_utils::find_case_insensitive(&haystack[search_from..], needle) {
             let pos = search_from + offset;
             positions.push(pos);
             search_from = pos + 1;
@@ -1379,7 +1388,7 @@ fn split_mobi_content(html: &str) -> Vec<SimpleChapter> {
     }
 
     let mut untitled_counter = 0usize;
-    for (_i, part) in parts.iter().enumerate() {
+    for part in parts.iter() {
         let trimmed = part.trim();
         if trimmed.is_empty() {
             continue;
@@ -1579,10 +1588,10 @@ fn truncate_title(s: &str, max_chars: usize) -> String {
     }
     // Find last space before the limit.
     let truncated = &s[..max_chars];
-    if let Some(last_space) = truncated.rfind(' ') {
-        if last_space > max_chars / 3 {
-            return format!("{}...", &s[..last_space]);
-        }
+    if let Some(last_space) = truncated.rfind(' ')
+        && last_space > max_chars / 3
+    {
+        return format!("{}...", &s[..last_space]);
     }
     format!("{}...", truncated)
 }
@@ -1956,7 +1965,11 @@ mod tests {
 
         // Build a PDB with just this one record.
         let pdb_data = crate::formats::common::palm_db::build_pdb_header(
-            "test", b"BOOK", b"MOBI", 1, &[88], // offset after header
+            "test",
+            b"BOOK",
+            b"MOBI",
+            1,
+            &[88], // offset after header
         );
         let mut full_data = pdb_data;
         full_data.extend_from_slice(&fdst_data);
@@ -1981,9 +1994,8 @@ mod tests {
         write_u32_be(&mut data, 12, 0);
         write_u32_be(&mut data, 16, 100);
 
-        let pdb_data = crate::formats::common::palm_db::build_pdb_header(
-            "test", b"BOOK", b"MOBI", 1, &[88],
-        );
+        let pdb_data =
+            crate::formats::common::palm_db::build_pdb_header("test", b"BOOK", b"MOBI", 1, &[88]);
         let mut full_data = pdb_data;
         full_data.extend_from_slice(&data);
 
@@ -1995,10 +2007,7 @@ mod tests {
 
     #[test]
     fn resolve_kindle_embed_basic() {
-        let image_paths = vec![
-            "images/0.jpg".to_string(),
-            "images/1.png".to_string(),
-        ];
+        let image_paths = vec!["images/0.jpg".to_string(), "images/1.png".to_string()];
         let flow_paths: Vec<Option<String>> = vec![];
 
         // kindle:embed:0001 is 1-based, so index 1 maps to image_paths[0]
@@ -2009,10 +2018,7 @@ mod tests {
 
     #[test]
     fn resolve_kindle_embed_second_image() {
-        let image_paths = vec![
-            "images/0.jpg".to_string(),
-            "images/1.png".to_string(),
-        ];
+        let image_paths = vec!["images/0.jpg".to_string(), "images/1.png".to_string()];
         let flow_paths: Vec<Option<String>> = vec![];
 
         // kindle:embed:0002 (1-based) maps to image_paths[1]
@@ -2073,10 +2079,7 @@ mod tests {
 
     #[test]
     fn resolve_kindle_mixed_references() {
-        let image_paths = vec![
-            "images/0.jpg".to_string(),
-            "images/1.png".to_string(),
-        ];
+        let image_paths = vec!["images/0.jpg".to_string(), "images/1.png".to_string()];
         let flow_paths = vec![
             None,
             Some("flows/flow_1.css".to_string()),
@@ -2328,12 +2331,19 @@ mod tests {
         let result = reassemble_kf8_xhtml(input);
 
         // Content must be inside <body>.
-        assert!(result.contains("<body>\n\n<h1>Chapter</h1><p>Content here</p>\n</body>"),
-            "Content should be inside <body>. Got:\n{}", result);
+        assert!(
+            result.contains("<body>\n\n<h1>Chapter</h1><p>Content here</p>\n</body>"),
+            "Content should be inside <body>. Got:\n{}",
+            result
+        );
         // Nothing after </html>.
         let html_close = result.find("</html>").unwrap();
         let after = result[html_close + 7..].trim();
-        assert!(after.is_empty(), "Nothing should appear after </html>. Got: {}", after);
+        assert!(
+            after.is_empty(),
+            "Nothing should appear after </html>. Got: {}",
+            after
+        );
     }
 
     #[test]
@@ -2364,15 +2374,26 @@ mod tests {
         );
         let result = reassemble_kf8_xhtml(input);
 
-        assert!(result.contains("<h2>Title</h2>"), "Result should contain heading");
-        assert!(result.contains("<p>Paragraph</p>"), "Result should contain paragraph");
+        assert!(
+            result.contains("<h2>Title</h2>"),
+            "Result should contain heading"
+        );
+        assert!(
+            result.contains("<p>Paragraph</p>"),
+            "Result should contain paragraph"
+        );
 
         // Verify well-formedness: body content is before </body>.
         let body_close = result.find("</body>").unwrap();
         let html_close = result.find("</html>").unwrap();
-        assert!(body_close < html_close, "</body> should come before </html>");
-        assert!(result.find("<h2>Title</h2>").unwrap() < body_close,
-            "Content should be before </body>");
+        assert!(
+            body_close < html_close,
+            "</body> should come before </html>"
+        );
+        assert!(
+            result.find("<h2>Title</h2>").unwrap() < body_close,
+            "Content should be before </body>"
+        );
     }
 
     #[test]
@@ -2392,15 +2413,22 @@ mod tests {
             let html_close = ch.content.find("</html>");
             assert!(html_close.is_some(), "Chapter {} should have </html>", i);
             let after = ch.content[html_close.unwrap() + 7..].trim();
-            assert!(after.is_empty(),
-                "Chapter {} should have no content after </html>. Got: {}", i, after);
+            assert!(
+                after.is_empty(),
+                "Chapter {} should have no content after </html>. Got: {}",
+                i,
+                after
+            );
 
             let body_start = ch.content.find("<body").expect("Should have <body>");
             let body_close = ch.content.find("</body>").expect("Should have </body>");
             let body_tag_end = ch.content[body_start..].find('>').unwrap() + body_start + 1;
             let body_content = &ch.content[body_tag_end..body_close];
-            assert!(!body_content.trim().is_empty(),
-                "Chapter {} should have content inside <body>", i);
+            assert!(
+                !body_content.trim().is_empty(),
+                "Chapter {} should have content inside <body>",
+                i
+            );
         }
 
         assert!(chapters[0].content.contains("Chapter 1"));
@@ -2488,7 +2516,8 @@ mod tests {
 
     #[test]
     fn truncate_title_long_string() {
-        let long = "This is a very long title that exceeds the maximum character limit for truncation";
+        let long =
+            "This is a very long title that exceeds the maximum character limit for truncation";
         let result = truncate_title(long, 40);
         assert!(result.len() <= 43); // 40 + "..."
         assert!(result.ends_with("..."));
@@ -2506,7 +2535,11 @@ mod tests {
         assert_eq!(chapters.len(), 2);
         // First chapter has no heading, should NOT be "Part 1"
         let title0 = chapters[0].title.as_deref().unwrap();
-        assert!(!title0.starts_with("Part "), "Title should not be generic 'Part N', got: {}", title0);
+        assert!(
+            !title0.starts_with("Part "),
+            "Title should not be generic 'Part N', got: {}",
+            title0
+        );
         // Second chapter has a heading
         assert_eq!(chapters[1].title.as_deref(), Some("Chapter One"));
     }

@@ -9,8 +9,8 @@ use base64::Engine;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
 use crate::formats::common::MAX_INPUT_SIZE;
+use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
 use std::io::{Read, Write};
 
 /// HTML format reader.
@@ -29,7 +29,9 @@ impl HtmlReader {
 impl FormatReader for HtmlReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_string(&mut contents)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_string(&mut contents)?;
 
         let mut book = Book::new();
 
@@ -121,13 +123,13 @@ fn book_to_html(book: &Book) -> String {
         body.push_str("\n<!-- Embedded resources -->\n");
         for res in &resources {
             if res.media_type.starts_with("image/") {
-                let b64 = base64::engine::general_purpose::STANDARD.encode(res.data);
-                body.push_str(&format!(
-                    "<img src=\"data:{};base64,{}\" alt=\"{}\" />\n",
-                    res.media_type,
-                    b64,
-                    escape_html(res.id),
-                ));
+                body.push_str("<img src=\"data:");
+                body.push_str(res.media_type);
+                body.push_str(";base64,");
+                base64::engine::general_purpose::STANDARD.encode_string(res.data, &mut body);
+                body.push_str("\" alt=\"");
+                body.push_str(&escape_html(res.id));
+                body.push_str("\" />\n");
             }
         }
     }
@@ -268,7 +270,10 @@ mod tests {
 
         // The <h1>Ch 1</h1> heading should appear exactly once.
         let count = html.matches("<h1>Ch 1</h1>").count();
-        assert_eq!(count, 1, "Expected one <h1>Ch 1</h1>, found {count} in: {html}");
+        assert_eq!(
+            count, 1,
+            "Expected one <h1>Ch 1</h1>, found {count} in: {html}"
+        );
         assert!(html.contains("Body text"));
     }
 }

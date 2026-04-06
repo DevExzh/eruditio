@@ -9,9 +9,9 @@ use std::io::Read;
 
 use crate::domain::{Book, Chapter, FormatReader};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::itss::{self, DirectoryEntry};
 use crate::formats::common::text_utils;
-use crate::formats::common::MAX_INPUT_SIZE;
 
 /// Maximum number of directory entries to prevent DoS from crafted files.
 const MAX_ENTRIES: usize = 1_000_000;
@@ -364,13 +364,13 @@ fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
                 None => break,
             };
             let param_tag = &block[param_start..=param_end];
-            let param_lower = param_tag.to_lowercase();
+            let param_lower = param_tag.to_ascii_lowercase();
 
             if let (Some(n), Some(v)) = (
                 extract_attr(&param_lower, param_tag, "name"),
                 extract_attr(&param_lower, param_tag, "value"),
             ) {
-                match n.to_lowercase().as_str() {
+                match n.to_ascii_lowercase().as_str() {
                     "name" => name = v,
                     "local" => local = v,
                     _ => {},
@@ -472,7 +472,9 @@ impl ChmReader {
 impl FormatReader for ChmReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_end(&mut buffer)?;
 
         let mut container = ChmContainer::parse(buffer)?;
         let mut book = Book::new();
@@ -506,7 +508,7 @@ impl FormatReader for ChmReader {
                 .content_files()
                 .into_iter()
                 .filter(|f| {
-                    let lower = f.to_lowercase();
+                    let lower = f.to_ascii_lowercase();
                     lower.ends_with(".html") || lower.ends_with(".htm")
                 })
                 .collect();
@@ -549,7 +551,7 @@ impl FormatReader for ChmReader {
             ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".ico", ".css",
         ];
         for path in container.content_files() {
-            let lower = path.to_lowercase();
+            let lower = path.to_ascii_lowercase();
             if resource_exts.iter().any(|ext| lower.ends_with(ext))
                 && let Ok(data) = container.get_file(&path)
             {
@@ -595,7 +597,7 @@ fn find_and_parse_hhc(container: &mut ChmContainer, sys_info: &ChmSystemInfo) ->
     let hhc_files: Vec<String> = container
         .content_files()
         .into_iter()
-        .filter(|f| f.to_lowercase().ends_with(".hhc"))
+        .filter(|f| text_utils::ends_with_ascii_ci(f, ".hhc"))
         .collect();
 
     for path in &hhc_files {

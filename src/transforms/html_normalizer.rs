@@ -3,6 +3,13 @@
 use std::borrow::Cow;
 
 use crate::domain::Book;
+
+/// Appends a `&str` slice to a `String` without re-validating UTF-8.
+#[inline(always)]
+fn push_str_unchecked(out: &mut String, s: &str) {
+    // SAFETY: `s` is `&str`, so its bytes are guaranteed valid UTF-8.
+    unsafe { out.as_mut_vec().extend_from_slice(s.as_bytes()) }
+}
 use crate::domain::traits::Transform;
 use crate::error::Result;
 
@@ -81,9 +88,9 @@ fn normalize_xhtml(html: &str) -> Cow<'_, str> {
                     // Check if this is a <style or <script opening tag whose
                     // content should be stripped entirely.
                     if let Some(block_end) = try_skip_style_or_script(bytes, special_pos) {
-                        let out = output
-                            .get_or_insert_with(|| String::with_capacity(len + len / 32));
-                        out.push_str(&html[copy_start..special_pos]);
+                        let out =
+                            output.get_or_insert_with(|| String::with_capacity(len + len / 32));
+                        push_str_unchecked(out, &html[copy_start..special_pos]);
                         copy_start = block_end;
                         pos = block_end;
                         continue;
@@ -100,7 +107,7 @@ fn normalize_xhtml(html: &str) -> Cow<'_, str> {
                                 let out = output
                                     .get_or_insert_with(|| String::with_capacity(len + len / 32));
                                 // Flush everything from copy_start up to the tag.
-                                out.push_str(&html[copy_start..special_pos]);
+                                push_str_unchecked(out, &html[copy_start..special_pos]);
                                 normalize_tag_into(out, tag_str);
                                 copy_start = tag_end;
                             }
@@ -135,10 +142,10 @@ fn normalize_xhtml(html: &str) -> Cow<'_, str> {
                         pos = scan + 1;
                     } else {
                         // Bare ampersand -- escape it. Lazily allocate.
-                        let out = output
-                            .get_or_insert_with(|| String::with_capacity(len + len / 32));
+                        let out =
+                            output.get_or_insert_with(|| String::with_capacity(len + len / 32));
                         // Flush everything from copy_start up to the ampersand.
-                        out.push_str(&html[copy_start..special_pos]);
+                        push_str_unchecked(out, &html[copy_start..special_pos]);
                         out.push_str("&amp;");
                         copy_start = special_pos + 1;
                         pos = special_pos + 1;
@@ -152,7 +159,7 @@ fn normalize_xhtml(html: &str) -> Cow<'_, str> {
         Some(mut s) => {
             // Flush any remaining uncopied tail.
             if copy_start < len {
-                s.push_str(&html[copy_start..]);
+                push_str_unchecked(&mut s, &html[copy_start..]);
             }
             Cow::Owned(s)
         },
@@ -183,8 +190,12 @@ fn try_skip_style_or_script(bytes: &[u8], tag_start: usize) -> Option<usize> {
         if remaining_len >= 7 && remaining[1..6].eq_ignore_ascii_case(b"style") {
             // Check the byte after "style": must be whitespace, '>', or '/'.
             let after = remaining[6];
-            if after == b'>' || after == b' ' || after == b'\t' || after == b'\n'
-                || after == b'\r' || after == b'/'
+            if after == b'>'
+                || after == b' '
+                || after == b'\t'
+                || after == b'\n'
+                || after == b'\r'
+                || after == b'/'
             {
                 (5, b"</style>")
             } else {
@@ -192,8 +203,12 @@ fn try_skip_style_or_script(bytes: &[u8], tag_start: usize) -> Option<usize> {
             }
         } else if remaining_len >= 8 && remaining[1..7].eq_ignore_ascii_case(b"script") {
             let after = remaining[7];
-            if after == b'>' || after == b' ' || after == b'\t' || after == b'\n'
-                || after == b'\r' || after == b'/'
+            if after == b'>'
+                || after == b' '
+                || after == b'\t'
+                || after == b'\n'
+                || after == b'\r'
+                || after == b'/'
             {
                 (6, b"</script>")
             } else {
@@ -223,8 +238,7 @@ fn try_skip_style_or_script(bytes: &[u8], tag_start: usize) -> Option<usize> {
             Some(offset) => {
                 let candidate = scan + offset;
                 if candidate + close_tag_len <= bytes.len()
-                    && bytes[candidate..candidate + close_tag_len]
-                        .eq_ignore_ascii_case(close_tag)
+                    && bytes[candidate..candidate + close_tag_len].eq_ignore_ascii_case(close_tag)
                 {
                     return Some(candidate + close_tag_len);
                 }
@@ -306,8 +320,8 @@ fn is_void_element_fast(name: &[u8]) -> bool {
 
     match (n, first) {
         // 2-letter: br, hr
-        (2, b'b') => name[1].to_ascii_lowercase() == b'r',
-        (2, b'h') => name[1].to_ascii_lowercase() == b'r',
+        (2, b'b') => name[1].eq_ignore_ascii_case(&b'r'),
+        (2, b'h') => name[1].eq_ignore_ascii_case(&b'r'),
         // 3-letter: img, col, wbr
         (3, b'i') => eq_lower2(&name[1..3], b"mg"),
         (3, b'c') => eq_lower2(&name[1..3], b"ol"),
@@ -472,20 +486,14 @@ mod tests {
     fn normalizer_strips_style_block() {
         let input = "<head><style>body { margin: 0; }</style></head><body><p>Hello</p></body>";
         let result = normalize_xhtml(input);
-        assert_eq!(
-            &*result,
-            "<head></head><body><p>Hello</p></body>"
-        );
+        assert_eq!(&*result, "<head></head><body><p>Hello</p></body>");
     }
 
     #[test]
     fn normalizer_strips_script_block() {
         let input = "<head><script>alert('xss');</script></head><body><p>Hello</p></body>";
         let result = normalize_xhtml(input);
-        assert_eq!(
-            &*result,
-            "<head></head><body><p>Hello</p></body>"
-        );
+        assert_eq!(&*result, "<head></head><body><p>Hello</p></body>");
     }
 
     #[test]

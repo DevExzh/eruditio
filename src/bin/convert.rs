@@ -30,7 +30,6 @@ struct Cli {
     output: Option<PathBuf>,
 
     // ── Metadata overrides ──────────────────────────────────────────
-
     /// Set the book title.
     #[arg(long)]
     title: Option<String>,
@@ -72,7 +71,6 @@ struct Cli {
     rights: Option<String>,
 
     // ── Transform control ───────────────────────────────────────────
-
     /// Disable all transforms (pass-through conversion).
     #[arg(long)]
     no_transforms: bool,
@@ -102,7 +100,6 @@ struct Cli {
     no_data_uri_extract: bool,
 
     // ── Output control ──────────────────────────────────────────────
-
     /// Print supported input and output formats, then exit.
     #[arg(long)]
     list_formats: bool,
@@ -196,10 +193,7 @@ fn run_conversion(cli: &Cli, input_path: &PathBuf, output_path: &PathBuf) -> Res
         eprintln!("Time:     {elapsed:.2?}");
     }
 
-    eprintln!(
-        "Output written to {}",
-        output_path.display()
-    );
+    eprintln!("Output written to {}", output_path.display());
 
     Ok(())
 }

@@ -102,10 +102,9 @@ impl FormatReader for OebReader {
                     Ok(f) => f.name().to_string(),
                     Err(_) => continue,
                 };
-                let lower = name.to_lowercase();
-                if (lower.ends_with(".html")
-                    || lower.ends_with(".htm")
-                    || lower.ends_with(".xhtml"))
+                if (text_utils::ends_with_ascii_ci(&name, ".html")
+                    || text_utils::ends_with_ascii_ci(&name, ".htm")
+                    || text_utils::ends_with_ascii_ci(&name, ".xhtml"))
                     && let Ok(bytes) = read_zip_entry(&mut archive, &name)
                 {
                     let content = String::from_utf8_lossy(&bytes).into_owned();
@@ -132,12 +131,11 @@ impl FormatReader for OebReader {
             .filter_map(|i| {
                 let f = archive.by_index(i).ok()?;
                 let name = f.name().to_string();
-                let lower = name.to_lowercase();
-                if lower.ends_with(".jpg")
-                    || lower.ends_with(".jpeg")
-                    || lower.ends_with(".png")
-                    || lower.ends_with(".gif")
-                    || lower.ends_with(".svg")
+                if text_utils::ends_with_ascii_ci(&name, ".jpg")
+                    || text_utils::ends_with_ascii_ci(&name, ".jpeg")
+                    || text_utils::ends_with_ascii_ci(&name, ".png")
+                    || text_utils::ends_with_ascii_ci(&name, ".gif")
+                    || text_utils::ends_with_ascii_ci(&name, ".svg")
                 {
                     Some(name)
                 } else {
@@ -534,7 +532,7 @@ fn extract_title(html: &str) -> Option<String> {
 /// Finds the OPF file in the archive.
 fn find_opf_file<R: Read + std::io::Seek>(archive: &ZipArchive<R>) -> Option<String> {
     for name in archive.file_names() {
-        if name.to_lowercase().ends_with(".opf") {
+        if text_utils::ends_with_ascii_ci(name, ".opf") {
             return Some(name.to_string());
         }
     }
@@ -559,19 +557,21 @@ fn is_content_type(media_type: &str) -> bool {
 }
 
 fn is_html_href(href: &str) -> bool {
-    let lower = href.to_lowercase();
-    lower.ends_with(".html") || lower.ends_with(".htm") || lower.ends_with(".xhtml")
+    text_utils::ends_with_ascii_ci(href, ".html")
+        || text_utils::ends_with_ascii_ci(href, ".htm")
+        || text_utils::ends_with_ascii_ci(href, ".xhtml")
 }
 
 fn guess_media_type(filename: &str) -> &'static str {
-    let lower = filename.to_lowercase();
-    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+    if text_utils::ends_with_ascii_ci(filename, ".jpg")
+        || text_utils::ends_with_ascii_ci(filename, ".jpeg")
+    {
         "image/jpeg"
-    } else if lower.ends_with(".png") {
+    } else if text_utils::ends_with_ascii_ci(filename, ".png") {
         "image/png"
-    } else if lower.ends_with(".gif") {
+    } else if text_utils::ends_with_ascii_ci(filename, ".gif") {
         "image/gif"
-    } else if lower.ends_with(".svg") {
+    } else if text_utils::ends_with_ascii_ci(filename, ".svg") {
         "image/svg+xml"
     } else {
         "application/octet-stream"

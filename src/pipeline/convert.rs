@@ -235,8 +235,10 @@ mod tests {
             id: Some("ch1".into()),
         });
 
-        let mut overrides = crate::domain::Metadata::default();
-        overrides.title = Some("Overridden Title".into());
+        let overrides = crate::domain::Metadata {
+            title: Some("Overridden Title".into()),
+            ..Default::default()
+        };
 
         let options = ConversionOptions::none().with_metadata(overrides);
 

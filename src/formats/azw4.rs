@@ -5,8 +5,8 @@
 
 use crate::domain::{Book, FormatReader};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::palm_db::PdbFile;
 use crate::formats::common::MAX_INPUT_SIZE;
+use crate::formats::common::palm_db::PdbFile;
 use crate::formats::pdf::PdfReader;
 use std::io::{Cursor, Read};
 

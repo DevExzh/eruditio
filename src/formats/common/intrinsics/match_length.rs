@@ -211,7 +211,8 @@ pub(crate) fn common_prefix_length_scalar(a: &[u8], b: &[u8], max_len: usize) ->
 ///
 /// Selects the best available SIMD implementation at runtime.  The effective
 /// comparison length is `max_len.min(a.len()).min(b.len())`.
-#[allow(unreachable_code)]
+#[allow(unreachable_code, dead_code)]
+#[inline]
 pub(crate) fn common_prefix_length(a: &[u8], b: &[u8], max_len: usize) -> usize {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {

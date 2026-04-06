@@ -438,7 +438,9 @@ mod tests {
         let mut book = sample_book();
         book.metadata.isbn = Some("978-3-16-148410-0".into());
         let opf = generate_opf(&book);
-        assert!(opf.contains(r#"<dc:identifier opf:scheme="ISBN">978-3-16-148410-0</dc:identifier>"#));
+        assert!(
+            opf.contains(r#"<dc:identifier opf:scheme="ISBN">978-3-16-148410-0</dc:identifier>"#)
+        );
         // The primary identifier should still be present
         assert!(opf.contains(r#"<dc:identifier id="uid">urn:test:12345</dc:identifier>"#));
     }
@@ -705,7 +707,9 @@ mod tests {
     #[test]
     fn opf_version_preserves_2_0() {
         let mut book = sample_book();
-        book.metadata.extended.insert("opf:version".into(), "2.0".into());
+        book.metadata
+            .extended
+            .insert("opf:version".into(), "2.0".into());
         let opf = generate_opf(&book);
         assert!(
             opf.contains(r#"version="2.0""#),
@@ -724,13 +728,18 @@ mod tests {
         use crate::formats::epub::opf::parse_opf_xml;
 
         let mut book = sample_book();
-        book.metadata.extended.insert("opf:version".into(), "2.0".into());
+        book.metadata
+            .extended
+            .insert("opf:version".into(), "2.0".into());
 
         let opf_xml = generate_opf(&book);
         let data = parse_opf_xml(&opf_xml).unwrap();
 
         assert_eq!(
-            data.metadata.extended.get("opf:version").map(|s| s.as_str()),
+            data.metadata
+                .extended
+                .get("opf:version")
+                .map(|s| s.as_str()),
             Some("2.0"),
             "OPF version 2.0 should survive round-trip"
         );
@@ -743,21 +752,37 @@ mod tests {
         let mut book = sample_book();
         book.metadata.additional_dates = vec![
             (Some("publication".into()), "2008-06-27".into()),
-            (Some("conversion".into()), "2026-03-01T08:32:03.786809+00:00".into()),
+            (
+                Some("conversion".into()),
+                "2026-03-01T08:32:03.786809+00:00".into(),
+            ),
         ];
 
         let opf_xml = generate_opf(&book);
-        assert!(opf_xml.contains(r#"opf:event="publication">2008-06-27</dc:date>"#),
-            "Publication date should appear in output. Got:\n{}", opf_xml);
-        assert!(opf_xml.contains(r#"opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>"#),
-            "Conversion date should appear in output. Got:\n{}", opf_xml);
+        assert!(
+            opf_xml.contains(r#"opf:event="publication">2008-06-27</dc:date>"#),
+            "Publication date should appear in output. Got:\n{}",
+            opf_xml
+        );
+        assert!(
+            opf_xml
+                .contains(r#"opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>"#),
+            "Conversion date should appear in output. Got:\n{}",
+            opf_xml
+        );
 
         // Parse back and verify both dates survived.
         let data = parse_opf_xml(&opf_xml).unwrap();
-        assert_eq!(data.metadata.additional_dates.len(), 2,
-            "Both dates should survive round-trip");
+        assert_eq!(
+            data.metadata.additional_dates.len(),
+            2,
+            "Both dates should survive round-trip"
+        );
         assert_eq!(data.metadata.additional_dates[0].1, "2008-06-27");
-        assert_eq!(data.metadata.additional_dates[1].1, "2026-03-01T08:32:03.786809+00:00");
+        assert_eq!(
+            data.metadata.additional_dates[1].1,
+            "2026-03-01T08:32:03.786809+00:00"
+        );
     }
 
     #[test]

@@ -5,6 +5,7 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
+use crate::formats::common::text_utils::ends_with_ascii_ci;
 use crate::formats::pml::{PmlReader, PmlWriter};
 use std::io::{Cursor, Read, Write};
 
@@ -31,7 +32,7 @@ impl FormatReader for PmlzReader {
             .filter_map(|i| {
                 let file = archive.by_index(i).ok()?;
                 let name = file.name().to_string();
-                if name.to_lowercase().ends_with(".pml") {
+                if ends_with_ascii_ci(&name, ".pml") {
                     Some(name)
                 } else {
                     None

@@ -1,5 +1,6 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use crate::formats::common::text_utils::ends_with_ascii_ci;
 use crate::formats::txt::{TxtReader, TxtWriter};
 use std::io::{Cursor, Read, Seek, Write};
 use zip::write::FileOptions;
@@ -72,7 +73,7 @@ fn find_file_by_extension<R: Read + Seek>(
     for i in 0..archive.len() {
         if let Ok(file) = archive.by_index(i) {
             let name = file.name().to_string();
-            if name.to_lowercase().ends_with(&format!(".{}", ext)) {
+            if ends_with_ascii_ci(&name, &format!(".{}", ext)) {
                 return Some(name);
             }
         }

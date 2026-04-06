@@ -98,8 +98,10 @@ mod tests {
             id: Some("ch1".into()),
         });
 
-        let mut overrides = Metadata::default();
-        overrides.title = Some("New Title".into());
+        let overrides = Metadata {
+            title: Some("New Title".into()),
+            ..Default::default()
+        };
 
         let merger = MetadataMerger::new(overrides);
         let result = merger.apply(book).unwrap();
@@ -113,8 +115,10 @@ mod tests {
         book.metadata.title = Some("Keep Me".into());
         book.metadata.language = Some("en".into());
 
-        let mut overrides = Metadata::default();
-        overrides.publisher = Some("New Publisher".into());
+        let overrides = Metadata {
+            publisher: Some("New Publisher".into()),
+            ..Default::default()
+        };
 
         let merger = MetadataMerger::new(overrides);
         let result = merger.apply(book).unwrap();
@@ -129,8 +133,10 @@ mod tests {
         let mut book = Book::new();
         book.metadata.authors = vec!["Original Author".into()];
 
-        let mut overrides = Metadata::default();
-        overrides.authors = vec!["New Author".into()];
+        let overrides = Metadata {
+            authors: vec!["New Author".into()],
+            ..Default::default()
+        };
 
         let merger = MetadataMerger::new(overrides);
         let result = merger.apply(book).unwrap();
@@ -178,8 +184,10 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Original".into());
 
-        let mut overrides = Metadata::default();
-        overrides.title = Some("Changed".into());
+        let overrides = Metadata {
+            title: Some("Changed".into()),
+            ..Default::default()
+        };
 
         let merger = MetadataMerger::new(overrides);
         let _result = merger.apply(book.clone()).unwrap();

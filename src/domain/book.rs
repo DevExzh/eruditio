@@ -244,7 +244,10 @@ mod tests {
 
         let resources = book.resources();
         let css_res = resources.iter().find(|r| r.media_type == "text/css");
-        assert!(css_res.is_some(), "CSS stored as Text should appear in resources()");
+        assert!(
+            css_res.is_some(),
+            "CSS stored as Text should appear in resources()"
+        );
         assert_eq!(
             std::str::from_utf8(css_res.unwrap().data).unwrap(),
             "body { color: blue; }"
@@ -254,12 +257,15 @@ mod tests {
     #[test]
     fn resource_data_returns_text_css() {
         let mut book = Book::new();
-        let css_item = ManifestItem::new("my-css", "style.css", "text/css")
-            .with_text("p { margin: 0; }");
+        let css_item =
+            ManifestItem::new("my-css", "style.css", "text/css").with_text("p { margin: 0; }");
         book.manifest.insert(css_item);
 
         let data = book.resource_data("my-css");
-        assert!(data.is_some(), "resource_data should return bytes for Text items");
+        assert!(
+            data.is_some(),
+            "resource_data should return bytes for Text items"
+        );
         assert_eq!(
             std::str::from_utf8(data.unwrap()).unwrap(),
             "p { margin: 0; }"

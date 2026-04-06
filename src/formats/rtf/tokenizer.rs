@@ -18,10 +18,7 @@ pub enum RtfToken<'a> {
     GroupEnd,
     /// A control word like `\par`, `\b`, `\fs24`.
     /// The parameter is optional (e.g., `\b` has no param, `\fs24` has param 24).
-    ControlWord {
-        name: Cow<'a, str>,
-        param: Option<i32>,
-    },
+    ControlWord { name: &'a str, param: Option<i32> },
     /// A control symbol like `\\`, `\{`, `\}`, `\~`, `\-`, `\_`.
     ControlSymbol(char),
     /// A hex-encoded byte: `\'HH`.
@@ -95,11 +92,11 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
             b'{' => {
                 tokens.push(RtfToken::GroupStart);
                 pos += 1;
-            }
+            },
             b'}' => {
                 tokens.push(RtfToken::GroupEnd);
                 pos += 1;
-            }
+            },
             b'\\' => {
                 pos += 1;
                 if pos >= len {
@@ -117,16 +114,16 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                             }
                             pos += 2;
                         }
-                    }
+                    },
                     // Control symbols: \\ \{ \} \~ \- \_
                     c @ (b'\\' | b'{' | b'}' | b'~' | b'-' | b'_' | b'*') => {
                         tokens.push(RtfToken::ControlSymbol(c as char));
                         pos += 1;
-                    }
+                    },
                     // Newline after backslash = \par equivalent
                     b'\n' | b'\r' => {
                         tokens.push(RtfToken::ControlWord {
-                            name: Cow::Borrowed("par"),
+                            name: "par",
                             param: None,
                         });
                         pos += 1;
@@ -134,7 +131,7 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                         if pos < len && input[pos] == b'\n' {
                             pos += 1;
                         }
-                    }
+                    },
                     // Control word: letters followed by optional numeric parameter.
                     c if IS_ALPHA[c as usize] => {
                         let (name, param, new_pos) = read_control_word_fast(input, pos);
@@ -147,45 +144,39 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                                 let skip_pos = skip_unicode_replacement_fast(input, new_pos);
                                 pos = skip_pos;
                             } else {
-                                tokens.push(RtfToken::ControlWord {
-                                    name: Cow::Borrowed(name),
-                                    param,
-                                });
+                                tokens.push(RtfToken::ControlWord { name, param });
                                 pos = new_pos;
                             }
                         } else {
-                            tokens.push(RtfToken::ControlWord {
-                                name: Cow::Borrowed(name),
-                                param,
-                            });
+                            tokens.push(RtfToken::ControlWord { name, param });
                             pos = new_pos;
                         }
-                    }
+                    },
                     _ => {
                         // Unknown control symbol — treat as symbol.
                         tokens.push(RtfToken::ControlSymbol(input[pos] as char));
                         pos += 1;
-                    }
+                    },
                 }
-            }
+            },
             b'\n' | b'\r' => {
                 // Bare newlines and carriage returns are ignored in RTF.
                 // Skip consecutive newlines/CRs but NOT spaces/tabs (those are text).
                 while pos < len && matches!(input[pos], b'\n' | b'\r') {
                     pos += 1;
                 }
-            }
+            },
             _ => {
                 // Plain text — collect until we hit a control character.
                 let start = pos;
                 let remaining = &input[pos..len];
-                // Find next structural delimiter (\ { })
-                let struct_end =
-                    memchr::memchr3(b'\\', b'{', b'}', remaining).unwrap_or(remaining.len());
-                // Also check for newlines within that range
-                let nl_end =
-                    memchr::memchr2(b'\n', b'\r', &remaining[..struct_end]).unwrap_or(struct_end);
-                pos += struct_end.min(nl_end);
+                // Single SIMD-accelerated scan for all 5 delimiter bytes.
+                let end = crate::formats::common::intrinsics::byte_scan::find_first_in_set(
+                    remaining,
+                    b"\\{}\n\r",
+                )
+                .unwrap_or(remaining.len());
+                pos += end;
                 let slice = &input[start..pos];
                 if !slice.is_empty() {
                     // Fast path: if the text is valid UTF-8, borrow directly (zero-copy).
@@ -196,7 +187,7 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                     };
                     tokens.push(RtfToken::Text(text));
                 }
-            }
+            },
         }
     }
 
@@ -230,7 +221,9 @@ fn read_control_word_fast(input: &[u8], mut pos: usize) -> (&str, Option<i32>, u
         }
         let mut val: i32 = 0;
         while pos < len && input[pos].is_ascii_digit() {
-            val = val.wrapping_mul(10).wrapping_add((input[pos] - b'0') as i32);
+            val = val
+                .wrapping_mul(10)
+                .wrapping_add((input[pos] - b'0') as i32);
             pos += 1;
         }
         Some(if negative { -val } else { val })
@@ -258,10 +251,7 @@ fn skip_unicode_replacement_fast(input: &[u8], mut pos: usize) -> usize {
     // Skip a hex escape (\'HH = 4 bytes total), a control word, or a single byte.
     if pos + 3 < len && input[pos] == b'\\' && input[pos + 1] == b'\'' {
         pos += 4; // \' + HH (backslash, apostrophe, hex-hi, hex-lo)
-    } else if pos < len
-        && input[pos] == b'\\'
-        && pos + 1 < len
-        && IS_ALPHA[input[pos + 1] as usize]
+    } else if pos < len && input[pos] == b'\\' && pos + 1 < len && IS_ALPHA[input[pos + 1] as usize]
     {
         // Skip control word replacement.
         pos += 1;
@@ -311,7 +301,7 @@ mod tests {
         assert_eq!(
             tokens,
             vec![RtfToken::ControlWord {
-                name: "par".into(),
+                name: "par",
                 param: None,
             }]
         );
@@ -323,7 +313,7 @@ mod tests {
         assert_eq!(
             tokens,
             vec![RtfToken::ControlWord {
-                name: "fs".into(),
+                name: "fs",
                 param: Some(24),
             }]
         );
@@ -335,7 +325,7 @@ mod tests {
         assert_eq!(
             tokens,
             vec![RtfToken::ControlWord {
-                name: "li".into(),
+                name: "li",
                 param: Some(-720),
             }]
         );
@@ -380,12 +370,12 @@ mod tests {
             vec![
                 RtfToken::GroupStart,
                 RtfToken::ControlWord {
-                    name: "b".into(),
+                    name: "b",
                     param: None
                 },
                 RtfToken::Text("Bold".into()),
                 RtfToken::ControlWord {
-                    name: "b".into(),
+                    name: "b",
                     param: Some(0)
                 },
                 RtfToken::Text(" text".into()),
@@ -414,7 +404,7 @@ mod tests {
         assert_eq!(
             tokens[1],
             RtfToken::ControlWord {
-                name: "rtf".into(),
+                name: "rtf",
                 param: Some(1)
             }
         );

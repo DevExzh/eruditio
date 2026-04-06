@@ -15,6 +15,30 @@
 //! | *other*       | scalar loop    |
 
 // ---------------------------------------------------------------------------
+// Nibble lookup table builder (for pshufb set-membership technique)
+// ---------------------------------------------------------------------------
+
+/// Build 16-byte nibble lookup tables for `pshufb`-based set membership.
+///
+/// For each set member, its low nibble indexes into `lo_table` and its high
+/// nibble indexes into `hi_table`.  Each member gets a unique bit (up to 8).
+/// A byte `b` is in the set iff `lo_table[b & 0x0F] & hi_table[b >> 4] != 0`.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+fn build_nibble_luts(set: &[u8]) -> ([u8; 16], [u8; 16]) {
+    let mut lo = [0u8; 16];
+    let mut hi = [0u8; 16];
+    let mut i = 0;
+    while i < set.len() && i < 8 {
+        let bit = 1u8 << i;
+        lo[(set[i] & 0x0F) as usize] |= bit;
+        hi[((set[i] >> 4) & 0x0F) as usize] |= bit;
+        i += 1;
+    }
+    (lo, hi)
+}
+
+// ---------------------------------------------------------------------------
 // x86 / x86_64  SIMD implementations
 // ---------------------------------------------------------------------------
 
@@ -27,16 +51,23 @@ mod x86 {
 
     /// AVX2 implementation -- processes 32 bytes at a time, then a 16-byte
     /// SSE2 tail, then a scalar tail.
+    ///
+    /// For sets of 4-8 bytes, delegates to a `pshufb` nibble-split path
+    /// that is O(1) per chunk regardless of set size (simdjson technique).
+    /// For sets of 1-3 bytes, the per-needle `cmpeq` loop is faster.
     #[target_feature(enable = "avx2")]
     pub(super) unsafe fn find_first_in_set_avx2(haystack: &[u8], set: &[u8]) -> Option<usize> {
+        if set.len() >= 4 && set.len() <= 8 {
+            // SAFETY: AVX2 implies SSSE3 at runtime; the target_feature on
+            // the callee satisfies the compiler's static requirement.
+            return unsafe { find_first_in_set_avx2_pshufb(haystack, set) };
+        }
+
         let len = haystack.len();
         let mut i: usize = 0;
 
         // --- 32-byte AVX2 chunks ---
         while i + 32 <= len {
-            // SAFETY: `i + 32 <= len <= haystack.len()`, so the 32-byte
-            // unaligned load is within bounds. AVX2 is enabled by
-            // `target_feature`.
             unsafe {
                 let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
                 let mut combined = _mm256_setzero_si256();
@@ -55,7 +86,6 @@ mod x86 {
 
         // --- 16-byte SSE2 tail ---
         if i + 16 <= len {
-            // SAFETY: `i + 16 <= len <= haystack.len()`. SSE2 is implied by AVX2.
             unsafe {
                 let chunk = _mm_loadu_si128(haystack.as_ptr().add(i) as *const __m128i);
                 let mut combined = _mm_setzero_si128();
@@ -70,6 +100,74 @@ mod x86 {
                 }
             }
             i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if set.contains(&haystack[i]) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// AVX2 + SSSE3 pshufb nibble-split path for sets of 4-8 bytes.
+    ///
+    /// Builds two 16-byte lookup tables (one for low nibbles, one for high
+    /// nibbles) and checks membership with 2 `vpshufb` + 1 `vpand` per
+    /// 32-byte chunk — O(1) regardless of set size.
+    #[target_feature(enable = "avx2,ssse3")]
+    unsafe fn find_first_in_set_avx2_pshufb(haystack: &[u8], set: &[u8]) -> Option<usize> {
+        let (lo_lut, hi_lut) = super::build_nibble_luts(set);
+        let len = haystack.len();
+        let mut i: usize = 0;
+
+        unsafe {
+            // Broadcast 128-bit LUTs to both AVX2 lanes.
+            let lo128 = _mm_loadu_si128(lo_lut.as_ptr() as *const __m128i);
+            let hi128 = _mm_loadu_si128(hi_lut.as_ptr() as *const __m128i);
+            let lo256 = _mm256_broadcastsi128_si256(lo128);
+            let hi256 = _mm256_broadcastsi128_si256(hi128);
+            let mask_0f_256 = _mm256_set1_epi8(0x0F);
+            let zero256 = _mm256_setzero_si256();
+
+            // --- 32-byte AVX2 chunks ---
+            while i + 32 <= len {
+                let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
+                let lo_nib = _mm256_and_si256(chunk, mask_0f_256);
+                let hi_nib = _mm256_and_si256(_mm256_srli_epi16(chunk, 4), mask_0f_256);
+                let lo_match = _mm256_shuffle_epi8(lo256, lo_nib);
+                let hi_match = _mm256_shuffle_epi8(hi256, hi_nib);
+                let matched = _mm256_and_si256(lo_match, hi_match);
+
+                // Fast path: testz returns 1 when matched is all-zero (no match).
+                if _mm256_testz_si256(matched, matched) == 0 {
+                    let zero_mask =
+                        _mm256_movemask_epi8(_mm256_cmpeq_epi8(matched, zero256)) as u32;
+                    return Some(i + (!zero_mask).trailing_zeros() as usize);
+                }
+                i += 32;
+            }
+
+            // --- 16-byte SSSE3 tail ---
+            let mask_0f_128 = _mm_set1_epi8(0x0F);
+            let zero128 = _mm_setzero_si128();
+
+            if i + 16 <= len {
+                let chunk = _mm_loadu_si128(haystack.as_ptr().add(i) as *const __m128i);
+                let lo_nib = _mm_and_si128(chunk, mask_0f_128);
+                let hi_nib = _mm_and_si128(_mm_srli_epi16(chunk, 4), mask_0f_128);
+                let lo_match = _mm_shuffle_epi8(lo128, lo_nib);
+                let hi_match = _mm_shuffle_epi8(hi128, hi_nib);
+                let matched = _mm_and_si128(lo_match, hi_match);
+
+                let zero_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(matched, zero128)) as u32;
+                if zero_mask != 0xFFFF {
+                    return Some(i + ((!zero_mask) & 0xFFFF).trailing_zeros() as usize);
+                }
+                i += 16;
+            }
         }
 
         // --- scalar tail ---
@@ -234,6 +332,7 @@ pub(crate) fn find_first_in_set_scalar(haystack: &[u8], set: &[u8]) -> Option<us
 ///
 /// Selects the best available SIMD implementation at runtime.
 #[allow(unreachable_code)]
+#[inline]
 pub(crate) fn find_first_in_set(haystack: &[u8], set: &[u8]) -> Option<usize> {
     if set.is_empty() || haystack.is_empty() {
         return None;

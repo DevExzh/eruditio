@@ -20,6 +20,7 @@ pub(crate) fn byte_histogram_scalar(data: &[u8]) -> [u32; 256] {
 /// Uses 4 independent counter arrays to avoid store-forwarding stalls
 /// when consecutive bytes index the same cache line.
 #[allow(dead_code)]
+#[inline]
 pub(crate) fn byte_histogram(data: &[u8]) -> [u32; 256] {
     if data.len() < 64 {
         return byte_histogram_scalar(data);
@@ -69,7 +70,7 @@ mod tests {
 
     #[test]
     fn single_byte() {
-        let counts = byte_histogram(&[b'A']);
+        let counts = byte_histogram(b"A");
         assert_eq!(counts[b'A' as usize], 1);
         assert_eq!(counts.iter().copied().sum::<u32>(), 1);
     }

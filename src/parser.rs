@@ -40,7 +40,7 @@ impl EruditioParser {
     /// Parse an ebook from a reader, using a format hint (typically a file extension).
     pub fn parse<R: Read>(reader: &mut R, format_hint: Option<&str>) -> Result<Book> {
         match format_hint {
-            Some(fmt) => match fmt.to_lowercase().as_str() {
+            Some(fmt) => match fmt.to_ascii_lowercase().as_str() {
                 "cbz" => CbzReader::new().read_book(reader),
                 #[cfg(feature = "cb7")]
                 "cb7" => Cb7Reader::new().read_book(reader),

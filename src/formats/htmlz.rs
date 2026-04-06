@@ -7,12 +7,13 @@
 
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
-use crate::formats::common::xml_utils;
 use crate::formats::common::MAX_INPUT_SIZE;
+use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
+use crate::formats::common::text_utils::ends_with_ascii_ci;
+use crate::formats::common::xml_utils;
 use crate::formats::html::HtmlReader;
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 use std::io::{Cursor, Read, Seek, Write};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -30,7 +31,9 @@ impl HtmlzReader {
 impl FormatReader for HtmlzReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut buffer = Vec::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut buffer)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_end(&mut buffer)?;
         let cursor = Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)?;
@@ -73,18 +76,19 @@ impl FormatReader for HtmlzReader {
             .collect();
 
         for name in &file_names {
-            if name.starts_with("images/") && name.len() > "images/".len() {
-                if let Ok(mut file) = archive.by_name(name) {
-                    let mut data = Vec::new();
-                    if file.read_to_end(&mut data).is_ok() && !data.is_empty() {
-                        let filename = name.rsplit('/').next().unwrap_or(name);
-                        let media_type = guess_media_type(filename);
-                        let id = filename
-                            .rsplit_once('.')
-                            .map(|(base, _)| base)
-                            .unwrap_or(filename);
-                        book.add_resource(id, name.as_str(), data, media_type);
-                    }
+            if name.starts_with("images/")
+                && name.len() > "images/".len()
+                && let Ok(mut file) = archive.by_name(name)
+            {
+                let mut data = Vec::new();
+                if file.read_to_end(&mut data).is_ok() && !data.is_empty() {
+                    let filename = name.rsplit('/').next().unwrap_or(name);
+                    let media_type = guess_media_type(filename);
+                    let id = filename
+                        .rsplit_once('.')
+                        .map(|(base, _)| base)
+                        .unwrap_or(filename);
+                    book.add_resource(id, name.as_str(), data, media_type);
                 }
             }
         }
@@ -146,17 +150,14 @@ impl FormatWriter for HtmlzWriter {
 
             // 2. Write metadata.opf
             let opf = generate_htmlz_opf(book);
-            zip.start_file("metadata.opf", options)
-                .map_err(|e| {
-                    EruditioError::Format(format!("Failed to write metadata.opf: {}", e))
-                })?;
+            zip.start_file("metadata.opf", options).map_err(|e| {
+                EruditioError::Format(format!("Failed to write metadata.opf: {}", e))
+            })?;
             zip.write_all(opf.as_bytes())?;
 
             // 3. Write style.css
             zip.start_file("style.css", options)
-                .map_err(|e| {
-                    EruditioError::Format(format!("Failed to write style.css: {}", e))
-                })?;
+                .map_err(|e| EruditioError::Format(format!("Failed to write style.css: {}", e)))?;
             zip.write_all(css_content.as_bytes())?;
 
             // 4. Write image resources
@@ -215,8 +216,7 @@ fn generate_htmlz_content(book: &Book) -> String {
     // them without the prefix (e.g. src="cover.jpg" instead of src="images/cover.jpg").
     let body = rewrite_image_src(&body);
 
-    let mut html =
-        crate::formats::html::parser::build_html_document(title, &book.metadata, &body);
+    let mut html = crate::formats::html::parser::build_html_document(title, &book.metadata, &body);
 
     // Inject stylesheet link into <head> (before </head>)
     if let Some(pos) = html.find("</head>") {
@@ -391,9 +391,12 @@ fn generate_htmlz_opf(book: &Book) -> String {
 fn find_html_file<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Option<String> {
     for i in 0..archive.len() {
         if let Ok(file) = archive.by_index(i) {
-            let name = file.name().to_lowercase();
-            if name.ends_with(".html") || name.ends_with(".htm") || name.ends_with(".xhtml") {
-                return Some(file.name().to_string());
+            let name = file.name();
+            if ends_with_ascii_ci(name, ".html")
+                || ends_with_ascii_ci(name, ".htm")
+                || ends_with_ascii_ci(name, ".xhtml")
+            {
+                return Some(name.to_string());
             }
         }
     }
@@ -441,7 +444,7 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                             .or_else(|| xml_utils::get_attribute(e, "file-as"));
                     }
                 }
-            }
+            },
             Ok(Event::Empty(ref e)) => {
                 let name = e.name();
                 let tag = xml_utils::local_tag_name(name.as_ref());
@@ -455,29 +458,29 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                 if book.metadata.series.is_none() {
                                     book.metadata.series = Some(content);
                                 }
-                            }
+                            },
                             "calibre:series_index" => {
-                                if book.metadata.series_index.is_none() {
-                                    if let Ok(idx) = content.parse::<f64>() {
-                                        book.metadata.series_index = Some(idx);
-                                    }
+                                if book.metadata.series_index.is_none()
+                                    && let Ok(idx) = content.parse::<f64>()
+                                {
+                                    book.metadata.series_index = Some(idx);
                                 }
-                            }
+                            },
                             "cover" => {
                                 if book.metadata.cover_image_id.is_none() {
                                     book.metadata.cover_image_id = Some(content);
                                 }
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
-            }
+            },
             Ok(Event::Text(ref e)) => {
                 if in_metadata && !current_tag.is_empty() {
                     current_text = xml_utils::bytes_to_string(e.as_ref());
                 }
-            }
+            },
             Ok(Event::End(ref e)) => {
                 let name = e.name();
                 let tag = xml_utils::local_tag_name(name.as_ref());
@@ -491,52 +494,52 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                 if book.metadata.title.is_none() {
                                     book.metadata.title = Some(text);
                                 }
-                            }
+                            },
                             "creator" => {
                                 // Capture opf:file-as from the first creator
-                                if book.metadata.author_sort.is_none() {
-                                    if let Some(ref fa) = current_file_as {
-                                        book.metadata.author_sort = Some(fa.clone());
-                                    }
+                                if book.metadata.author_sort.is_none()
+                                    && let Some(ref fa) = current_file_as
+                                {
+                                    book.metadata.author_sort = Some(fa.clone());
                                 }
                                 opf_authors.push(text);
-                            }
+                            },
                             "language" => {
                                 if book.metadata.language.is_none() {
                                     book.metadata.language = Some(text);
                                 }
-                            }
+                            },
                             "publisher" => {
                                 if book.metadata.publisher.is_none() {
                                     book.metadata.publisher = Some(text);
                                 }
-                            }
+                            },
                             "identifier" => {
                                 if let Some(ref scheme) = current_scheme {
-                                    if scheme.eq_ignore_ascii_case("ISBN") {
-                                        if book.metadata.isbn.is_none() {
-                                            book.metadata.isbn = Some(text);
-                                        }
+                                    if scheme.eq_ignore_ascii_case("ISBN")
+                                        && book.metadata.isbn.is_none()
+                                    {
+                                        book.metadata.isbn = Some(text);
                                     }
                                 } else if book.metadata.identifier.is_none() {
                                     book.metadata.identifier = Some(text);
                                 }
-                            }
+                            },
                             "description" => {
                                 if book.metadata.description.is_none() {
                                     book.metadata.description = Some(text);
                                 }
-                            }
+                            },
                             "subject" => {
                                 if !book.metadata.subjects.contains(&text) {
                                     book.metadata.subjects.push(text);
                                 }
-                            }
+                            },
                             "rights" => {
                                 if book.metadata.rights.is_none() {
                                     book.metadata.rights = Some(text);
                                 }
-                            }
+                            },
                             "date" => {
                                 if book.metadata.publication_date.is_none() {
                                     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&text) {
@@ -545,9 +548,8 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                     } else if let Ok(date) =
                                         chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
                                     {
-                                        book.metadata.publication_date = date
-                                            .and_hms_opt(0, 0, 0)
-                                            .and_then(|ndt| {
+                                        book.metadata.publication_date =
+                                            date.and_hms_opt(0, 0, 0).and_then(|ndt| {
                                                 ndt.and_local_timezone(chrono::Utc).single()
                                             });
                                     } else if let Ok(year) = text.parse::<i32>() {
@@ -559,17 +561,17 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                                                 });
                                     }
                                 }
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                     current_tag.clear();
                     current_text.clear();
                 }
-            }
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
-            _ => {}
+            _ => {},
         }
         buf.clear();
     }
@@ -776,7 +778,12 @@ p { margin: 0.5em 0; text-indent: 1.5em; }
 
 /// Guesses MIME type from a filename extension.
 fn guess_media_type(filename: &str) -> &'static str {
-    match filename.rsplit('.').next().map(|e| e.to_lowercase()).as_deref() {
+    match filename
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
@@ -857,7 +864,9 @@ mod tests {
         // Verify the ZIP contains metadata.opf
         let cursor = Cursor::new(output);
         let mut archive = ZipArchive::new(cursor).unwrap();
-        let mut opf = archive.by_name("metadata.opf").expect("metadata.opf should exist");
+        let mut opf = archive
+            .by_name("metadata.opf")
+            .expect("metadata.opf should exist");
         let mut opf_content = String::new();
         opf.read_to_string(&mut opf_content).unwrap();
 
@@ -874,7 +883,12 @@ mod tests {
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_resource("img1", "images/cover.png", vec![0x89, 0x50, 0x4E, 0x47], "image/png");
+        book.add_resource(
+            "img1",
+            "images/cover.png",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
 
         let mut output = Vec::new();
         HtmlzWriter::new().write_book(&book, &mut output).unwrap();
@@ -1142,7 +1156,9 @@ mod tests {
         // Verify the ZIP contains style.css with the manifest CSS content
         let cursor = Cursor::new(output);
         let mut archive = ZipArchive::new(cursor).unwrap();
-        let mut css_file = archive.by_name("style.css").expect("style.css should exist");
+        let mut css_file = archive
+            .by_name("style.css")
+            .expect("style.css should exist");
         let mut css_content = String::new();
         css_file.read_to_string(&mut css_content).unwrap();
         assert!(
@@ -1167,7 +1183,9 @@ mod tests {
         // Verify the ZIP contains style.css with default stylesheet
         let cursor = Cursor::new(output);
         let mut archive = ZipArchive::new(cursor).unwrap();
-        let mut css_file = archive.by_name("style.css").expect("style.css should exist");
+        let mut css_file = archive
+            .by_name("style.css")
+            .expect("style.css should exist");
         let mut css_content = String::new();
         css_file.read_to_string(&mut css_content).unwrap();
         assert!(
@@ -1280,7 +1298,9 @@ mod tests {
 
         // Verify file-as on first author only
         assert!(
-            opf.contains("opf:file-as=\"Author, Alice\" opf:role=\"aut\">Alice Author</dc:creator>"),
+            opf.contains(
+                "opf:file-as=\"Author, Alice\" opf:role=\"aut\">Alice Author</dc:creator>"
+            ),
             "First author should have opf:file-as attribute. Got:\n{}",
             opf
         );
@@ -1443,7 +1463,9 @@ mod tests {
         // Verify the ZIP contains style.css with the EPUB CSS content
         let cursor = Cursor::new(output);
         let mut archive = ZipArchive::new(cursor).unwrap();
-        let mut css_file = archive.by_name("style.css").expect("style.css should exist");
+        let mut css_file = archive
+            .by_name("style.css")
+            .expect("style.css should exist");
         let mut css_content = String::new();
         css_file.read_to_string(&mut css_content).unwrap();
         assert!(
@@ -1808,7 +1830,10 @@ mod tests {
     fn strip_xhtml_wrapper_preserves_plain_html() {
         let input = "<p>Just a paragraph</p><p>Another one</p>";
         let result = strip_xhtml_wrapper(input);
-        assert_eq!(result, input, "Plain HTML without wrappers should be unchanged");
+        assert_eq!(
+            result, input,
+            "Plain HTML without wrappers should be unchanged"
+        );
     }
 
     // -- strip_link_tags tests ----------------------------------------------

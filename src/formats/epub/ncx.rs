@@ -112,7 +112,7 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                     "text" if in_nav_label => {
                         collecting_text = false;
                         if let Some(item) = stack.last_mut() {
-                            item.title = current_text.clone();
+                            item.title = std::mem::take(&mut current_text);
                         }
                     },
                     _ => {},

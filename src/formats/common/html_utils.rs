@@ -60,8 +60,14 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
         return content;
     }
     if !(rest[1].eq_ignore_ascii_case(&b'h')
-        && rest[2].is_ascii_digit() && rest[2] >= b'1' && rest[2] <= b'6'
-        && (rest[3] == b'>' || rest[3] == b' ' || rest[3] == b'\t' || rest[3] == b'\n' || rest[3] == b'\r'))
+        && rest[2].is_ascii_digit()
+        && rest[2] >= b'1'
+        && rest[2] <= b'6'
+        && (rest[3] == b'>'
+            || rest[3] == b' '
+            || rest[3] == b'\t'
+            || rest[3] == b'\n'
+            || rest[3] == b'\r'))
     {
         return content;
     }
@@ -88,9 +94,7 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let heading_text = strip_tags(heading_html);
 
     // Normalise whitespace for comparison: collapse runs of whitespace to a single space.
-    let normalise = |s: &str| -> String {
-        s.split_whitespace().collect::<Vec<_>>().join(" ")
-    };
+    let normalise = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
 
     let normalised_heading = normalise(heading_text.as_ref());
     let normalised_title = normalise(title);
@@ -103,12 +107,11 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
         let after_close = search_start + close_pos + close_tag.len();
         let result = content[after_close..].trim_start();
         // If we're in a full XHTML document, also trim the closing </body>...</html>.
-        if body_start > trimmed_start {
-            if let Some(pos) =
+        if body_start > trimmed_start
+            && let Some(pos) =
                 super::text_utils::find_case_insensitive(result.as_bytes(), b"</body>")
-            {
-                return result[..pos].trim_end();
-            }
+        {
+            return result[..pos].trim_end();
         }
         result
     } else {

@@ -152,7 +152,11 @@ fn decode_manifest_text(data: &[u8]) -> String {
 }
 
 fn read_inner_comic(data: &[u8], filename: &str) -> Result<Book> {
-    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
 
     let mut cursor = Cursor::new(data.to_vec());
 

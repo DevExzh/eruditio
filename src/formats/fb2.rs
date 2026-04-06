@@ -1,7 +1,8 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::html_utils::escape_html;
 use crate::formats::common::MAX_INPUT_SIZE;
+use crate::formats::common::html_utils::escape_html;
+use crate::formats::common::text_utils::contains_ascii_ci;
 use base64::Engine;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -20,7 +21,9 @@ impl Fb2Reader {
 impl FormatReader for Fb2Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         let mut contents = String::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_string(&mut contents)?;
+        (&mut *reader)
+            .take(MAX_INPUT_SIZE)
+            .read_to_string(&mut contents)?;
 
         if contents.trim().is_empty() {
             return Err(EruditioError::Format("Empty FB2 input".into()));
@@ -83,10 +86,9 @@ impl FormatReader for Fb2Reader {
                             section_counter += 1;
                             book.add_chapter(&Chapter {
                                 title: current_section_title.take(),
-                                content: current_section_content.clone(),
+                                content: std::mem::take(&mut current_section_content),
                                 id: Some(format!("section_{}", section_counter)),
                             });
-                            current_section_content.clear();
                         }
                         section_depth += 1;
                     } else if tag == "title" && section_depth > 0 {
@@ -99,7 +101,12 @@ impl FormatReader for Fb2Reader {
                     current_text.clear();
                 },
                 Ok(Event::Text(ref e)) => {
-                    current_text = crate::formats::common::text_utils::bytes_to_string(e.as_ref());
+                    // Reuse the buffer instead of allocating a new String per event.
+                    current_text.clear();
+                    match std::str::from_utf8(e.as_ref()) {
+                        Ok(s) => current_text.push_str(s),
+                        Err(_) => current_text.push_str(&String::from_utf8_lossy(e.as_ref())),
+                    }
                 },
                 Ok(Event::End(ref e)) => {
                     let name_raw = e.name();
@@ -107,8 +114,11 @@ impl FormatReader for Fb2Reader {
 
                     if tag == "binary" {
                         if let Some(id) = current_binary_id.take() {
+                            // Strip newlines in-place to avoid allocating a copy
+                            // of potentially large (100KB+) base64 blocks.
+                            current_text.retain(|c| c != '\n' && c != '\r');
                             let decoded = base64::engine::general_purpose::STANDARD
-                                .decode(current_text.trim().replace(['\n', '\r'], ""))
+                                .decode(current_text.trim())
                                 .unwrap_or_default();
 
                             let media_type = current_binary_ctype
@@ -147,13 +157,13 @@ impl FormatReader for Fb2Reader {
                             book.metadata.publisher = Some(current_text.clone());
                         } else if path_buf == "FictionBook/description/publish-info/isbn" {
                             book.metadata.isbn = Some(current_text.clone());
-                        } else if path_buf == "FictionBook/description/publish-info/year" {
-                            if let Ok(year) = current_text.trim().parse::<i32>() {
-                                use chrono::NaiveDate;
-                                if let Some(date) = NaiveDate::from_ymd_opt(year, 1, 1) {
-                                    book.metadata.publication_date =
-                                        Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
-                                }
+                        } else if path_buf == "FictionBook/description/publish-info/year"
+                            && let Ok(year) = current_text.trim().parse::<i32>()
+                        {
+                            use chrono::NaiveDate;
+                            if let Some(date) = NaiveDate::from_ymd_opt(year, 1, 1) {
+                                book.metadata.publication_date =
+                                    Some(date.and_hms_opt(0, 0, 0).unwrap().and_utc());
                             }
                         }
                     } else {
@@ -178,10 +188,9 @@ impl FormatReader for Fb2Reader {
                                 section_counter += 1;
                                 book.add_chapter(&Chapter {
                                     title: current_section_title.take(),
-                                    content: current_section_content.clone(),
+                                    content: std::mem::take(&mut current_section_content),
                                     id: Some(format!("section_{}", section_counter)),
                                 });
-                                current_section_content.clear();
                             }
                         } else if tag == "body" {
                             in_body = false;
@@ -295,8 +304,10 @@ fn write_fb2_author_elements(xml: &mut String, authors: &[String], indent: &str)
 /// The caller should pass the already-lowercased tag string to avoid
 /// redundant lowercasing.
 fn is_pg_boilerplate_tag(tag_lower: &str) -> bool {
-    if tag_lower.contains("id=\"pg-header\"") || tag_lower.contains("id=\"pg-footer\"")
-        || tag_lower.contains("id='pg-header'") || tag_lower.contains("id='pg-footer'")
+    if tag_lower.contains("id=\"pg-header\"")
+        || tag_lower.contains("id=\"pg-footer\"")
+        || tag_lower.contains("id='pg-header'")
+        || tag_lower.contains("id='pg-footer'")
     {
         return true;
     }
@@ -347,7 +358,9 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 let tag_lower = tag_str.to_ascii_lowercase();
 
                 // --- <head> / </head>: skip everything in the HTML head ---
-                if tag_lower.starts_with("<head") && (tag_bytes.len() < 6 || tag_bytes[5] == b'>' || tag_bytes[5] == b' ') {
+                if tag_lower.starts_with("<head")
+                    && (tag_bytes.len() < 6 || tag_bytes[5] == b'>' || tag_bytes[5] == b' ')
+                {
                     head_depth += 1;
                     pos += gt + 1;
                     continue;
@@ -364,16 +377,20 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 }
 
                 // --- Skip <html>, </html>, <body>, </body>, <!DOCTYPE>, <?xml?> etc. ---
-                if tag_lower.starts_with("<html") || tag_lower.starts_with("</html")
-                    || tag_lower.starts_with("<body") || tag_lower.starts_with("</body")
-                    || tag_lower.starts_with("<!") || tag_lower.starts_with("<?")
+                if tag_lower.starts_with("<html")
+                    || tag_lower.starts_with("</html")
+                    || tag_lower.starts_with("<body")
+                    || tag_lower.starts_with("</body")
+                    || tag_lower.starts_with("<!")
+                    || tag_lower.starts_with("<?")
                 {
                     pos += gt + 1;
                     continue;
                 }
 
                 // --- Project Gutenberg boilerplate div tracking ---
-                let is_div_open = tag_lower.starts_with("<div") && (tag_bytes.len() < 5 || tag_bytes[4] == b'>' || tag_bytes[4] == b' ');
+                let is_div_open = tag_lower.starts_with("<div")
+                    && (tag_bytes.len() < 5 || tag_bytes[4] == b'>' || tag_bytes[4] == b' ');
                 let is_div_close = tag_lower.starts_with("</div");
                 if is_div_open && pg_boilerplate_depth > 0 {
                     // Nested div inside boilerplate — increase depth
@@ -397,7 +414,9 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     continue;
                 }
 
-                if tag_lower.starts_with("<p") && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ') {
+                if tag_lower.starts_with("<p")
+                    && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ')
+                {
                     // Opening <p> tag – start accumulating inline content
                     close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                     if in_anchor {
@@ -495,8 +514,11 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     in_p = false;
                     pos += gt + 1;
-                } else if tag_lower == "<b>" || tag_lower == "<strong>"
-                    || tag_lower.starts_with("<b ") || tag_lower.starts_with("<strong ") {
+                } else if tag_lower == "<b>"
+                    || tag_lower == "<strong>"
+                    || tag_lower.starts_with("<b ")
+                    || tag_lower.starts_with("<strong ")
+                {
                     // Opening bold tag → FB2 <strong>
                     inline_buf.push_str("<strong>");
                     in_strong = true;
@@ -506,8 +528,11 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     inline_buf.push_str("</strong>");
                     in_strong = false;
                     pos += gt + 1;
-                } else if tag_lower == "<i>" || tag_lower == "<em>"
-                    || tag_lower.starts_with("<i ") || tag_lower.starts_with("<em ") {
+                } else if tag_lower == "<i>"
+                    || tag_lower == "<em>"
+                    || tag_lower.starts_with("<i ")
+                    || tag_lower.starts_with("<em ")
+                {
                     // Opening italic tag → FB2 <emphasis>
                     inline_buf.push_str("<emphasis>");
                     in_emphasis = true;
@@ -535,9 +560,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     pos += gt + 1;
                 } else if is_div_close {
                     // Closing </div> – flush accumulated block content
-                    if block_depth > 0 {
-                        block_depth -= 1;
-                    }
+                    block_depth = block_depth.saturating_sub(1);
                     if !in_p && block_depth == 0 {
                         close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                         if in_anchor {
@@ -621,15 +644,8 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
 fn flush_paragraph(out: &mut String, inline_buf: &mut String) {
     let trimmed = inline_buf.trim();
     if !trimmed.is_empty() {
-        // Quick check: only do the expensive strip if content could be markup-only
-        let is_empty_markup = trimmed.starts_with('<') && {
-            let text_only = trimmed
-                .replace("<emphasis>", "")
-                .replace("</emphasis>", "")
-                .replace("<strong>", "")
-                .replace("</strong>", "");
-            text_only.trim().is_empty()
-        };
+        // Quick check: only do the expensive scan if content could be markup-only
+        let is_empty_markup = trimmed.starts_with('<') && is_only_empty_markup(trimmed.as_bytes());
         if !is_empty_markup {
             out.push_str("      <p>");
             out.push_str(trimmed);
@@ -637,6 +653,34 @@ fn flush_paragraph(out: &mut String, inline_buf: &mut String) {
         }
     }
     inline_buf.clear();
+}
+
+/// Returns `true` if `s` contains only `<emphasis>`, `</emphasis>`,
+/// `<strong>`, `</strong>` tags and whitespace — i.e., no actual text content.
+/// Single-pass, zero-allocation replacement for the 4× `.replace()` chain.
+fn is_only_empty_markup(bytes: &[u8]) -> bool {
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        match bytes[i] {
+            b'<' => {
+                if i + 10 <= len && bytes[i..i + 10] == *b"<emphasis>" {
+                    i += 10;
+                } else if i + 11 <= len && bytes[i..i + 11] == *b"</emphasis>" {
+                    i += 11;
+                } else if i + 8 <= len && bytes[i..i + 8] == *b"<strong>" {
+                    i += 8;
+                } else if i + 9 <= len && bytes[i..i + 9] == *b"</strong>" {
+                    i += 9;
+                } else {
+                    return false;
+                }
+            },
+            b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// Extracts the `href` attribute value from an `<a ...>` tag string.
@@ -769,7 +813,12 @@ fn generate_fb2(book: &Book) -> String {
     // Keywords from subjects (comma-separated, matching Calibre behavior)
     if !book.metadata.subjects.is_empty() {
         xml.push_str("      <keywords>");
-        let kw: Vec<_> = book.metadata.subjects.iter().map(|s| escape_html(s)).collect();
+        let kw: Vec<_> = book
+            .metadata
+            .subjects
+            .iter()
+            .map(|s| escape_html(s))
+            .collect();
         xml.push_str(&kw.join(", "));
         xml.push_str("</keywords>\n");
     }
@@ -790,8 +839,7 @@ fn generate_fb2(book: &Book) -> String {
             book.manifest
                 .iter()
                 .find(|item| {
-                    item.id.to_lowercase().contains("cover")
-                        && item.media_type.starts_with("image/")
+                    contains_ascii_ci(&item.id, "cover") && item.media_type.starts_with("image/")
                 })
                 .map(|item| item.id.clone())
         });
@@ -992,10 +1040,7 @@ mod tests {
             "missing isbn"
         );
         assert!(xml.contains("<year>2024</year>"), "missing year");
-        assert!(
-            xml.contains("</publish-info>"),
-            "missing </publish-info>"
-        );
+        assert!(xml.contains("</publish-info>"), "missing </publish-info>");
     }
 
     #[test]
@@ -1056,17 +1101,15 @@ mod tests {
         let book = Fb2Reader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(book.metadata.title.as_deref(), Some("Parsed Book"));
-        assert_eq!(
-            book.metadata.publisher.as_deref(),
-            Some("Acme Publishing")
-        );
-        assert_eq!(
-            book.metadata.isbn.as_deref(),
-            Some("978-1-234567-89-0")
-        );
+        assert_eq!(book.metadata.publisher.as_deref(), Some("Acme Publishing"));
+        assert_eq!(book.metadata.isbn.as_deref(), Some("978-1-234567-89-0"));
         assert!(book.metadata.publication_date.is_some());
         assert_eq!(
-            book.metadata.publication_date.unwrap().format("%Y").to_string(),
+            book.metadata
+                .publication_date
+                .unwrap()
+                .format("%Y")
+                .to_string(),
             "2023"
         );
     }
@@ -1103,10 +1146,7 @@ mod tests {
         let decoded = Fb2Reader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(decoded.metadata.publisher.as_deref(), Some("Test Press"));
-        assert_eq!(
-            decoded.metadata.isbn.as_deref(),
-            Some("978-0-123456-78-9")
-        );
+        assert_eq!(decoded.metadata.isbn.as_deref(), Some("978-0-123456-78-9"));
         assert!(decoded.metadata.publication_date.is_some());
         assert_eq!(
             decoded
@@ -1137,10 +1177,7 @@ mod tests {
         Fb2Writer::new().write_book(&book, &mut output).unwrap();
         let xml = String::from_utf8(output).unwrap();
 
-        assert!(
-            xml.contains("<document-info>"),
-            "missing <document-info>"
-        );
+        assert!(xml.contains("<document-info>"), "missing <document-info>");
         assert!(
             xml.contains("<program-used>eruditio</program-used>"),
             "missing program-used"
@@ -1153,10 +1190,7 @@ mod tests {
             expected_date,
             xml
         );
-        assert!(
-            xml.contains("</document-info>"),
-            "missing </document-info>"
-        );
+        assert!(xml.contains("</document-info>"), "missing </document-info>");
 
         // Verify ordering: document-info comes after title-info and before publish-info / </description>
         let ti_end = xml.find("</title-info>").expect("no </title-info>");
@@ -1243,7 +1277,10 @@ mod tests {
         let ti_start = xml.find("<title-info>").unwrap();
         let ti_end = xml.find("</title-info>").unwrap();
         let cp_pos = xml.find("<coverpage>").unwrap();
-        assert!(cp_pos > ti_start && cp_pos < ti_end, "coverpage should be inside title-info");
+        assert!(
+            cp_pos > ti_start && cp_pos < ti_end,
+            "coverpage should be inside title-info"
+        );
     }
 
     #[test]
@@ -1335,7 +1372,8 @@ mod tests {
         // the </a> comes after the </p>, so the writer must auto-close it.
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
-            content: r#"<p><a href="https://example.org">link text</p><p>next paragraph</p>"#.into(),
+            content: r#"<p><a href="https://example.org">link text</p><p>next paragraph</p>"#
+                .into(),
             id: Some("ch1".into()),
         });
 
@@ -1465,13 +1503,19 @@ mod tests {
         );
 
         // Verify inner section content is not dropped
-        let sec11 = chapters.iter().find(|c| c.title.as_deref() == Some("Section 1.1")).unwrap();
+        let sec11 = chapters
+            .iter()
+            .find(|c| c.title.as_deref() == Some("Section 1.1"))
+            .unwrap();
         assert!(
             sec11.content.contains("Content of 1.1"),
             "Section 1.1 content was dropped: {:?}",
             sec11.content
         );
-        let sec12 = chapters.iter().find(|c| c.title.as_deref() == Some("Section 1.2")).unwrap();
+        let sec12 = chapters
+            .iter()
+            .find(|c| c.title.as_deref() == Some("Section 1.2"))
+            .unwrap();
         assert!(
             sec12.content.contains("Content of 1.2"),
             "Section 1.2 content was dropped: {:?}",
@@ -1513,7 +1557,10 @@ mod tests {
             titles
         );
 
-        let sec = chapters.iter().find(|c| c.title.as_deref() == Some("Section 1.1")).unwrap();
+        let sec = chapters
+            .iter()
+            .find(|c| c.title.as_deref() == Some("Section 1.1"))
+            .unwrap();
         assert!(
             sec.content.contains("Deep content here"),
             "deeply nested section content was dropped: {:?}",
@@ -1599,14 +1646,20 @@ mod tests {
             chapters.len()
         );
 
-        let intro = chapters.iter().find(|c| c.title.as_deref() == Some("Introduction")).unwrap();
+        let intro = chapters
+            .iter()
+            .find(|c| c.title.as_deref() == Some("Introduction"))
+            .unwrap();
         assert!(
             intro.content.contains("Intro paragraph"),
             "parent section content was lost: {:?}",
             intro.content
         );
 
-        let details = chapters.iter().find(|c| c.title.as_deref() == Some("Details")).unwrap();
+        let details = chapters
+            .iter()
+            .find(|c| c.title.as_deref() == Some("Details"))
+            .unwrap();
         assert!(
             details.content.contains("Detail paragraph"),
             "child section content was lost: {:?}",
@@ -1638,10 +1691,7 @@ mod tests {
             xml.contains("Chapter 1"),
             "link text should be preserved as inline content"
         );
-        assert!(
-            xml.contains("See "),
-            "text before link should be preserved"
-        );
+        assert!(xml.contains("See "), "text before link should be preserved");
         assert!(
             xml.contains(" for details."),
             "text after link should be preserved"
@@ -1712,7 +1762,8 @@ mod tests {
         book.metadata.title = Some("Relative Link Test".into());
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
-            content: r#"<p>See <a href="chapter1.xhtml#section1">this section</a> please.</p>"#.into(),
+            content: r#"<p>See <a href="chapter1.xhtml#section1">this section</a> please.</p>"#
+                .into(),
             id: Some("ch1".into()),
         });
 
@@ -1746,7 +1797,12 @@ mod tests {
         });
 
         // Add a CSS resource and an image resource
-        book.add_resource("style1", "styles/main.css", b"body { color: red; }".to_vec(), "text/css");
+        book.add_resource(
+            "style1",
+            "styles/main.css",
+            b"body { color: red; }".to_vec(),
+            "text/css",
+        );
         book.add_resource("img1", "images/photo.jpg", vec![0xFF, 0xD8], "image/jpeg");
 
         let mut output = Vec::new();
@@ -1884,7 +1940,10 @@ mod tests {
         for level in 2..=6 {
             let mut book = Book::new();
             book.metadata.title = Some(format!("H{} Test", level));
-            let content = format!("<h{}>Heading {}</h{}><p>After heading</p>", level, level, level);
+            let content = format!(
+                "<h{}>Heading {}</h{}><p>After heading</p>",
+                level, level, level
+            );
             book.add_chapter(&Chapter {
                 title: Some("Ch1".into()),
                 content,
@@ -1899,7 +1958,9 @@ mod tests {
             assert!(
                 xml.contains(&expected),
                 "h{} content should be wrapped in <strong>, expected '{}', got:\n{}",
-                level, expected, xml
+                level,
+                expected,
+                xml
             );
         }
     }
@@ -1955,7 +2016,12 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Cover ID Test".into());
         book.metadata.cover_image_id = Some("my-cover-img".into());
-        book.add_resource("my-cover-img", "images/cover.png", vec![0x89, 0x50], "image/png");
+        book.add_resource(
+            "my-cover-img",
+            "images/cover.png",
+            vec![0x89, 0x50],
+            "image/png",
+        );
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
@@ -2089,8 +2155,14 @@ mod tests {
         let di_end = xml.find("</document-info>").unwrap();
         let id_pos = xml.find("<id>").unwrap();
         let ver_pos = xml.find("<version>").unwrap();
-        assert!(id_pos > di_start && id_pos < di_end, "id should be inside document-info");
-        assert!(ver_pos > di_start && ver_pos < di_end, "version should be inside document-info");
+        assert!(
+            id_pos > di_start && id_pos < di_end,
+            "id should be inside document-info"
+        );
+        assert!(
+            ver_pos > di_start && ver_pos < di_end,
+            "version should be inside document-info"
+        );
     }
 
     #[test]
@@ -2108,11 +2180,15 @@ mod tests {
         };
 
         let mut out1 = Vec::new();
-        Fb2Writer::new().write_book(&make_book(), &mut out1).unwrap();
+        Fb2Writer::new()
+            .write_book(&make_book(), &mut out1)
+            .unwrap();
         let xml1 = String::from_utf8(out1).unwrap();
 
         let mut out2 = Vec::new();
-        Fb2Writer::new().write_book(&make_book(), &mut out2).unwrap();
+        Fb2Writer::new()
+            .write_book(&make_book(), &mut out2)
+            .unwrap();
         let xml2 = String::from_utf8(out2).unwrap();
 
         // Extract the <id> values
@@ -2149,7 +2225,12 @@ mod tests {
 
         // UUID format: 8-4-4-4-12 hex characters
         let parts: Vec<&str> = id.split('-').collect();
-        assert_eq!(parts.len(), 5, "UUID should have 5 parts separated by hyphens, got: {}", id);
+        assert_eq!(
+            parts.len(),
+            5,
+            "UUID should have 5 parts separated by hyphens, got: {}",
+            id
+        );
         assert_eq!(parts[0].len(), 8, "first part should be 8 chars");
         assert_eq!(parts[1].len(), 4, "second part should be 4 chars");
         assert_eq!(parts[2].len(), 4, "third part should be 4 chars");
@@ -2260,7 +2341,9 @@ mod tests {
         book.metadata.title = Some("Head Suppression Test".into());
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
-            content: "<html><head><title>Page Title</title></head><body><p>Content</p></body></html>".into(),
+            content:
+                "<html><head><title>Page Title</title></head><body><p>Content</p></body></html>"
+                    .into(),
             id: Some("ch1".into()),
         });
 
@@ -2292,7 +2375,9 @@ mod tests {
         book.metadata.title = Some("PG Boilerplate Test".into());
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
-            content: r#"<div id="pg-header"><p>Project Gutenberg header</p></div><p>Real content</p>"#.into(),
+            content:
+                r#"<div id="pg-header"><p>Project Gutenberg header</p></div><p>Real content</p>"#
+                    .into(),
             id: Some("ch1".into()),
         });
 
@@ -2343,8 +2428,8 @@ mod tests {
             body
         );
         // Count content <p> tags (excluding section title)
-        let content_p_count = body.matches("<p>").count()
-            - if body.contains("<title><p>") { 1 } else { 0 };
+        let content_p_count =
+            body.matches("<p>").count() - if body.contains("<title><p>") { 1 } else { 0 };
         assert_eq!(
             content_p_count, 1,
             "should produce exactly 1 content paragraph from a single <div>, got {} in:\n{}",
@@ -2415,8 +2500,12 @@ mod tests {
         let xml = String::from_utf8(output).unwrap();
 
         // Extract the document-info block
-        let di_start = xml.find("<document-info>").expect("missing <document-info>");
-        let di_end = xml.find("</document-info>").expect("missing </document-info>");
+        let di_start = xml
+            .find("<document-info>")
+            .expect("missing <document-info>");
+        let di_end = xml
+            .find("</document-info>")
+            .expect("missing </document-info>");
         let di_block = &xml[di_start..di_end];
 
         // Jane Doe should be split into first-name/last-name
@@ -2535,7 +2624,12 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Single Cover Ref Test".into());
         book.metadata.cover_image_id = Some("cover-img".into());
-        book.add_resource("cover-img", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_resource(
+            "cover-img",
+            "images/cover.jpg",
+            vec![0xFF, 0xD8],
+            "image/jpeg",
+        );
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
@@ -2547,7 +2641,9 @@ mod tests {
         let xml = String::from_utf8(output).unwrap();
 
         // Count ALL <image> references to the cover
-        let cover_refs: Vec<_> = xml.match_indices("<image l:href=\"#cover-img\"/>").collect();
+        let cover_refs: Vec<_> = xml
+            .match_indices("<image l:href=\"#cover-img\"/>")
+            .collect();
         assert_eq!(
             cover_refs.len(),
             1,
@@ -2570,7 +2666,8 @@ mod tests {
         book.metadata.title = Some("Multi Chapter Links".into());
         book.add_chapter(&Chapter {
             title: Some("Ch1".into()),
-            content: r#"<p>Visit <a href="https://www.gutenberg.org">Project Gutenberg</a></p>"#.into(),
+            content: r#"<p>Visit <a href="https://www.gutenberg.org">Project Gutenberg</a></p>"#
+                .into(),
             id: Some("ch1".into()),
         });
         book.add_chapter(&Chapter {
@@ -2586,16 +2683,19 @@ mod tests {
         // External links should be preserved
         assert!(
             xml.contains(r#"<a l:href="https://www.gutenberg.org">Project Gutenberg</a>"#),
-            "https link should be preserved, got:\n{}", xml
+            "https link should be preserved, got:\n{}",
+            xml
         );
         assert!(
             xml.contains(r#"<a l:href="http://example.com/page">this page</a>"#),
-            "http link should be preserved, got:\n{}", xml
+            "http link should be preserved, got:\n{}",
+            xml
         );
         // Internal links should be stripped (text preserved)
         assert!(
             !xml.contains(r##"l:href="#internal""##),
-            "internal fragment links should be stripped, got:\n{}", xml
+            "internal fragment links should be stripped, got:\n{}",
+            xml
         );
         assert!(
             xml.contains("internal"),

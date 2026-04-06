@@ -3,6 +3,7 @@
 use crate::domain::Book;
 use crate::domain::traits::Transform;
 use crate::error::Result;
+use crate::formats::common::text_utils::contains_ascii_ci;
 
 /// Detects and assigns the cover image in the book's metadata and guide.
 ///
@@ -54,9 +55,7 @@ impl Transform for CoverHandler {
 fn find_cover_by_id(book: &Book) -> Option<String> {
     book.manifest
         .iter()
-        .find(|item| {
-            item.media_type.starts_with("image/") && item.id.to_lowercase().contains("cover")
-        })
+        .find(|item| item.media_type.starts_with("image/") && contains_ascii_ci(&item.id, "cover"))
         .map(|item| item.id.clone())
 }
 
@@ -65,7 +64,7 @@ fn find_cover_by_href(book: &Book) -> Option<String> {
     book.manifest
         .iter()
         .find(|item| {
-            item.media_type.starts_with("image/") && item.href.to_lowercase().contains("cover")
+            item.media_type.starts_with("image/") && contains_ascii_ci(&item.href, "cover")
         })
         .map(|item| item.id.clone())
 }

@@ -333,7 +333,7 @@ impl BinaryEncoder {
     ) -> Result<()> {
         let tag_name_raw = e.name();
         let tag_name = bytes_to_cow_str(tag_name_raw.as_ref());
-        let tag_name_lower = tag_name.to_lowercase();
+        let tag_name_lower = tag_name.to_ascii_lowercase();
 
         // Look up tag index
         let tag_index = self
@@ -358,7 +358,7 @@ impl BinaryEncoder {
             // Encode attributes
             for attr in e.attributes().flatten() {
                 let attr_name = bytes_to_cow_str(attr.key.as_ref());
-                let attr_name_lower = attr_name.to_lowercase();
+                let attr_name_lower = attr_name.to_ascii_lowercase();
                 let attr_value = bytes_to_cow_str(&attr.value);
 
                 let attr_code = self.find_attr_code(idx, &attr_name, &attr_name_lower);
@@ -409,7 +409,7 @@ impl BinaryEncoder {
                 let attr_value = bytes_to_cow_str(&attr.value);
 
                 // Try global attr lookup first
-                let attr_name_lower = attr_name.to_lowercase();
+                let attr_name_lower = attr_name.to_ascii_lowercase();
                 if let Some(&code) = self.global_attr_reverse.get(attr_name_lower.as_str()) {
                     output.extend_from_slice(&encode_utf8_ordinal(u32::from(code)));
                     self.encode_string_value(&attr_value, output);

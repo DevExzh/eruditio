@@ -42,8 +42,10 @@ mod tests {
 
     #[test]
     fn metadata_clone_is_independent() {
-        let mut original = Metadata::default();
-        original.title = Some("Original".into());
+        let original = Metadata {
+            title: Some("Original".into()),
+            ..Default::default()
+        };
         let mut cloned = original.clone();
         cloned.title = Some("Cloned".into());
         assert_eq!(original.title.as_deref(), Some("Original"));

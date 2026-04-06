@@ -267,6 +267,7 @@ pub(crate) fn skip_whitespace_scalar(data: &[u8]) -> usize {
 ///
 /// Selects the best available SIMD implementation at runtime.
 #[allow(unreachable_code)]
+#[inline]
 pub(crate) fn skip_whitespace(data: &[u8]) -> usize {
     if data.is_empty() {
         return 0;
