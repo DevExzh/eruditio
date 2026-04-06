@@ -198,7 +198,13 @@ fn generate_htmlz_content(book: &Book) -> String {
             Some(ref t) => strip_leading_heading(&chapter.content, t),
             None => &chapter.content,
         };
-        body.push_str(content);
+        // Strip XHTML wrapper elements (<?xml>, <!DOCTYPE>, <html>, <head>, <body>)
+        // that are present in EPUB chapter content to avoid nested HTML documents.
+        // Also strip <link> tags referencing CSS files that don't exist in the
+        // HTMLZ archive (the archive has its own style.css linked from the outer doc).
+        let content = strip_xhtml_wrapper(content);
+        let content = strip_link_tags(&content);
+        body.push_str(&content);
         body.push('\n');
     }
 
@@ -572,6 +578,137 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
     if book.metadata.authors.is_empty() && !opf_authors.is_empty() {
         book.metadata.authors = opf_authors;
     }
+}
+
+/// Strips XHTML wrapper elements from chapter content so that only the inner
+/// body content remains. This removes XML processing instructions, DOCTYPE
+/// declarations, `<html>`, `<head>` (with contents), and `<body>` tags that
+/// are present in EPUB XHTML source files.
+///
+/// Similar to the `strip_xhtml_wrapper` in the MOBI writer, adapted for HTMLZ.
+fn strip_xhtml_wrapper(content: &str) -> String {
+    let mut s = content.to_string();
+
+    // Remove <?xml ...?> processing instructions.
+    while let Some(start) = s.find("<?xml") {
+        if let Some(end) = s[start..].find("?>") {
+            s.replace_range(start..start + end + 2, "");
+        } else {
+            break;
+        }
+    }
+
+    // Remove <!DOCTYPE ...> declarations.
+    while let Some(start) = s.find("<!DOCTYPE") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    // Also handle lowercase variant.
+    while let Some(start) = s.find("<!doctype") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+
+    // Remove <head>...</head> blocks (including contents like <style>, <link>, <meta>, <title>).
+    while let Some(start) = s.find("<head") {
+        if let Some(end) = s[start..].find("</head>") {
+            s.replace_range(start..start + end + 7, "");
+        } else if let Some(end) = s[start..].find("/>") {
+            // Self-closing <head/>
+            s.replace_range(start..start + end + 2, "");
+        } else {
+            break;
+        }
+    }
+    // Also handle uppercase <HEAD>...</HEAD>.
+    while let Some(start) = s.find("<HEAD") {
+        if let Some(end) = s[start..].find("</HEAD>") {
+            s.replace_range(start..start + end + 7, "");
+        } else {
+            break;
+        }
+    }
+
+    // Remove <html ...> and </html> tags.
+    while let Some(start) = s.find("<html") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    while let Some(start) = s.find("<HTML") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    while let Some(start) = s.find("</html>") {
+        s.replace_range(start..start + 7, "");
+    }
+    while let Some(start) = s.find("</HTML>") {
+        s.replace_range(start..start + 7, "");
+    }
+
+    // Remove <body ...> and </body> tags.
+    while let Some(start) = s.find("<body") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    while let Some(start) = s.find("<BODY") {
+        if let Some(end) = s[start..].find('>') {
+            s.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+    while let Some(start) = s.find("</body>") {
+        s.replace_range(start..start + 7, "");
+    }
+    while let Some(start) = s.find("</BODY>") {
+        s.replace_range(start..start + 7, "");
+    }
+
+    s
+}
+
+/// Strips `<link ...>` tags from HTML content.
+///
+/// These are self-closing tags that reference external CSS files (e.g.
+/// `<link rel="stylesheet" href="pgepub.css">`). In the original EPUB
+/// chapters they reference CSS files that don't exist in the HTMLZ archive.
+/// The HTMLZ archive has its own `style.css` linked from the outer document.
+fn strip_link_tags(content: &str) -> String {
+    let mut s = content.to_string();
+
+    while let Some(start) = s.find("<link ") {
+        // Find the end of the tag: either "/>" or ">"
+        if let Some(end_offset) = s[start..].find('>') {
+            s.replace_range(start..start + end_offset + 1, "");
+        } else {
+            break;
+        }
+    }
+    // Also handle <LINK ...> (uppercase).
+    while let Some(start) = s.find("<LINK ") {
+        if let Some(end_offset) = s[start..].find('>') {
+            s.replace_range(start..start + end_offset + 1, "");
+        } else {
+            break;
+        }
+    }
+
+    s
 }
 
 /// Returns a minimal default stylesheet matching calibre's HTMLZ output behavior.
@@ -1521,6 +1658,381 @@ mod tests {
             opf.contains("opf:file-as=\"Doe, Jane\" opf:role=\"aut\">Jane Doe</dc:creator>"),
             "First author should have both opf:file-as and opf:role. Got:\n{}",
             opf
+        );
+    }
+
+    // -- strip_xhtml_wrapper tests ------------------------------------------
+
+    #[test]
+    fn strip_xhtml_wrapper_removes_xml_declaration() {
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?><p>Content</p>"#;
+        let result = strip_xhtml_wrapper(input);
+        assert!(
+            !result.contains("<?xml"),
+            "Should remove XML declaration. Got: {}",
+            result
+        );
+        assert!(result.contains("<p>Content</p>"));
+    }
+
+    #[test]
+    fn strip_xhtml_wrapper_removes_doctype() {
+        let input = "<!DOCTYPE html><p>Content</p>";
+        let result = strip_xhtml_wrapper(input);
+        assert!(
+            !result.contains("<!DOCTYPE"),
+            "Should remove DOCTYPE. Got: {}",
+            result
+        );
+        assert!(result.contains("<p>Content</p>"));
+    }
+
+    #[test]
+    fn strip_xhtml_wrapper_removes_full_xhtml_doc() {
+        let input = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Chapter 1</title>
+  <link rel="stylesheet" href="pgepub.css" type="text/css"/>
+  <link rel="stylesheet" href="0.css" type="text/css"/>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+</head>
+<body>
+<h1>Chapter 1</h1>
+<p>Alice was beginning to get very tired.</p>
+</body>
+</html>"#;
+        let result = strip_xhtml_wrapper(input);
+        assert!(
+            !result.contains("<?xml"),
+            "Should remove XML declaration. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("<!DOCTYPE"),
+            "Should remove DOCTYPE. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("<html"),
+            "Should remove <html> tag. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("</html>"),
+            "Should remove </html> tag. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("<head"),
+            "Should remove <head> block. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("</head>"),
+            "Should remove </head> tag. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("<title>"),
+            "Should remove <title> within head. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("<body"),
+            "Should remove <body> tag. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("</body>"),
+            "Should remove </body> tag. Got: {}",
+            result
+        );
+        assert!(
+            result.contains("<h1>Chapter 1</h1>"),
+            "Should preserve body content. Got: {}",
+            result
+        );
+        assert!(
+            result.contains("Alice was beginning to get very tired."),
+            "Should preserve paragraph content. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn strip_xhtml_wrapper_preserves_plain_html() {
+        let input = "<p>Just a paragraph</p><p>Another one</p>";
+        let result = strip_xhtml_wrapper(input);
+        assert_eq!(result, input, "Plain HTML without wrappers should be unchanged");
+    }
+
+    // -- strip_link_tags tests ----------------------------------------------
+
+    #[test]
+    fn strip_link_tags_removes_stylesheet_links() {
+        let input = r#"<link rel="stylesheet" href="pgepub.css" type="text/css"/><p>Content</p><link rel="stylesheet" href="0.css" type="text/css"/>"#;
+        let result = strip_link_tags(input);
+        assert!(
+            !result.contains("<link"),
+            "Should remove all <link> tags. Got: {}",
+            result
+        );
+        assert!(
+            result.contains("<p>Content</p>"),
+            "Should preserve other content. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn strip_link_tags_preserves_content_without_links() {
+        let input = "<p>No links here</p>";
+        let result = strip_link_tags(input);
+        assert_eq!(result, input);
+    }
+
+    // -- Integration: no nested HTML documents in HTMLZ output ---------------
+
+    #[test]
+    fn htmlz_content_no_nested_html_documents() {
+        // Simulate EPUB chapters that contain full XHTML documents
+        let mut book = Book::new();
+        book.metadata.title = Some("Nested Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Chapter 1</title>
+  <link rel="stylesheet" href="pgepub.css" type="text/css"/>
+</head>
+<body>
+<h1>Chapter 1</h1>
+<p>First chapter content.</p>
+</body>
+</html>"#
+                .into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 2".into()),
+            content: r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Chapter 2</title>
+  <link rel="stylesheet" href="0.css" type="text/css"/>
+  <link rel="stylesheet" href="pgepub.css" type="text/css"/>
+</head>
+<body>
+<h2>Chapter 2</h2>
+<p>Second chapter content.</p>
+</body>
+</html>"#
+                .into(),
+            id: Some("ch2".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        // The output HTML document itself has one <html>, <head>, and <body>.
+        // Count occurrences: there should be exactly 1 of each opening tag.
+        let html_open_count = html.matches("<html").count();
+        let body_open_count = html.matches("<body").count();
+        let head_open_count = html.matches("<head").count();
+        assert_eq!(
+            html_open_count, 1,
+            "Should have exactly 1 <html> tag (the outer doc). Got {}: {}",
+            html_open_count, html
+        );
+        assert_eq!(
+            body_open_count, 1,
+            "Should have exactly 1 <body> tag (the outer doc). Got {}: {}",
+            body_open_count, html
+        );
+        assert_eq!(
+            head_open_count, 1,
+            "Should have exactly 1 <head> block (the outer doc). Got {}: {}",
+            head_open_count, html
+        );
+
+        // No XML declarations or DOCTYPEs from chapters should remain
+        // (the outer doc's DOCTYPE is fine)
+        let xml_decl_count = html.matches("<?xml").count();
+        assert_eq!(
+            xml_decl_count, 0,
+            "Should have no <?xml?> declarations. Got {}: {}",
+            xml_decl_count, html
+        );
+
+        // Chapter content should be preserved
+        assert!(
+            html.contains("First chapter content."),
+            "Chapter 1 content should be preserved. Got: {}",
+            html
+        );
+        assert!(
+            html.contains("Second chapter content."),
+            "Chapter 2 content should be preserved. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_content_no_broken_link_references() {
+        // Chapters with <link> tags to CSS files that don't exist in HTMLZ
+        let mut book = Book::new();
+        book.metadata.title = Some("Link Test".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <link rel="stylesheet" href="pgepub.css" type="text/css"/>
+  <link rel="stylesheet" href="0.css" type="text/css"/>
+</head>
+<body>
+<p>Content with broken CSS refs.</p>
+</body>
+</html>"#
+                .into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        // The only <link> should be the outer doc's link to style.css
+        assert!(
+            !html.contains("pgepub.css"),
+            "Should not contain reference to pgepub.css. Got: {}",
+            html
+        );
+        assert!(
+            !html.contains("0.css"),
+            "Should not contain reference to 0.css. Got: {}",
+            html
+        );
+        // The outer doc's stylesheet link should be present
+        assert!(
+            html.contains(r#"href="style.css""#),
+            "Should contain link to style.css. Got: {}",
+            html
+        );
+        // Content should be preserved
+        assert!(
+            html.contains("Content with broken CSS refs."),
+            "Body content should be preserved. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_content_preserves_body_content_from_xhtml_chapters() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Preserve Test".into());
+        book.add_chapter(&Chapter {
+            title: None,
+            content: r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+<div class="chapter">
+  <h2>Introduction</h2>
+  <p>This is a <em>test</em> with <strong>formatting</strong>.</p>
+  <img src="figure1.png" alt="Figure 1"/>
+  <blockquote><p>A famous quote.</p></blockquote>
+</div>
+</body>
+</html>"#
+                .into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        assert!(html.contains("<div class=\"chapter\">"));
+        assert!(html.contains("<em>test</em>"));
+        assert!(html.contains("<strong>formatting</strong>"));
+        assert!(html.contains("alt=\"Figure 1\""));
+        assert!(html.contains("<blockquote><p>A famous quote.</p></blockquote>"));
+    }
+
+    #[test]
+    fn htmlz_full_zip_no_nested_documents() {
+        // End-to-end test: write HTMLZ and verify the index.html in the ZIP
+        let mut book = Book::new();
+        book.metadata.title = Some("E2E Nested Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch 1".into()),
+            content: r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Ch 1</title>
+  <link rel="stylesheet" href="stylesheet.css"/>
+  <style>body { margin: 0; }</style>
+</head>
+<body>
+<h1>Ch 1</h1>
+<p>Chapter one body.</p>
+</body>
+</html>"#
+                .into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back the index.html from the ZIP
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut html_file = archive.by_name("index.html").unwrap();
+        let mut html_content = String::new();
+        html_file.read_to_string(&mut html_content).unwrap();
+
+        // Exactly one <html>, <body>, <head>
+        assert_eq!(
+            html_content.matches("<html").count(),
+            1,
+            "ZIP index.html should have exactly 1 <html>. Got: {}",
+            html_content
+        );
+        assert_eq!(
+            html_content.matches("<body").count(),
+            1,
+            "ZIP index.html should have exactly 1 <body>. Got: {}",
+            html_content
+        );
+        assert_eq!(
+            html_content.matches("<head").count(),
+            1,
+            "ZIP index.html should have exactly 1 <head>. Got: {}",
+            html_content
+        );
+
+        // No broken CSS references
+        assert!(
+            !html_content.contains("stylesheet.css"),
+            "Should not contain reference to original stylesheet.css. Got: {}",
+            html_content
+        );
+
+        // Content preserved
+        assert!(
+            html_content.contains("Chapter one body."),
+            "Chapter content should be preserved. Got: {}",
+            html_content
+        );
+
+        // Has the proper style.css link
+        assert!(
+            html_content.contains(r#"href="style.css""#),
+            "Should link to style.css. Got: {}",
+            html_content
         );
     }
 }
