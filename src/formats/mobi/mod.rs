@@ -1174,7 +1174,8 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
     }
 
     let mut chapters = Vec::with_capacity(parts.len());
-    for (i, part) in parts.iter().enumerate() {
+    let mut untitled_counter = 0usize;
+    for (_i, part) in parts.iter().enumerate() {
         let trimmed = part.trim();
         if trimmed.is_empty() {
             continue;
@@ -1185,10 +1186,16 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
         let fixed = reassemble_kf8_xhtml(trimmed);
 
         // Try to extract a title from the first heading in the body.
-        let title = extract_first_heading(&fixed);
+        let title = extract_first_heading(&fixed)
+            .or_else(|| extract_fallback_title(&fixed))
+            .map(|t| sanitize_toc_label(&t))
+            .or_else(|| {
+                untitled_counter += 1;
+                Some(format!("Untitled Section {}", untitled_counter))
+            });
 
         chapters.push(SimpleChapter {
-            title: title.or_else(|| Some(format!("Part {}", i + 1))),
+            title,
             content: fixed,
         });
     }
@@ -1371,17 +1378,24 @@ fn split_mobi_content(html: &str) -> Vec<SimpleChapter> {
         return chapters;
     }
 
-    for (i, part) in parts.iter().enumerate() {
+    let mut untitled_counter = 0usize;
+    for (_i, part) in parts.iter().enumerate() {
         let trimmed = part.trim();
         if trimmed.is_empty() {
             continue;
         }
 
         // Try to extract a title from the first heading.
-        let title = extract_first_heading(trimmed);
+        let title = extract_first_heading(trimmed)
+            .or_else(|| extract_fallback_title(trimmed))
+            .map(|t| sanitize_toc_label(&t))
+            .or_else(|| {
+                untitled_counter += 1;
+                Some(format!("Untitled Section {}", untitled_counter))
+            });
 
         chapters.push(SimpleChapter {
-            title: title.or_else(|| Some(format!("Chapter {}", i + 1))),
+            title,
             content: trimmed.to_string(),
         });
     }
@@ -1461,6 +1475,145 @@ fn extract_first_heading(html: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Extracts a meaningful title from XHTML content when no heading is found.
+///
+/// The extraction strategy (in priority order):
+/// 1. The `<title>` tag content (if present and not a generic site title)
+/// 2. The `alt` attribute of the first `<img>` in the body (if non-empty)
+/// 3. The first few words of visible body text
+///
+/// Returns `None` if no meaningful text can be extracted.
+fn extract_fallback_title(html: &str) -> Option<String> {
+    let bytes = html.as_bytes();
+
+    // Strategy 1: Try the <title> tag.
+    if let Some(title) = extract_title_tag(bytes, html) {
+        let cleaned = sanitize_toc_label(&title);
+        // Skip generic/site-level titles.
+        if !cleaned.is_empty()
+            && !cleaned.eq_ignore_ascii_case("unknown")
+            && !cleaned.contains("Project Gutenberg")
+            && !cleaned.contains('|')
+        {
+            return Some(cleaned);
+        }
+    }
+
+    // Strategy 2: Try alt text from the first <img> in the body.
+    if let Some(alt) = extract_first_img_alt(bytes, html) {
+        let cleaned = sanitize_toc_label(&alt);
+        if !cleaned.is_empty() {
+            return Some(truncate_title(&cleaned, 80));
+        }
+    }
+
+    // Strategy 3: Extract first significant text from body content.
+    if let Some(snippet) = extract_body_text_snippet(html) {
+        let cleaned = sanitize_toc_label(&snippet);
+        if !cleaned.is_empty() {
+            return Some(truncate_title(&cleaned, 80));
+        }
+    }
+
+    None
+}
+
+/// Extracts the content of the `<title>` tag from an HTML document.
+fn extract_title_tag(bytes: &[u8], html: &str) -> Option<String> {
+    let start = text_utils::find_case_insensitive(bytes, b"<title")?;
+    let content_start = html[start..].find('>')? + start + 1;
+    let content_end =
+        text_utils::find_case_insensitive(&bytes[content_start..], b"</title")? + content_start;
+    let raw = &html[content_start..content_end];
+    let text = strip_html_tags(raw).trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// Extracts the `alt` attribute from the first `<img>` tag in the body.
+fn extract_first_img_alt(bytes: &[u8], html: &str) -> Option<String> {
+    // Only look inside <body>.
+    let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
+    let body_bytes = &bytes[body_start..];
+    let body_html = &html[body_start..];
+
+    let img_pos = text_utils::find_case_insensitive(body_bytes, b"<img ")?;
+    let img_end = body_html[img_pos..].find('>')?;
+    let img_tag = &body_bytes[img_pos..img_pos + img_end + 1];
+
+    extract_attr_value(img_tag, b"alt")
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+}
+
+/// Extracts the first few words of visible text from the body content.
+fn extract_body_text_snippet(html: &str) -> Option<String> {
+    let bytes = html.as_bytes();
+
+    // Find <body>.
+    let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
+    let body_tag_end = html[body_start..].find('>')? + body_start + 1;
+
+    // Find </body>.
+    let body_close = text_utils::find_case_insensitive(&bytes[body_tag_end..], b"</body")
+        .map(|pos| body_tag_end + pos)
+        .unwrap_or(html.len());
+
+    let body_html = &html[body_tag_end..body_close];
+    let text = strip_html_tags(body_html);
+    let text = sanitize_toc_label(&text);
+
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(truncate_title(&text, 60))
+}
+
+/// Truncates a title to a maximum number of characters, breaking at a word boundary.
+/// Appends "..." if truncated.
+fn truncate_title(s: &str, max_chars: usize) -> String {
+    if s.len() <= max_chars {
+        return s.to_string();
+    }
+    // Find last space before the limit.
+    let truncated = &s[..max_chars];
+    if let Some(last_space) = truncated.rfind(' ') {
+        if last_space > max_chars / 3 {
+            return format!("{}...", &s[..last_space]);
+        }
+    }
+    format!("{}...", truncated)
+}
+
+/// Normalizes a TOC label to a clean single-line string.
+///
+/// - Replaces all newline characters (`\n`, `\r\n`, `\r`) with a single space
+/// - Collapses multiple consecutive spaces to one
+/// - Trims leading/trailing whitespace
+fn sanitize_toc_label(label: &str) -> String {
+    let mut result = String::with_capacity(label.len());
+    let mut last_was_space = true; // start true to trim leading whitespace
+
+    for ch in label.chars() {
+        if ch == '\n' || ch == '\r' || ch == '\t' || ch == ' ' {
+            if !last_was_space {
+                result.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            result.push(ch);
+            last_was_space = false;
+        }
+    }
+
+    // Trim trailing space.
+    if result.ends_with(' ') {
+        result.pop();
+    }
+
+    result
 }
 
 /// Very simple HTML tag stripper for heading extraction.
@@ -2252,5 +2405,109 @@ mod tests {
 
         assert!(chapters[0].content.contains("Chapter 1"));
         assert!(chapters[1].content.contains("Chapter 2"));
+    }
+
+    // --- sanitize_toc_label tests ---
+
+    #[test]
+    fn sanitize_toc_label_collapses_newlines() {
+        let input = "I hope Mr. Bingley will like it.\n\nCHAPTER II.";
+        let result = sanitize_toc_label(input);
+        assert_eq!(result, "I hope Mr. Bingley will like it. CHAPTER II.");
+        assert!(!result.contains('\n'));
+    }
+
+    #[test]
+    fn sanitize_toc_label_collapses_crlf() {
+        let input = "Line one.\r\nLine two.\r\nLine three.";
+        let result = sanitize_toc_label(input);
+        assert_eq!(result, "Line one. Line two. Line three.");
+    }
+
+    #[test]
+    fn sanitize_toc_label_trims_whitespace() {
+        let input = "  Hello World  ";
+        assert_eq!(sanitize_toc_label(input), "Hello World");
+    }
+
+    #[test]
+    fn sanitize_toc_label_collapses_spaces() {
+        let input = "PRIDE.   and   PREJUDICE";
+        assert_eq!(sanitize_toc_label(input), "PRIDE. and PREJUDICE");
+    }
+
+    #[test]
+    fn sanitize_toc_label_empty_input() {
+        assert_eq!(sanitize_toc_label(""), "");
+        assert_eq!(sanitize_toc_label("  \n  "), "");
+    }
+
+    // --- extract_fallback_title tests ---
+
+    #[test]
+    fn extract_fallback_title_from_title_tag() {
+        let html = r#"<html><head><title>"Cover"</title></head><body></body></html>"#;
+        let result = extract_fallback_title(html);
+        assert_eq!(result, Some("\"Cover\"".to_string()));
+    }
+
+    #[test]
+    fn extract_fallback_title_from_img_alt() {
+        let html = r#"<html><head><title>Pride and prejudice | Project Gutenberg</title></head>
+        <body><img alt="Dedication page" src="img.jpg"/></body></html>"#;
+        let result = extract_fallback_title(html);
+        assert_eq!(result, Some("Dedication page".to_string()));
+    }
+
+    #[test]
+    fn extract_fallback_title_from_body_text() {
+        let html = r#"<html><head><title>Pride and prejudice | Project Gutenberg</title></head>
+        <body><p>Some interesting text content here.</p></body></html>"#;
+        let result = extract_fallback_title(html);
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with("Some interesting text"));
+    }
+
+    #[test]
+    fn extract_fallback_title_skips_generic_titles() {
+        // Title with "Project Gutenberg" should be skipped.
+        let html = r#"<html><head><title>Book | Project Gutenberg</title></head>
+        <body><img alt="" src="x.jpg"/><p>First line.</p></body></html>"#;
+        let result = extract_fallback_title(html);
+        // Should NOT return the generic title, should fall through to body text.
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with("First line"));
+    }
+
+    // --- truncate_title tests ---
+
+    #[test]
+    fn truncate_title_short_string() {
+        assert_eq!(truncate_title("Hello", 80), "Hello");
+    }
+
+    #[test]
+    fn truncate_title_long_string() {
+        let long = "This is a very long title that exceeds the maximum character limit for truncation";
+        let result = truncate_title(long, 40);
+        assert!(result.len() <= 43); // 40 + "..."
+        assert!(result.ends_with("..."));
+    }
+
+    // --- split_kf8_content no generic "Part N" labels ---
+
+    #[test]
+    fn split_kf8_no_heading_gets_fallback_not_part_n() {
+        let html = concat!(
+            "<?xml version=\"1.0\"?><html><head><title>\"Cover\"</title></head><body><img alt=\"Cover\" src=\"cover.jpg\"/></body></html>",
+            "<?xml version=\"1.0\"?><html><body><h1>Chapter One</h1><p>Content</p></body></html>",
+        );
+        let chapters = split_kf8_content(html);
+        assert_eq!(chapters.len(), 2);
+        // First chapter has no heading, should NOT be "Part 1"
+        let title0 = chapters[0].title.as_deref().unwrap();
+        assert!(!title0.starts_with("Part "), "Title should not be generic 'Part N', got: {}", title0);
+        // Second chapter has a heading
+        assert_eq!(chapters[1].title.as_deref(), Some("Chapter One"));
     }
 }
