@@ -270,6 +270,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     let mut in_anchor = false;
     let mut in_emphasis = false;
     let mut in_strong = false;
+    let mut _in_heading = false;
 
     while pos < len {
         if bytes[pos] == b'<' {
@@ -302,15 +303,25 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     in_p = false;
                     pos += gt + 1;
                 } else if tag_lower.starts_with("<br") {
-                    // <br> or <br/> – emit empty-line in FB2
-                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                    if in_anchor {
-                        inline_buf.push_str("</a>");
-                        in_anchor = false;
+                    // <br> or <br/> handling depends on context:
+                    // Inside a <p>: treat as soft break (space) to avoid paragraph inflation
+                    // Outside a <p>: emit empty-line in FB2
+                    if in_p {
+                        // Soft break within a paragraph – just add a space if needed
+                        let trimmed = inline_buf.trim_end();
+                        if !trimmed.is_empty() && !trimmed.ends_with('>') {
+                            inline_buf.push(' ');
+                        }
+                    } else {
+                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                        if in_anchor {
+                            inline_buf.push_str("</a>");
+                            in_anchor = false;
+                        }
+                        flush_paragraph(&mut out, &mut inline_buf);
+                        out.push_str("      <empty-line/>\n");
+                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     }
-                    flush_paragraph(&mut out, &mut inline_buf);
-                    out.push_str("      <empty-line/>\n");
-                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     pos += gt + 1;
                 } else if tag_lower.starts_with("<a ") || tag_lower.starts_with("<a>") {
                     // Opening <a> tag – extract href and convert to l:href
@@ -333,6 +344,41 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         inline_buf.push_str("</a>");
                         in_anchor = false;
                     }
+                    pos += gt + 1;
+                } else if tag_lower.len() >= 4
+                    && tag_lower.as_bytes()[1] == b'h'
+                    && tag_lower.as_bytes()[2].is_ascii_digit()
+                    && (tag_lower.as_bytes()[3] == b'>' || tag_lower.as_bytes()[3] == b' ')
+                    && !tag_lower.starts_with("</")
+                {
+                    // Opening <h1>..<h6> tag – treat as paragraph boundary + wrap in <strong>
+                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                    if in_anchor {
+                        inline_buf.push_str("</a>");
+                        in_anchor = false;
+                    }
+                    flush_paragraph(&mut out, &mut inline_buf);
+                    inline_buf.push_str("<strong>");
+                    _in_heading = true;
+                    in_p = true;
+                    pos += gt + 1;
+                } else if tag_lower.len() >= 5
+                    && tag_lower.as_bytes()[1] == b'/'
+                    && tag_lower.as_bytes()[2] == b'h'
+                    && tag_lower.as_bytes()[3].is_ascii_digit()
+                    && tag_lower.as_bytes()[4] == b'>'
+                {
+                    // Closing </h1>..</h6> tag
+                    inline_buf.push_str("</strong>");
+                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                    if in_anchor {
+                        inline_buf.push_str("</a>");
+                        in_anchor = false;
+                    }
+                    flush_paragraph(&mut out, &mut inline_buf);
+                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                    _in_heading = false;
+                    in_p = false;
                     pos += gt + 1;
                 } else if tag_lower == "<b>" || tag_lower == "<strong>"
                     || tag_lower.starts_with("<b ") || tag_lower.starts_with("<strong ") {
@@ -457,6 +503,34 @@ fn is_external_url(url: &str) -> bool {
         || lower.starts_with("mailto:")
 }
 
+/// Generates a deterministic UUID-like identifier from book metadata.
+///
+/// Uses a simple hash of the title and authors to produce a stable ID
+/// formatted as a UUID v4-like string.
+fn generate_document_id(book: &Book) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    book.metadata.title.hash(&mut hasher);
+    for author in &book.metadata.authors {
+        author.hash(&mut hasher);
+    }
+    let h = hasher.finish();
+    // Generate a second hash value for more bits
+    let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
+    h.hash(&mut hasher2);
+    book.metadata.language.hash(&mut hasher2);
+    let h2 = hasher2.finish();
+    // Format as UUID-like: 8-4-4-4-12
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        (h >> 32) as u32,
+        (h >> 16) as u16,
+        (h & 0xFFFF) as u16,
+        (h2 >> 48) as u16,
+        h2 & 0xFFFF_FFFF_FFFF
+    )
+}
+
 /// Generates a complete FictionBook 2.0 XML document from a `Book`.
 fn generate_fb2(book: &Book) -> String {
     let mut xml = String::with_capacity(4096);
@@ -524,15 +598,35 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("      </annotation>\n");
     }
 
-    // Coverpage – look for a cover image in the manifest
+    // Keywords from subjects (comma-separated, matching Calibre behavior)
+    if !book.metadata.subjects.is_empty() {
+        xml.push_str("      <keywords>");
+        let kw: Vec<_> = book.metadata.subjects.iter().map(|s| escape_html(s)).collect();
+        xml.push_str(&kw.join(", "));
+        xml.push_str("</keywords>\n");
+    }
+
+    // Coverpage – look for a cover image in the manifest.
+    // First check metadata.cover_image_id, then fall back to heuristic search.
     let cover_id = book
-        .manifest
-        .iter()
-        .find(|item| {
-            item.id.to_lowercase().contains("cover")
-                && item.media_type.starts_with("image/")
+        .metadata
+        .cover_image_id
+        .as_ref()
+        .and_then(|cid| {
+            book.manifest
+                .get(cid)
+                .filter(|item| item.media_type.starts_with("image/"))
+                .map(|item| item.id.clone())
         })
-        .map(|item| item.id.clone());
+        .or_else(|| {
+            book.manifest
+                .iter()
+                .find(|item| {
+                    item.id.to_lowercase().contains("cover")
+                        && item.media_type.starts_with("image/")
+                })
+                .map(|item| item.id.clone())
+        });
     if let Some(ref cid) = cover_id {
         xml.push_str("      <coverpage><image l:href=\"#");
         xml.push_str(&escape_html(cid));
@@ -547,6 +641,10 @@ fn generate_fb2(book: &Book) -> String {
     xml.push_str("      <date>");
     xml.push_str(&chrono::Utc::now().format("%Y-%m-%d").to_string());
     xml.push_str("</date>\n");
+    xml.push_str("      <id>");
+    xml.push_str(&generate_document_id(book));
+    xml.push_str("</id>\n");
+    xml.push_str("      <version>1.0</version>\n");
     xml.push_str("    </document-info>\n");
 
     // Publish-info (publisher, isbn, year)
@@ -1551,6 +1649,408 @@ mod tests {
             !body_section.contains("<image l:href=\"#"),
             "body should not contain cover image section when no cover exists, got:\n{}",
             body_section
+        );
+    }
+
+    // =========================================================================
+    // Tests for the 5 FB2 writer fixes (headings, coverpage, keywords,
+    // document-info id/version, and br-within-paragraph)
+    // =========================================================================
+
+    // --- Fix 1: HTML headings (h1-h6) → <strong> ---
+
+    #[test]
+    fn fb2_writer_wraps_h1_in_strong() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Heading Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<h1>Chapter One</h1><p>Body text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<p><strong>Chapter One</strong></p>"),
+            "h1 content should be wrapped in <strong>, got:\n{}",
+            xml
+        );
+        assert!(
+            xml.contains("<p>Body text</p>"),
+            "body text should follow heading as normal paragraph"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_wraps_h2_through_h6_in_strong() {
+        for level in 2..=6 {
+            let mut book = Book::new();
+            book.metadata.title = Some(format!("H{} Test", level));
+            let content = format!("<h{}>Heading {}</h{}><p>After heading</p>", level, level, level);
+            book.add_chapter(&Chapter {
+                title: Some("Ch1".into()),
+                content,
+                id: Some("ch1".into()),
+            });
+
+            let mut output = Vec::new();
+            Fb2Writer::new().write_book(&book, &mut output).unwrap();
+            let xml = String::from_utf8(output).unwrap();
+
+            let expected = format!("<p><strong>Heading {}</strong></p>", level);
+            assert!(
+                xml.contains(&expected),
+                "h{} content should be wrapped in <strong>, expected '{}', got:\n{}",
+                level, expected, xml
+            );
+        }
+    }
+
+    #[test]
+    fn fb2_writer_heading_with_inline_formatting() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Heading Inline Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<h2>Chapter <em>One</em></h2>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<p><strong>Chapter <emphasis>One</emphasis></strong></p>"),
+            "heading with inline formatting should preserve emphasis inside strong, got:\n{}",
+            xml
+        );
+    }
+
+    #[test]
+    fn fb2_writer_heading_between_paragraphs() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Heading Between Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Before</p><h3>Middle Heading</h3><p>After</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(xml.contains("<p>Before</p>"), "paragraph before heading");
+        assert!(
+            xml.contains("<p><strong>Middle Heading</strong></p>"),
+            "heading should be strong-wrapped paragraph, got:\n{}",
+            xml
+        );
+        assert!(xml.contains("<p>After</p>"), "paragraph after heading");
+    }
+
+    // --- Fix 2: <coverpage> element referencing cover binary ---
+
+    #[test]
+    fn fb2_writer_coverpage_from_metadata_cover_image_id() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Cover ID Test".into());
+        book.metadata.cover_image_id = Some("my-cover-img".into());
+        book.add_resource("my-cover-img", "images/cover.png", vec![0x89, 0x50], "image/png");
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<coverpage><image l:href=\"#my-cover-img\"/></coverpage>"),
+            "coverpage should reference cover from metadata.cover_image_id, got:\n{}",
+            xml
+        );
+    }
+
+    // --- Fix 3: <keywords> from book subjects ---
+
+    #[test]
+    fn fb2_writer_includes_keywords_from_subjects() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Keywords Test".into());
+        book.metadata.subjects.push("Fiction".into());
+        book.metadata.subjects.push("Adventure".into());
+        book.metadata.subjects.push("Classic".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<keywords>Fiction, Adventure, Classic</keywords>"),
+            "keywords should be comma-separated subjects, got:\n{}",
+            xml
+        );
+        // Keywords should be inside title-info
+        let ti_start = xml.find("<title-info>").unwrap();
+        let ti_end = xml.find("</title-info>").unwrap();
+        let kw_pos = xml.find("<keywords>").unwrap();
+        assert!(
+            kw_pos > ti_start && kw_pos < ti_end,
+            "keywords should be inside title-info"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_omits_keywords_when_no_subjects() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Keywords Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            !xml.contains("<keywords>"),
+            "keywords should not be present when subjects are empty"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_keywords_html_escaping() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Keywords Escape Test".into());
+        book.metadata.subjects.push("Science & Fiction".into());
+        book.metadata.subjects.push("Children's Books".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("Science &amp; Fiction"),
+            "ampersand should be escaped in keywords, got:\n{}",
+            xml
+        );
+    }
+
+    // --- Fix 4: document-info/id and version ---
+
+    #[test]
+    fn fb2_writer_document_info_has_id_and_version() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Doc ID Test".into());
+        book.metadata.authors.push("Test Author".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // Must have <id> element
+        assert!(
+            xml.contains("<id>"),
+            "document-info should contain <id> element"
+        );
+        assert!(
+            xml.contains("</id>"),
+            "document-info should contain </id> element"
+        );
+
+        // Must have <version>1.0</version>
+        assert!(
+            xml.contains("<version>1.0</version>"),
+            "document-info should contain <version>1.0</version>, got:\n{}",
+            xml
+        );
+
+        // id and version should be inside document-info
+        let di_start = xml.find("<document-info>").unwrap();
+        let di_end = xml.find("</document-info>").unwrap();
+        let id_pos = xml.find("<id>").unwrap();
+        let ver_pos = xml.find("<version>").unwrap();
+        assert!(id_pos > di_start && id_pos < di_end, "id should be inside document-info");
+        assert!(ver_pos > di_start && ver_pos < di_end, "version should be inside document-info");
+    }
+
+    #[test]
+    fn fb2_writer_document_id_is_deterministic() {
+        let make_book = || {
+            let mut book = Book::new();
+            book.metadata.title = Some("Deterministic ID".into());
+            book.metadata.authors.push("Author One".into());
+            book.add_chapter(&Chapter {
+                title: Some("Ch1".into()),
+                content: "<p>Text</p>".into(),
+                id: Some("ch1".into()),
+            });
+            book
+        };
+
+        let mut out1 = Vec::new();
+        Fb2Writer::new().write_book(&make_book(), &mut out1).unwrap();
+        let xml1 = String::from_utf8(out1).unwrap();
+
+        let mut out2 = Vec::new();
+        Fb2Writer::new().write_book(&make_book(), &mut out2).unwrap();
+        let xml2 = String::from_utf8(out2).unwrap();
+
+        // Extract the <id> values
+        let extract_id = |xml: &str| -> String {
+            let start = xml.find("<id>").unwrap() + 4;
+            let end = xml.find("</id>").unwrap();
+            xml[start..end].to_string()
+        };
+
+        assert_eq!(
+            extract_id(&xml1),
+            extract_id(&xml2),
+            "document ID should be deterministic for same metadata"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_document_id_has_uuid_format() {
+        let mut book = Book::new();
+        book.metadata.title = Some("UUID Format Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let start = xml.find("<id>").unwrap() + 4;
+        let end = xml.find("</id>").unwrap();
+        let id = &xml[start..end];
+
+        // UUID format: 8-4-4-4-12 hex characters
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 5, "UUID should have 5 parts separated by hyphens, got: {}", id);
+        assert_eq!(parts[0].len(), 8, "first part should be 8 chars");
+        assert_eq!(parts[1].len(), 4, "second part should be 4 chars");
+        assert_eq!(parts[2].len(), 4, "third part should be 4 chars");
+        assert_eq!(parts[3].len(), 4, "fourth part should be 4 chars");
+        assert_eq!(parts[4].len(), 12, "fifth part should be 12 chars");
+        // All parts should be hex
+        for part in &parts {
+            assert!(
+                part.chars().all(|c| c.is_ascii_hexdigit()),
+                "UUID parts should be hex, got: {}",
+                id
+            );
+        }
+    }
+
+    // --- Fix 5: br within paragraph treated as soft break ---
+
+    #[test]
+    fn fb2_writer_br_inside_paragraph_is_soft_break() {
+        let mut book = Book::new();
+        book.metadata.title = Some("BR Soft Break Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Line one<br/>Line two</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // br inside paragraph should NOT split into two paragraphs
+        assert!(
+            xml.contains("<p>Line one Line two</p>"),
+            "br inside paragraph should become a space, keeping content in single <p>, got:\n{}",
+            xml
+        );
+        assert!(
+            !xml.contains("<empty-line/>"),
+            "br inside paragraph should not produce empty-line, got:\n{}",
+            xml
+        );
+    }
+
+    #[test]
+    fn fb2_writer_br_outside_paragraph_produces_empty_line() {
+        let mut book = Book::new();
+        book.metadata.title = Some("BR Outside Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Para 1</p><br/><p>Para 2</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        assert!(
+            xml.contains("<empty-line/>"),
+            "br between paragraphs should produce empty-line, got:\n{}",
+            xml
+        );
+        assert!(xml.contains("<p>Para 1</p>"));
+        assert!(xml.contains("<p>Para 2</p>"));
+    }
+
+    #[test]
+    fn fb2_writer_br_reduces_paragraph_count() {
+        // This test verifies the fix for the +19.4% paragraph inflation issue.
+        // Multiple <br> tags within a single <p> should NOT produce extra paragraphs.
+        let mut book = Book::new();
+        book.metadata.title = Some("BR Inflation Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Line A<br/>Line B<br/>Line C</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // Should be ONE content paragraph, not three
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+        // Count <p> tags in body (excluding the title <p>)
+        let p_tags: Vec<_> = body.match_indices("<p>").collect();
+        // One for the section title, one for content = 2 total
+        assert_eq!(
+            p_tags.len(),
+            2,
+            "should have 2 <p> tags in body (1 title + 1 content), not {}: body is:\n{}",
+            p_tags.len(),
+            body
         );
     }
 }

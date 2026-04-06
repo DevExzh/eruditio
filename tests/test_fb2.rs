@@ -182,7 +182,12 @@ fn fb2_writer_emphasis_across_br_boundary() {
     Fb2Writer::new().write_book(&book, &mut output).unwrap();
     let xml = String::from_utf8(output).unwrap();
 
-    assert!(xml.contains("<emphasis>B</emphasis>"), "emphasis should close before br, got:\n{xml}");
-    assert!(xml.contains("<emphasis>C</emphasis>"), "emphasis should reopen after br, got:\n{xml}");
-    assert!(!xml.contains("<emphasis></emphasis>"), "spurious empty emphasis found:\n{xml}");
+    // With the br-within-paragraph fix, <br/> inside a <p> is treated as a
+    // soft break (space), so emphasis is NOT split across paragraphs.
+    assert!(
+        xml.contains("<p>A <emphasis>B C</emphasis> D</p>"),
+        "br inside paragraph should be soft break, emphasis stays intact, got:\n{}",
+        xml
+    );
+    assert!(!xml.contains("<empty-line/>"), "br inside paragraph should not produce empty-line:\n{xml}");
 }
