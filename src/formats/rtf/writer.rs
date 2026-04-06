@@ -10,7 +10,7 @@ pub fn book_to_rtf(book: &Book) -> String {
     let mut rtf = String::with_capacity(8192);
 
     // RTF header.
-    rtf.push_str("{\\rtf1\\ansi\\deff0\n");
+    rtf.push_str("{\\rtf1\\ansi\\widowctrl\\deff0\n");
 
     // Font table.
     rtf.push_str("{\\fonttbl{\\f0\\froman Times New Roman;}}\n");
@@ -21,12 +21,12 @@ pub fn book_to_rtf(book: &Book) -> String {
     // Stylesheet.
     rtf.push_str("{\\stylesheet\n");
     rtf.push_str("{\\s0\\ql\\sa120\\fi360\\f0\\fs24 Normal;}\n");
-    rtf.push_str("{\\s1\\qc\\sb360\\sa120\\outlinelevel0\\f0\\fs48\\b Heading 1;}\n");
-    rtf.push_str("{\\s2\\qc\\sb300\\sa120\\outlinelevel1\\f0\\fs36\\b Heading 2;}\n");
-    rtf.push_str("{\\s3\\qc\\sb240\\sa120\\outlinelevel2\\f0\\fs32\\b Heading 3;}\n");
-    rtf.push_str("{\\s4\\qc\\sb200\\sa120\\outlinelevel3\\f0\\fs28\\b Heading 4;}\n");
-    rtf.push_str("{\\s5\\qc\\sb160\\sa120\\outlinelevel4\\f0\\fs24\\b\\i Heading 5;}\n");
-    rtf.push_str("{\\s6\\qc\\sb120\\sa120\\outlinelevel5\\f0\\fs24\\i Heading 6;}\n");
+    rtf.push_str("{\\s1\\qc\\sb360\\sa120\\keepn\\outlinelevel0\\f0\\fs48\\b Heading 1;}\n");
+    rtf.push_str("{\\s2\\qc\\sb300\\sa120\\keepn\\outlinelevel1\\f0\\fs36\\b Heading 2;}\n");
+    rtf.push_str("{\\s3\\qc\\sb240\\sa120\\keepn\\outlinelevel2\\f0\\fs32\\b Heading 3;}\n");
+    rtf.push_str("{\\s4\\qc\\sb200\\sa120\\keepn\\outlinelevel3\\f0\\fs28\\b Heading 4;}\n");
+    rtf.push_str("{\\s5\\qc\\sb160\\sa120\\keepn\\outlinelevel4\\f0\\fs24\\b\\i Heading 5;}\n");
+    rtf.push_str("{\\s6\\qc\\sb120\\sa120\\keepn\\outlinelevel5\\f0\\fs24\\i Heading 6;}\n");
     rtf.push_str("}\n");
 
     // Info group (metadata).
@@ -55,7 +55,7 @@ pub fn book_to_rtf(book: &Book) -> String {
 
         // Chapter title as Heading 1 style (centered, with spacing).
         if let Some(ref title) = chapter.title {
-            rtf.push_str("{\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ");
+            rtf.push_str("{\\pard\\s1\\qc\\sb360\\sa120\\keepn\\f0\\fs48\\b ");
             write_rtf_text(&mut rtf, title);
             rtf.push_str("\\par}\n");
         }
@@ -442,13 +442,13 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &Hash
                 // Wrap in a group `{...}` to scope bold/italic character formatting.
                 let level = tag_bytes[2] - b'0';
                 let style_ref = match level {
-                    1 => "{\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
-                    2 => "{\\pard\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b ",
-                    3 => "{\\pard\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b ",
-                    4 => "{\\pard\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b ",
-                    5 => "{\\pard\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i ",
-                    6 => "{\\pard\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i ",
-                    _ => "{\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
+                    1 => "{\\pard\\s1\\qc\\sb360\\sa120\\keepn\\f0\\fs48\\b ",
+                    2 => "{\\pard\\s2\\qc\\sb300\\sa120\\keepn\\f0\\fs36\\b ",
+                    3 => "{\\pard\\s3\\qc\\sb240\\sa120\\keepn\\f0\\fs32\\b ",
+                    4 => "{\\pard\\s4\\qc\\sb200\\sa120\\keepn\\f0\\fs28\\b ",
+                    5 => "{\\pard\\s5\\qc\\sb160\\sa120\\keepn\\f0\\fs24\\b\\i ",
+                    6 => "{\\pard\\s6\\qc\\sb120\\sa120\\keepn\\f0\\fs24\\i ",
+                    _ => "{\\pard\\s1\\qc\\sb360\\sa120\\keepn\\f0\\fs48\\b ",
                 };
                 rtf.push_str(style_ref);
             } else if tag_bytes.len() >= 5
@@ -760,11 +760,11 @@ mod tests {
             "Stylesheet should contain Normal style with alignment and spacing"
         );
         assert!(
-            rtf.contains("\\s1\\qc\\sb360\\sa120\\outlinelevel0\\f0\\fs48\\b Heading 1;"),
+            rtf.contains("\\s1\\qc\\sb360\\sa120\\keepn\\outlinelevel0\\f0\\fs48\\b Heading 1;"),
             "Stylesheet should contain Heading 1 style with outline level"
         );
         assert!(
-            rtf.contains("\\s6\\qc\\sb120\\sa120\\outlinelevel5\\f0\\fs24\\i Heading 6;"),
+            rtf.contains("\\s6\\qc\\sb120\\sa120\\keepn\\outlinelevel5\\f0\\fs24\\i Heading 6;"),
             "Stylesheet should contain Heading 6 style with outline level"
         );
     }
@@ -781,27 +781,27 @@ mod tests {
         );
 
         assert!(
-            rtf.contains("\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b H1"),
+            rtf.contains("\\pard\\s1\\qc\\sb360\\sa120\\keepn\\f0\\fs48\\b H1"),
             "H1 should use fs48 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b H2"),
+            rtf.contains("\\pard\\s2\\qc\\sb300\\sa120\\keepn\\f0\\fs36\\b H2"),
             "H2 should use fs36 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b H3"),
+            rtf.contains("\\pard\\s3\\qc\\sb240\\sa120\\keepn\\f0\\fs32\\b H3"),
             "H3 should use fs32 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b H4"),
+            rtf.contains("\\pard\\s4\\qc\\sb200\\sa120\\keepn\\f0\\fs28\\b H4"),
             "H4 should use fs28 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i H5"),
+            rtf.contains("\\pard\\s5\\qc\\sb160\\sa120\\keepn\\f0\\fs24\\b\\i H5"),
             "H5 should use fs24 bold italic centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i H6"),
+            rtf.contains("\\pard\\s6\\qc\\sb120\\sa120\\keepn\\f0\\fs24\\i H6"),
             "H6 should use fs24 italic centered with spacing, got: {rtf}"
         );
     }
@@ -830,7 +830,7 @@ mod tests {
 
         let rtf = book_to_rtf(&book);
         assert!(
-            rtf.contains("\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b My Chapter"),
+            rtf.contains("\\pard\\s1\\qc\\sb360\\sa120\\keepn\\f0\\fs48\\b My Chapter"),
             "Chapter title should use Heading 1 style centered with spacing, got: {rtf}"
         );
     }
