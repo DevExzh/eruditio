@@ -737,9 +737,15 @@ fn detect_image_type(data: &[u8]) -> (&'static str, &'static str) {
 /// together. Each document has its own `<?xml` declaration, `<html>`, `<head>`,
 /// and `<body>` elements.
 ///
-/// This function detects these XHTML document boundaries and splits the content
-/// into separate, well-formed chapters. If no multiple documents are detected,
-/// it falls back to `split_mobi_content()` (pagebreak-based splitting).
+/// In the raw KF8 byte stream, each XHTML "document" consists of a skeleton
+/// (the `<html>`/`<head>`/`<body>` wrapper with an empty body) followed by
+/// content fragments that belong inside the `<body>`. When we split at `<?xml`
+/// boundaries, the content fragments end up *after* the closing `</html>` tag.
+/// This function detects those boundaries, splits, and then reassembles each
+/// part so the content is correctly placed inside `<body>`.
+///
+/// If no multiple documents are detected, it falls back to `split_mobi_content()`
+/// (pagebreak-based splitting).
 fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
     let parts = split_on_xhtml_boundaries(html);
 
@@ -755,12 +761,16 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
             continue;
         }
 
+        // Fix KF8 skeleton/fragment assembly: move content that is after
+        // </html> into the <body> element where it belongs.
+        let fixed = reassemble_kf8_xhtml(trimmed);
+
         // Try to extract a title from the first heading in the body.
-        let title = extract_first_heading(trimmed);
+        let title = extract_first_heading(&fixed);
 
         chapters.push(SimpleChapter {
             title: title.or_else(|| Some(format!("Part {}", i + 1))),
-            content: trimmed.to_string(),
+            content: fixed,
         });
     }
 
@@ -772,6 +782,72 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
     }
 
     chapters
+}
+
+/// Reassembles a KF8 XHTML part by moving content from after `</html>` into
+/// the `<body>` element.
+///
+/// In the raw KF8 byte stream, each skeleton provides the document wrapper
+/// (`<?xml>`, `<html>`, `<head>`, `<body>`) with an empty body, and the actual
+/// chapter content (headings, paragraphs, images) follows after the `</html>`
+/// closing tag. This function fixes that by:
+///
+/// 1. Extracting the trailing content (everything after `</html>`)
+/// 2. Finding the `</body>` close tag in the skeleton
+/// 3. Inserting the trailing content just before `</body>`
+///
+/// If there is no content after `</html>`, or if the structure doesn't match
+/// the expected KF8 skeleton pattern, the input is returned unchanged.
+fn reassemble_kf8_xhtml(part: &str) -> String {
+    let bytes = part.as_bytes();
+
+    // Find the closing </html> tag (case-insensitive).
+    let html_close_pos = match text_utils::find_case_insensitive(bytes, b"</html") {
+        Some(pos) => pos,
+        None => return part.to_string(),
+    };
+
+    // Find the end of the </html...> tag.
+    let html_tag_end = match part[html_close_pos..].find('>') {
+        Some(offset) => html_close_pos + offset + 1,
+        None => return part.to_string(),
+    };
+
+    // Extract trailing content after </html>.
+    let trailing = part[html_tag_end..].trim();
+    if trailing.is_empty() {
+        // No misplaced content; the document is already well-formed.
+        return part.to_string();
+    }
+
+    // We have content after </html> that needs to be moved inside <body>.
+    let skeleton = &part[..html_tag_end];
+
+    // Find the </body> close tag in the skeleton (case-insensitive).
+    let body_close_pos =
+        match text_utils::find_case_insensitive(skeleton.as_bytes(), b"</body") {
+            Some(pos) => pos,
+            None => {
+                // No </body> tag: fall back to inserting before </html>.
+                let mut result = String::with_capacity(part.len());
+                result.push_str(&part[..html_close_pos]);
+                result.push('\n');
+                result.push_str(trailing);
+                result.push('\n');
+                result.push_str(&part[html_close_pos..html_tag_end]);
+                return result;
+            }
+        };
+
+    // Build the fixed XHTML: skeleton up to </body>, then trailing content,
+    // then </body></html>.
+    let mut result = String::with_capacity(part.len());
+    result.push_str(&skeleton[..body_close_pos]);
+    result.push('\n');
+    result.push_str(trailing);
+    result.push('\n');
+    result.push_str(&skeleton[body_close_pos..]);
+    result
 }
 
 /// Splits HTML content at XHTML document boundaries (`<?xml` declarations).
@@ -1663,5 +1739,99 @@ mod tests {
         assert_eq!(positions[0], 0);
         assert_eq!(positions[1], 10);
         assert_eq!(positions[2], 20);
+    }
+
+    // --- KF8 XHTML body reassembly tests ---
+
+    #[test]
+    fn reassemble_kf8_xhtml_moves_content_into_body() {
+        // Simulates the KF8 skeleton/fragment pattern: empty body followed by
+        // content after </html>.
+        let input = concat!(
+            "<?xml version=\"1.0\"?>",
+            "<html><head><title>T</title></head>",
+            "<body>\n</body></html>",
+            "<h1>Chapter</h1><p>Content here</p>",
+        );
+        let result = reassemble_kf8_xhtml(input);
+
+        // Content must be inside <body>.
+        assert!(result.contains("<body>\n\n<h1>Chapter</h1><p>Content here</p>\n</body>"),
+            "Content should be inside <body>. Got:\n{}", result);
+        // Nothing after </html>.
+        let html_close = result.find("</html>").unwrap();
+        let after = result[html_close + 7..].trim();
+        assert!(after.is_empty(), "Nothing should appear after </html>. Got: {}", after);
+    }
+
+    #[test]
+    fn reassemble_kf8_xhtml_preserves_wellformed_doc() {
+        // A well-formed document (content already in body) should be unchanged.
+        let input = "<?xml version=\"1.0\"?><html><body><p>Content</p></body></html>";
+        let result = reassemble_kf8_xhtml(input);
+        assert_eq!(result, input, "Well-formed document should not be modified");
+    }
+
+    #[test]
+    fn reassemble_kf8_xhtml_no_html_close() {
+        // No </html> tag at all -- return as-is.
+        let input = "<body><p>Content</p></body>";
+        let result = reassemble_kf8_xhtml(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn reassemble_kf8_xhtml_with_body_attributes() {
+        // Body tag with class and aid attributes (common in KF8).
+        let input = concat!(
+            "<?xml version=\"1.0\"?>",
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\">",
+            "<head><title>T</title></head>",
+            "<body class=\"myclass\" aid=\"ABC1\">\n</body></html>",
+            "<h2>Title</h2><p>Paragraph</p>",
+        );
+        let result = reassemble_kf8_xhtml(input);
+
+        assert!(result.contains("<h2>Title</h2>"), "Result should contain heading");
+        assert!(result.contains("<p>Paragraph</p>"), "Result should contain paragraph");
+
+        // Verify well-formedness: body content is before </body>.
+        let body_close = result.find("</body>").unwrap();
+        let html_close = result.find("</html>").unwrap();
+        assert!(body_close < html_close, "</body> should come before </html>");
+        assert!(result.find("<h2>Title</h2>").unwrap() < body_close,
+            "Content should be before </body>");
+    }
+
+    #[test]
+    fn split_kf8_content_fixes_body_placement() {
+        // Simulate concatenated KF8 documents with empty bodies and trailing content.
+        let html = concat!(
+            "<?xml version=\"1.0\"?><html><body>\n</body></html>",
+            "<h1>Chapter 1</h1><p>Text 1</p>",
+            "<?xml version=\"1.0\"?><html><body>\n</body></html>",
+            "<h2>Chapter 2</h2><p>Text 2</p>",
+        );
+        let chapters = split_kf8_content(html);
+        assert_eq!(chapters.len(), 2, "Should split into 2 chapters");
+
+        // Each chapter's content should be well-formed with content inside <body>.
+        for (i, ch) in chapters.iter().enumerate() {
+            let html_close = ch.content.find("</html>");
+            assert!(html_close.is_some(), "Chapter {} should have </html>", i);
+            let after = ch.content[html_close.unwrap() + 7..].trim();
+            assert!(after.is_empty(),
+                "Chapter {} should have no content after </html>. Got: {}", i, after);
+
+            let body_start = ch.content.find("<body").expect("Should have <body>");
+            let body_close = ch.content.find("</body>").expect("Should have </body>");
+            let body_tag_end = ch.content[body_start..].find('>').unwrap() + body_start + 1;
+            let body_content = &ch.content[body_tag_end..body_close];
+            assert!(!body_content.trim().is_empty(),
+                "Chapter {} should have content inside <body>", i);
+        }
+
+        assert!(chapters[0].content.contains("Chapter 1"));
+        assert!(chapters[1].content.contains("Chapter 2"));
     }
 }
