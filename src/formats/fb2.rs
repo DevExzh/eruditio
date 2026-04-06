@@ -844,25 +844,23 @@ fn generate_fb2(book: &Book) -> String {
     xml.push_str("  </description>\n");
 
     // Body
+    // Note: the cover image is referenced ONLY in the <coverpage> element
+    // inside <title-info>. We deliberately do NOT duplicate it as an <image>
+    // in the body — Calibre 9.6 uses a single coverpage reference.
     xml.push_str("  <body>\n");
 
-    // Add cover image section if a cover exists
-    if let Some(ref cid) = cover_id {
-        xml.push_str("    <section>\n");
-        xml.push_str("      <image l:href=\"#");
-        xml.push_str(&escape_html(cid));
-        xml.push_str("\"/>\n");
-        xml.push_str("    </section>\n");
-    }
+    // Track whether we've written at least one section, so we can insert
+    // <empty-line/> elements between sections for visual spacing (matching
+    // Calibre's use of <empty-line/> for section separation).
+    let mut section_written = false;
 
     for chapter in &book.chapters() {
         // Convert HTML content to FB2 paragraphs.
         let fb2_content = html_to_fb2_paragraphs(&chapter.content);
 
         // Skip chapters that produce no visible content after conversion
-        // (e.g. the cover page wrapper whose only content is an <img> tag
-        // that was already handled by the cover image section above, or
-        // chapters whose XHTML only contains navigation/boilerplate).
+        // (e.g. the cover page wrapper whose only content is an <img> tag,
+        // or chapters whose XHTML only contains navigation/boilerplate).
         if fb2_content.trim().is_empty() && chapter.title.is_none() {
             continue;
         }
@@ -873,8 +871,15 @@ fn generate_fb2(book: &Book) -> String {
             xml.push_str(&escape_html(ch_title));
             xml.push_str("</p></title>\n");
         }
+        // Insert an <empty-line/> at the start of each section (after title)
+        // for visual spacing between sections, matching Calibre's behavior.
+        // <empty-line/> must be inside <section>, not between sections.
+        if section_written {
+            xml.push_str("      <empty-line/>\n");
+        }
         xml.push_str(&fb2_content);
         xml.push_str("    </section>\n");
+        section_written = true;
     }
     xml.push_str("  </body>\n");
 
@@ -1772,6 +1777,8 @@ mod tests {
 
     #[test]
     fn fb2_writer_cover_image_in_body() {
+        // After the fix, the cover image should appear ONLY in the <coverpage>
+        // element inside <title-info>, NOT duplicated in the body.
         let mut book = Book::new();
         book.metadata.title = Some("Cover Body Test".into());
         book.add_resource("cover", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
@@ -1785,24 +1792,33 @@ mod tests {
         Fb2Writer::new().write_book(&book, &mut output).unwrap();
         let xml = String::from_utf8(output).unwrap();
 
+        // The coverpage in <title-info> should be present
+        assert!(
+            xml.contains("<coverpage><image l:href=\"#cover\"/></coverpage>"),
+            "coverpage should be present in title-info, got:\n{}",
+            xml
+        );
+
         // Extract the body section
         let body_start = xml.find("<body>").expect("missing <body>");
         let body_end = xml.find("</body>").expect("missing </body>");
         let body_section = &xml[body_start..body_end];
 
-        // The body should contain an image element referencing the cover
+        // The body should NOT contain a duplicate cover image reference
         assert!(
-            body_section.contains("<image l:href=\"#cover\"/>"),
-            "body should contain cover image reference, got:\n{}",
+            !body_section.contains("<image l:href=\"#cover\"/>"),
+            "body should NOT contain duplicate cover image reference, got:\n{}",
             body_section
         );
 
-        // The cover image section should appear before chapter sections
-        let cover_in_body = body_section.find("<image l:href=\"#cover\"/>").unwrap();
-        let chapter_in_body = body_section.find("<title><p>Ch1</p></title>").expect("missing chapter title in body");
-        assert!(
-            cover_in_body < chapter_in_body,
-            "cover image should appear before chapter content in body"
+        // Count total <image> references in the entire document
+        let image_refs: Vec<_> = xml.match_indices("<image l:href=\"#cover\"/>").collect();
+        assert_eq!(
+            image_refs.len(),
+            1,
+            "should have exactly 1 cover <image> reference (coverpage only), got {} in:\n{}",
+            image_refs.len(),
+            xml
         );
     }
 
@@ -2426,6 +2442,164 @@ mod tests {
             author_count, 2,
             "document-info should have 2 author elements, got {} in:\n{}",
             author_count, di_block
+        );
+    }
+
+    // =========================================================================
+    // Tests for Task 10: Hyperlink preservation, empty-line spacing, cover fix
+    // =========================================================================
+
+    #[test]
+    fn fb2_writer_empty_line_between_multiple_sections() {
+        // Multiple chapters should produce <empty-line/> between sections
+        // for visual spacing (matching Calibre behavior).
+        let mut book = Book::new();
+        book.metadata.title = Some("Multi Section Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>First chapter content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 2".into()),
+            content: "<p>Second chapter content</p>".into(),
+            id: Some("ch2".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 3".into()),
+            content: "<p>Third chapter content</p>".into(),
+            id: Some("ch3".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+
+        // There should be empty-line elements between sections (2 for 3 sections)
+        let empty_line_count = body.matches("<empty-line/>").count();
+        assert_eq!(
+            empty_line_count, 2,
+            "expected 2 <empty-line/> elements between 3 sections, got {} in:\n{}",
+            empty_line_count, body
+        );
+
+        // Each <empty-line/> should be INSIDE a <section> (valid FB2 XML)
+        // Verify by checking they appear after a <section> opening
+        for (idx, _) in body.match_indices("<empty-line/>") {
+            let before = &body[..idx];
+            let last_section_open = before.rfind("<section>").unwrap_or(0);
+            let last_section_close = before.rfind("</section>").unwrap_or(0);
+            assert!(
+                last_section_open > last_section_close,
+                "<empty-line/> at position {} should be inside a <section>, not between sections",
+                idx
+            );
+        }
+    }
+
+    #[test]
+    fn fb2_writer_no_empty_line_in_single_section() {
+        // A single chapter should NOT produce any inter-section empty-lines.
+        let mut book = Book::new();
+        book.metadata.title = Some("Single Section Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Only chapter</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+
+        let empty_line_count = body.matches("<empty-line/>").count();
+        assert_eq!(
+            empty_line_count, 0,
+            "single section should not have inter-section <empty-line/>, got {} in:\n{}",
+            empty_line_count, body
+        );
+    }
+
+    #[test]
+    fn fb2_writer_single_cover_reference_with_cover_resource() {
+        // Verify that when a cover image exists, there is exactly ONE <image>
+        // reference to it (in <coverpage>), and NOT a duplicate in the body.
+        let mut book = Book::new();
+        book.metadata.title = Some("Single Cover Ref Test".into());
+        book.metadata.cover_image_id = Some("cover-img".into());
+        book.add_resource("cover-img", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // Count ALL <image> references to the cover
+        let cover_refs: Vec<_> = xml.match_indices("<image l:href=\"#cover-img\"/>").collect();
+        assert_eq!(
+            cover_refs.len(),
+            1,
+            "should have exactly 1 cover <image> reference (in coverpage only), got {} in:\n{}",
+            cover_refs.len(),
+            xml
+        );
+
+        // The single reference should be inside <coverpage>
+        assert!(
+            xml.contains("<coverpage><image l:href=\"#cover-img\"/></coverpage>"),
+            "cover image should be in <coverpage> element"
+        );
+    }
+
+    #[test]
+    fn fb2_writer_external_links_in_multi_chapter() {
+        // Verify external links are preserved across multiple chapters
+        let mut book = Book::new();
+        book.metadata.title = Some("Multi Chapter Links".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<p>Visit <a href="https://www.gutenberg.org">Project Gutenberg</a></p>"#.into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Ch2".into()),
+            content: r##"<p>Also <a href="http://example.com/page">this page</a> and <a href="#internal">internal</a></p>"##.into(),
+            id: Some("ch2".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // External links should be preserved
+        assert!(
+            xml.contains(r#"<a l:href="https://www.gutenberg.org">Project Gutenberg</a>"#),
+            "https link should be preserved, got:\n{}", xml
+        );
+        assert!(
+            xml.contains(r#"<a l:href="http://example.com/page">this page</a>"#),
+            "http link should be preserved, got:\n{}", xml
+        );
+        // Internal links should be stripped (text preserved)
+        assert!(
+            !xml.contains(r##"l:href="#internal""##),
+            "internal fragment links should be stripped, got:\n{}", xml
+        );
+        assert!(
+            xml.contains("internal"),
+            "link text from internal links should be preserved"
         );
     }
 }
