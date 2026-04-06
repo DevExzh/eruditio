@@ -13,9 +13,10 @@ use image::imageops::FilterType;
 use image::ImageEncoder;
 
 use super::exth::{
-    self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_DESCRIPTION, EXTH_ISBN,
-    EXTH_LANGUAGE, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_SUBJECT,
-    EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
+    self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_CREATOR_BUILD,
+    EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR, EXTH_CREATOR_SOFTWARE, EXTH_DESCRIPTION, EXTH_ISBN,
+    EXTH_LANGUAGE, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_START_READING,
+    EXTH_SUBJECT, EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
 };
 use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 
@@ -23,7 +24,12 @@ use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 const RECORD_SIZE: usize = 4096;
 
 /// MOBI 6 header length.
-const MOBI_HEADER_LEN: u32 = 228;
+///
+/// Set to 232 to indicate that extra data flags (offset 240) and
+/// FCIS/FLIS record indices (offsets 200-215) are present. Readers
+/// such as Calibre check `header_length >= 232` before parsing these
+/// fields.
+const MOBI_HEADER_LEN: u32 = 232;
 
 /// FLIS record constant data.
 const FLIS_RECORD: &[u8] = &[
@@ -96,6 +102,41 @@ fn generate_thumbnail(image_data: &[u8]) -> Option<Vec<u8>> {
     Some(jpeg_buf.into_inner())
 }
 
+/// Derives a deterministic unique ID from book metadata.
+///
+/// Uses a DJB2-style hash over the title and author names to produce a
+/// non-zero u32. The result is stable across runs for the same input,
+/// which ensures that re-building the same book yields an identical file.
+fn derive_unique_id(title: &str, authors: &[String]) -> u32 {
+    let mut hash: u32 = 5381;
+    for b in title.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    for author in authors {
+        hash = hash.wrapping_mul(33).wrapping_add(0); // null separator
+        for b in author.bytes() {
+            hash = hash.wrapping_mul(33).wrapping_add(b as u32);
+        }
+    }
+    // Ensure the result is non-zero.
+    if hash == 0 { 1 } else { hash }
+}
+
+/// Finds the byte offset of the first `<mbp:pagebreak` tag in the HTML.
+///
+/// This is used for EXTH record 116 (start reading offset), which tells
+/// the Kindle where to open the book. If no page break is found (single-
+/// chapter books), returns 0 (start of text).
+fn find_start_reading_offset(html: &str) -> u32 {
+    if let Some(pos) = html.find("<mbp:pagebreak") {
+        // Point to the character right after the closing '>'.
+        if let Some(gt) = html[pos..].find('>') {
+            return (pos + gt + 1) as u32;
+        }
+    }
+    0
+}
+
 /// Generates a complete MOBI file from a `Book` and returns the raw bytes.
 pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     // Convert book content to HTML.
@@ -103,7 +144,12 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     let text_bytes = html.as_bytes();
 
     // Split and compress text records.
-    let text_records = compress_text_records(text_bytes);
+    // Each record gets a trailing 0x00 byte for multibyte overlap signalling
+    // (extra_data_flags bit 0). The trailing byte 0x00 means "no overlap".
+    let mut text_records = compress_text_records(text_bytes);
+    for tr in &mut text_records {
+        tr.push(0x00);
+    }
     let text_record_count = text_records.len();
 
     // Collect image data references (borrow from book, avoid cloning).
@@ -125,11 +171,24 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
         0
     };
 
+    // Derive unique ID from metadata.
+    let title = book.metadata.title.as_deref().unwrap_or("Untitled");
+    let unique_id = derive_unique_id(title, &book.metadata.authors);
+
+    // Find the start reading offset (byte offset after first page break).
+    let start_reading = find_start_reading_offset(&html);
+
+    // Calculate structural record indices (0-based PDB record indices).
+    let thumbnail_record_count = if thumbnail_data.is_some() { 1 } else { 0 };
+    let image_count = image_refs.len();
+    let flis_record_num =
+        (1 + text_record_count + image_count + thumbnail_record_count) as u32;
+    let fcis_record_num = flis_record_num + 1;
+
     // Build EXTH.
-    let exth_data = build_metadata_exth(book, has_images, thumb_offset);
+    let exth_data = build_metadata_exth(book, has_images, thumb_offset, start_reading);
 
     // Build Record 0.
-    let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     let record0 = build_record0(
         title,
         text_bytes.len() as u32,
@@ -137,14 +196,16 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
         &exth_data,
         text_record_count as u32 + 1, // first image index (1-based after text records)
         has_images,
+        unique_id,
+        flis_record_num,
+        fcis_record_num,
     );
 
     // Structural records: FLIS, FCIS, EOF.
     let fcis = build_fcis(text_bytes.len() as u32);
 
     // Calculate total number of records and pre-compute total output size.
-    let thumbnail_record_count = if thumbnail_data.is_some() { 1 } else { 0 };
-    let num_records = 1 + text_record_count + image_refs.len() + thumbnail_record_count + 3; // record0 + text + images + thumbnail + FLIS + FCIS + EOF
+    let num_records = 1 + text_record_count + image_count + thumbnail_record_count + 3; // record0 + text + images + thumbnail + FLIS + FCIS + EOF
     let header_table_size = 78 + num_records * 8 + 2;
 
     // Calculate record offsets and total data size in a single pass.
@@ -252,6 +313,9 @@ fn build_record0(
     exth_data: &[u8],
     first_image_index: u32,
     has_images: bool,
+    unique_id: u32,
+    flis_record_num: u32,
+    fcis_record_num: u32,
 ) -> Vec<u8> {
     let title_bytes = title.as_bytes();
     let exth_len = exth_data.len();
@@ -275,7 +339,7 @@ fn build_record0(
     write_u32_be(&mut data, 20, MOBI_HEADER_LEN);
     write_u32_be(&mut data, 24, 2); // mobi_type = book
     write_u32_be(&mut data, 28, ENCODING_UTF8);
-    write_u32_be(&mut data, 32, 0x0000_CAFE); // unique ID
+    write_u32_be(&mut data, 32, unique_id);
     write_u32_be(&mut data, 36, 6); // file version = MOBI 6
 
     // Offsets 40-79: various index fields (NULL).
@@ -321,8 +385,23 @@ fn build_record0(
     write_u32_be(&mut data, 176, 0);
     write_u32_be(&mut data, 180, 0);
 
-    // Extra data flags = 0 (no trailing data).
-    write_u32_be(&mut data, 240, 0);
+    // First / last content record indices (offsets 192-195).
+    write_u16_be(&mut data, 192, 1); // first text record is always PDB record 1
+    write_u16_be(&mut data, 194, text_record_count); // last text record
+
+    // Unknown field (matches Calibre output).
+    write_u32_be(&mut data, 196, 0x0000_0001);
+
+    // FCIS / FLIS record indices and counts (offsets 200-215).
+    write_u32_be(&mut data, 200, fcis_record_num);
+    write_u32_be(&mut data, 204, 1); // FCIS count
+    write_u32_be(&mut data, 208, flis_record_num);
+    write_u32_be(&mut data, 212, 1); // FLIS count
+
+    // Extra data flags = 1 (bit 0 = multibyte overlap signalling).
+    // Each text record carries a trailing byte that indicates how many
+    // extra bytes at the record boundary belong to a multi-byte character.
+    write_u32_be(&mut data, 240, 1);
 
     // NCX index = NULL.
     write_u32_be(&mut data, 244, NULL_INDEX);
@@ -343,13 +422,26 @@ fn build_record0(
 ///
 /// `thumb_offset` controls EXTH 202: 0 = same as cover, N = index of separate
 /// thumbnail record relative to the first image record.
-fn build_metadata_exth(book: &Book, has_cover: bool, thumb_offset: u32) -> Vec<u8> {
+///
+/// `start_reading` is the byte offset into the HTML text where the Kindle
+/// should open the book (EXTH 116).
+fn build_metadata_exth(
+    book: &Book,
+    has_cover: bool,
+    thumb_offset: u32,
+    start_reading: u32,
+) -> Vec<u8> {
     // Collect (type, data_slice) pairs without cloning the data.
     // We need to be careful about the cover offset bytes lifetime.
     let cover_offset_bytes = 0u32.to_be_bytes();
     let thumb_offset_bytes = thumb_offset.to_be_bytes();
+    let start_reading_bytes = start_reading.to_be_bytes();
+    let creator_software_bytes = 201u32.to_be_bytes(); // 201 = Linux
+    let creator_major_bytes = 0u32.to_be_bytes();
+    let creator_minor_bytes = 0u32.to_be_bytes();
+    let creator_build_bytes = 0u32.to_be_bytes();
 
-    let mut refs: Vec<(u32, &[u8])> = Vec::with_capacity(12);
+    let mut refs: Vec<(u32, &[u8])> = Vec::with_capacity(18);
 
     // Title.
     if let Some(ref title) = book.metadata.title {
@@ -405,6 +497,9 @@ fn build_metadata_exth(book: &Book, has_cover: bool, thumb_offset: u32) -> Vec<u
         refs.push((EXTH_ASIN, identifier.as_bytes()));
     }
 
+    // Start reading offset (EXTH 116).
+    refs.push((EXTH_START_READING, &start_reading_bytes));
+
     // Cover offset (first image = index 0).
     if has_cover {
         refs.push((EXTH_COVER_OFFSET, &cover_offset_bytes));
@@ -414,6 +509,12 @@ fn build_metadata_exth(book: &Book, has_cover: bool, thumb_offset: u32) -> Vec<u
     if has_cover {
         refs.push((EXTH_THUMB_OFFSET, &thumb_offset_bytes));
     }
+
+    // Creator software version records (EXTH 204-207).
+    refs.push((EXTH_CREATOR_SOFTWARE, &creator_software_bytes));
+    refs.push((EXTH_CREATOR_MAJOR, &creator_major_bytes));
+    refs.push((EXTH_CREATOR_MINOR, &creator_minor_bytes));
+    refs.push((EXTH_CREATOR_BUILD, &creator_build_bytes));
 
     // CDE type = EBOK (ebook).
     refs.push((EXTH_CDE_TYPE, b"EBOK"));
@@ -1055,5 +1156,304 @@ mod tests {
             exth.get_u32(EXTH_THUMB_OFFSET).is_none(),
             "EXTH 202 should not be present without a cover image"
         );
+    }
+
+    #[test]
+    fn unique_id_is_derived_from_metadata() {
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Derived ID Test".into());
+        book.metadata.authors.push("Author A".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+
+        // The unique_id should NOT be the old static 0xCAFE sentinel.
+        assert_ne!(mobi_hdr.unique_id, 0x0000_CAFE, "unique_id should not be static 0xCAFE");
+        assert_ne!(mobi_hdr.unique_id, 0, "unique_id should be non-zero");
+    }
+
+    #[test]
+    fn unique_id_is_deterministic() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Deterministic".into());
+        book.metadata.authors.push("Author X".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data1 = write_mobi(&book).unwrap();
+        let data2 = write_mobi(&book).unwrap();
+        assert_eq!(data1, data2, "same book should produce identical MOBI output");
+    }
+
+    #[test]
+    fn header_has_correct_content_record_indices() {
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Content Indices".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Ch2".into()),
+            content: "<p>World</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+
+        // first_content_record should be 1 (first text record).
+        assert_eq!(mobi_hdr.first_content_record, 1, "first content record should be 1");
+
+        // last_content_record should equal the text record count.
+        // For a small book, there should be exactly 1 text record.
+        assert!(
+            mobi_hdr.last_content_record >= 1,
+            "last content record should be >= 1, got {}",
+            mobi_hdr.last_content_record
+        );
+    }
+
+    #[test]
+    fn header_has_flis_fcis_record_numbers() {
+        use crate::formats::common::palm_db::read_u32_be;
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("FLIS FCIS Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let _mobi_hdr = MobiHeader::parse(record0).unwrap();
+
+        // Read FCIS/FLIS record numbers directly from the raw record0.
+        let fcis_num = read_u32_be(record0, 200);
+        let fcis_count = read_u32_be(record0, 204);
+        let flis_num = read_u32_be(record0, 208);
+        let flis_count = read_u32_be(record0, 212);
+
+        assert_ne!(flis_num, 0, "FLIS record number should be non-zero");
+        assert_ne!(fcis_num, 0, "FCIS record number should be non-zero");
+        assert_eq!(flis_count, 1, "FLIS count should be 1");
+        assert_eq!(fcis_count, 1, "FCIS count should be 1");
+
+        // Verify FLIS record contains FLIS magic.
+        let flis_record = pdb.record_data(flis_num as usize).unwrap();
+        assert_eq!(&flis_record[0..4], b"FLIS", "FLIS record should start with FLIS magic");
+
+        // Verify FCIS record contains FCIS magic.
+        let fcis_record = pdb.record_data(fcis_num as usize).unwrap();
+        assert_eq!(&fcis_record[0..4], b"FCIS", "FCIS record should start with FCIS magic");
+    }
+
+    #[test]
+    fn header_has_extra_data_flags() {
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Extra Flags".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+
+        assert_eq!(
+            mobi_hdr.extra_data_flags, 1,
+            "extra_data_flags should be 1 (multibyte)"
+        );
+        assert!(
+            mobi_hdr.has_multibyte(),
+            "has_multibyte() should return true"
+        );
+    }
+
+    #[test]
+    fn header_length_is_232() {
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Header Len".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+
+        assert_eq!(mobi_hdr.header_length, 232, "MOBI header length should be 232");
+    }
+
+    #[test]
+    fn exth_has_creator_software_records() {
+        use crate::formats::mobi::exth::{
+            ExthHeader, EXTH_CREATOR_BUILD, EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR,
+            EXTH_CREATOR_SOFTWARE,
+        };
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Creator SW".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+
+        assert_eq!(
+            exth.get_u32(EXTH_CREATOR_SOFTWARE),
+            Some(201),
+            "EXTH 204 (creator software) should be 201 (Linux)"
+        );
+        assert!(
+            exth.get_u32(EXTH_CREATOR_MAJOR).is_some(),
+            "EXTH 205 (creator major) should be present"
+        );
+        assert!(
+            exth.get_u32(EXTH_CREATOR_MINOR).is_some(),
+            "EXTH 206 (creator minor) should be present"
+        );
+        assert!(
+            exth.get_u32(EXTH_CREATOR_BUILD).is_some(),
+            "EXTH 207 (creator build) should be present"
+        );
+    }
+
+    #[test]
+    fn exth_has_start_reading_offset() {
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_START_READING};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Start Reading".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Intro</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Ch2".into()),
+            content: "<p>Main content</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+
+        let start_offset = exth
+            .get_u32(EXTH_START_READING)
+            .expect("EXTH 116 (start reading) should be present");
+
+        // With 2 chapters, there should be an <mbp:pagebreak>, so offset > 0.
+        assert!(
+            start_offset > 0,
+            "start reading offset should be > 0 for multi-chapter books, got {}",
+            start_offset
+        );
+    }
+
+    #[test]
+    fn exth_start_reading_zero_for_single_chapter() {
+        use crate::formats::mobi::exth::{ExthHeader, EXTH_START_READING};
+        use crate::formats::mobi::header::MobiHeader;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Single Chapter".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Only chapter</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let mobi_hdr = MobiHeader::parse(record0).unwrap();
+        let exth_start = mobi_hdr.exth_offset();
+        let exth = ExthHeader::parse(&record0[exth_start..]).unwrap();
+
+        let start_offset = exth
+            .get_u32(EXTH_START_READING)
+            .expect("EXTH 116 should be present");
+
+        assert_eq!(
+            start_offset, 0,
+            "start reading offset should be 0 for single-chapter books"
+        );
+    }
+
+    #[test]
+    fn derive_unique_id_is_stable_and_nonzero() {
+        let id1 = derive_unique_id("Test Book", &["Author A".into()]);
+        let id2 = derive_unique_id("Test Book", &["Author A".into()]);
+        assert_eq!(id1, id2, "derive_unique_id should be deterministic");
+        assert_ne!(id1, 0, "unique_id should be non-zero");
+
+        // Different metadata should (very likely) produce different IDs.
+        let id3 = derive_unique_id("Other Book", &["Author B".into()]);
+        assert_ne!(id1, id3, "different books should have different unique_ids");
+    }
+
+    #[test]
+    fn find_start_reading_offset_works() {
+        let html = "<html><body><p>Intro</p><mbp:pagebreak />\n<h2>Ch2</h2></body></html>";
+        let offset = find_start_reading_offset(html);
+        assert!(offset > 0, "should find the pagebreak offset");
+        // The offset should point just after the '>' of the pagebreak tag.
+        let after = &html[offset as usize..];
+        assert!(
+            after.starts_with('\n') || after.starts_with('<'),
+            "offset should point right after the closing '>' of the pagebreak tag, got: {:?}",
+            &after[..after.len().min(20)]
+        );
+    }
+
+    #[test]
+    fn find_start_reading_offset_no_break() {
+        let html = "<html><body><p>Only content</p></body></html>";
+        assert_eq!(find_start_reading_offset(html), 0);
     }
 }
