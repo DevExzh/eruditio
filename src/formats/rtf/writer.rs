@@ -18,13 +18,13 @@ pub fn book_to_rtf(book: &Book) -> String {
 
     // Stylesheet.
     rtf.push_str("{\\stylesheet\n");
-    rtf.push_str("{\\s0\\f0\\fs24 Normal;}\n");
-    rtf.push_str("{\\s1\\f0\\fs48\\b Heading 1;}\n");
-    rtf.push_str("{\\s2\\f0\\fs36\\b Heading 2;}\n");
-    rtf.push_str("{\\s3\\f0\\fs32\\b Heading 3;}\n");
-    rtf.push_str("{\\s4\\f0\\fs28\\b Heading 4;}\n");
-    rtf.push_str("{\\s5\\f0\\fs24\\b\\i Heading 5;}\n");
-    rtf.push_str("{\\s6\\f0\\fs24\\i Heading 6;}\n");
+    rtf.push_str("{\\s0\\ql\\sa120\\fi360\\f0\\fs24 Normal;}\n");
+    rtf.push_str("{\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b Heading 1;}\n");
+    rtf.push_str("{\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b Heading 2;}\n");
+    rtf.push_str("{\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b Heading 3;}\n");
+    rtf.push_str("{\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b Heading 4;}\n");
+    rtf.push_str("{\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i Heading 5;}\n");
+    rtf.push_str("{\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i Heading 6;}\n");
     rtf.push_str("}\n");
 
     // Info group (metadata).
@@ -48,11 +48,11 @@ pub fn book_to_rtf(book: &Book) -> String {
             rtf.push_str("\\page\n");
         }
 
-        // Chapter title as Heading 1 style.
+        // Chapter title as Heading 1 style (centered, with spacing).
         if let Some(ref title) = chapter.title {
-            rtf.push_str("{\\pard\\s1\\f0\\fs48\\b ");
+            rtf.push_str("{\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ");
             write_rtf_text(&mut rtf, title);
-            rtf.push_str("}\\par\\pard\\s0\\f0\\fs24\\par\n");
+            rtf.push_str("\\par}\n");
         }
 
         // Strip duplicate heading from content before converting.
@@ -62,7 +62,8 @@ pub fn book_to_rtf(book: &Book) -> String {
         };
 
         // Convert HTML content to RTF.
-        html_to_rtf(content, &mut rtf);
+        // First paragraph after a chapter title (or page break) suppresses indent.
+        html_to_rtf(content, &mut rtf, true);
     }
 
     rtf.push_str("}\n");
@@ -259,10 +260,17 @@ fn parse_png_dimensions(data: &[u8]) -> Option<(u16, u16)> {
 ///
 /// Handles: `<p>`, `<br>`, `<b>`, `<i>`, `<em>`, `<strong>`, `<h1>`-`<h6>`.
 /// Strips all other tags and converts entities.
-fn html_to_rtf(html: &str, rtf: &mut String) {
+///
+/// `after_break` suppresses first-line indent on the first paragraph (used after
+/// chapter titles and page breaks).
+fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool) {
     let mut pos = 0;
     let bytes = html.as_bytes();
     let len = bytes.len();
+
+    // Track whether the next paragraph should suppress first-line indent.
+    // True after a heading close or when entering after a chapter title / page break.
+    let mut suppress_indent = after_break;
 
     while pos < len {
         if bytes[pos] == b'<' {
@@ -280,7 +288,13 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 && tag_bytes[1].eq_ignore_ascii_case(&b'p')
                 && (tag_bytes.len() == 3 || tag_bytes[2] == b' ' || tag_bytes[2] == b'>')
             {
-                // Start of paragraph -- already in paragraph mode.
+                // Start of paragraph — emit paragraph formatting.
+                if suppress_indent {
+                    rtf.push_str("\\pard\\s0\\ql\\sb0\\sa120\\f0\\fs24 ");
+                    suppress_indent = false;
+                } else {
+                    rtf.push_str("\\pard\\s0\\ql\\sa120\\fi360\\f0\\fs24 ");
+                }
             } else if tag_bytes.eq_ignore_ascii_case(b"</p>") {
                 rtf.push_str("\\par\n");
             } else if tag_bytes.eq_ignore_ascii_case(b"<br>")
@@ -309,16 +323,16 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 && tag_bytes[1].eq_ignore_ascii_case(&b'h')
                 && tag_bytes[2].is_ascii_digit()
             {
-                // Heading -- style reference with level-appropriate formatting.
-                let level = (tag_bytes[2] - b'0') as u8;
+                // Heading — centered, with level-scaled spacing.
+                let level = tag_bytes[2] - b'0';
                 let style_ref = match level {
-                    1 => "\\pard\\s1\\f0\\fs48\\b ",
-                    2 => "\\pard\\s2\\f0\\fs36\\b ",
-                    3 => "\\pard\\s3\\f0\\fs32\\b ",
-                    4 => "\\pard\\s4\\f0\\fs28\\b ",
-                    5 => "\\pard\\s5\\f0\\fs24\\b\\i ",
-                    6 => "\\pard\\s6\\f0\\fs24\\i ",
-                    _ => "\\pard\\s1\\f0\\fs48\\b ",
+                    1 => "\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
+                    2 => "\\pard\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b ",
+                    3 => "\\pard\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b ",
+                    4 => "\\pard\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b ",
+                    5 => "\\pard\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i ",
+                    6 => "\\pard\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i ",
+                    _ => "\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
                 };
                 rtf.push_str(style_ref);
             } else if tag_bytes.len() >= 5
@@ -326,7 +340,9 @@ fn html_to_rtf(html: &str, rtf: &mut String) {
                 && tag_bytes[1] == b'/'
                 && tag_bytes[2].eq_ignore_ascii_case(&b'h')
             {
-                rtf.push_str("\\par\\pard\\s0\\f0\\fs24\\par\n");
+                // End heading paragraph and suppress indent on next paragraph.
+                rtf.push_str("\\par\n");
+                suppress_indent = true;
             }
             // Other tags are silently skipped.
 
@@ -464,7 +480,7 @@ mod tests {
     #[test]
     fn html_to_rtf_handles_paragraphs() {
         let mut rtf = String::new();
-        html_to_rtf("<p>Hello</p><p>World</p>", &mut rtf);
+        html_to_rtf("<p>Hello</p><p>World</p>", &mut rtf, false);
         assert!(rtf.contains("Hello"));
         assert!(rtf.contains("\\par"));
         assert!(rtf.contains("World"));
@@ -473,7 +489,7 @@ mod tests {
     #[test]
     fn html_to_rtf_handles_bold_italic() {
         let mut rtf = String::new();
-        html_to_rtf("<b>Bold</b> and <i>Italic</i>", &mut rtf);
+        html_to_rtf("<b>Bold</b> and <i>Italic</i>", &mut rtf, false);
         assert!(rtf.contains("{\\b Bold}"));
         assert!(rtf.contains("{\\i Italic}"));
     }
@@ -549,16 +565,16 @@ mod tests {
             "RTF should contain a stylesheet group"
         );
         assert!(
-            rtf.contains("\\s0\\f0\\fs24 Normal;"),
-            "Stylesheet should contain Normal style"
+            rtf.contains("\\s0\\ql\\sa120\\fi360\\f0\\fs24 Normal;"),
+            "Stylesheet should contain Normal style with alignment and spacing"
         );
         assert!(
-            rtf.contains("\\s1\\f0\\fs48\\b Heading 1;"),
-            "Stylesheet should contain Heading 1 style"
+            rtf.contains("\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b Heading 1;"),
+            "Stylesheet should contain Heading 1 style with center alignment"
         );
         assert!(
-            rtf.contains("\\s6\\f0\\fs24\\i Heading 6;"),
-            "Stylesheet should contain Heading 6 style"
+            rtf.contains("\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i Heading 6;"),
+            "Stylesheet should contain Heading 6 style with center alignment"
         );
     }
 
@@ -568,43 +584,44 @@ mod tests {
         html_to_rtf(
             "<h1>H1</h1><h2>H2</h2><h3>H3</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
             &mut rtf,
+            false,
         );
 
         assert!(
-            rtf.contains("\\pard\\s1\\f0\\fs48\\b H1"),
-            "H1 should use fs48, got: {rtf}"
+            rtf.contains("\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b H1"),
+            "H1 should use fs48 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s2\\f0\\fs36\\b H2"),
-            "H2 should use fs36, got: {rtf}"
+            rtf.contains("\\pard\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b H2"),
+            "H2 should use fs36 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s3\\f0\\fs32\\b H3"),
-            "H3 should use fs32, got: {rtf}"
+            rtf.contains("\\pard\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b H3"),
+            "H3 should use fs32 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s4\\f0\\fs28\\b H4"),
-            "H4 should use fs28, got: {rtf}"
+            rtf.contains("\\pard\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b H4"),
+            "H4 should use fs28 centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s5\\f0\\fs24\\b\\i H5"),
-            "H5 should use fs24 bold italic, got: {rtf}"
+            rtf.contains("\\pard\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i H5"),
+            "H5 should use fs24 bold italic centered with spacing, got: {rtf}"
         );
         assert!(
-            rtf.contains("\\pard\\s6\\f0\\fs24\\i H6"),
-            "H6 should use fs24 italic, got: {rtf}"
+            rtf.contains("\\pard\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i H6"),
+            "H6 should use fs24 italic centered with spacing, got: {rtf}"
         );
     }
 
     #[test]
     fn normal_style_restored_after_heading() {
         let mut rtf = String::new();
-        html_to_rtf("<h2>Title</h2><p>Body</p>", &mut rtf);
+        html_to_rtf("<h2>Title</h2><p>Body</p>", &mut rtf, false);
 
-        // After the heading, Normal style should be restored via \pard\s0\f0\fs24
+        // After the heading, the next <p> restores Normal style with \pard\s0\ql.
         assert!(
-            rtf.contains("\\par\\pard\\s0\\f0\\fs24\\par"),
-            "Normal style should be restored after heading, got: {rtf}"
+            rtf.contains("\\pard\\s0\\ql\\sb0\\sa120\\f0\\fs24 Body"),
+            "Normal style should be restored on paragraph after heading, got: {rtf}"
         );
     }
 
@@ -619,12 +636,8 @@ mod tests {
 
         let rtf = book_to_rtf(&book);
         assert!(
-            rtf.contains("\\pard\\s1\\f0\\fs48\\b My Chapter"),
-            "Chapter title should use Heading 1 style, got: {rtf}"
-        );
-        assert!(
-            rtf.contains("\\par\\pard\\s0\\f0\\fs24\\par"),
-            "Normal style should be restored after chapter title, got: {rtf}"
+            rtf.contains("\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b My Chapter"),
+            "Chapter title should use Heading 1 style centered with spacing, got: {rtf}"
         );
     }
 
@@ -794,5 +807,161 @@ mod tests {
     #[test]
     fn parse_png_dimensions_returns_none_for_invalid() {
         assert!(parse_png_dimensions(&[0x00, 0x01, 0x02]).is_none());
+    }
+
+    // --- Tests for alignment, spacing, and first-line indent ---
+
+    #[test]
+    fn headings_have_center_alignment() {
+        let mut rtf = String::new();
+        html_to_rtf("<h1>Centered</h1>", &mut rtf, false);
+        assert!(
+            rtf.contains("\\qc"),
+            "Headings should contain \\qc for center alignment, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn headings_have_space_before_and_after() {
+        let mut rtf = String::new();
+        html_to_rtf("<h1>H1</h1><h3>H3</h3><h6>H6</h6>", &mut rtf, false);
+
+        // H1: sb360, sa120
+        assert!(
+            rtf.contains("\\sb360\\sa120"),
+            "H1 should have \\sb360\\sa120, got: {rtf}"
+        );
+        // H3: sb240, sa120
+        assert!(
+            rtf.contains("\\sb240\\sa120"),
+            "H3 should have \\sb240\\sa120, got: {rtf}"
+        );
+        // H6: sb120, sa120
+        assert!(
+            rtf.contains("\\sb120\\sa120"),
+            "H6 should have \\sb120\\sa120, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn heading_spacing_scales_by_level() {
+        let mut rtf = String::new();
+        html_to_rtf(
+            "<h1>H1</h1><h2>H2</h2><h3>H3</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
+            &mut rtf,
+            false,
+        );
+
+        // Verify each level has its own sb value (descending).
+        assert!(rtf.contains("\\sb360"), "H1 sb360, got: {rtf}");
+        assert!(rtf.contains("\\sb300"), "H2 sb300, got: {rtf}");
+        assert!(rtf.contains("\\sb240"), "H3 sb240, got: {rtf}");
+        assert!(rtf.contains("\\sb200"), "H4 sb200, got: {rtf}");
+        assert!(rtf.contains("\\sb160"), "H5 sb160, got: {rtf}");
+        assert!(rtf.contains("\\sb120"), "H6 sb120, got: {rtf}");
+    }
+
+    #[test]
+    fn body_paragraphs_have_space_after() {
+        let mut rtf = String::new();
+        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, false);
+        assert!(
+            rtf.contains("\\sa120"),
+            "Body paragraphs should have \\sa120 space after, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn body_paragraphs_have_first_line_indent() {
+        let mut rtf = String::new();
+        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, false);
+
+        // The first paragraph gets \fi360 (no after_break suppression).
+        assert!(
+            rtf.contains("\\fi360"),
+            "Body paragraphs should have \\fi360 first-line indent, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn headings_do_not_have_first_line_indent() {
+        let mut rtf = String::new();
+        html_to_rtf("<h2>Title</h2>", &mut rtf, false);
+
+        // The heading paragraph should NOT contain \fi.
+        let heading_part = &rtf[..rtf.find("\\par").unwrap_or(rtf.len())];
+        assert!(
+            !heading_part.contains("\\fi"),
+            "Headings should not have \\fi first-line indent, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn first_paragraph_after_heading_suppresses_indent() {
+        let mut rtf = String::new();
+        html_to_rtf("<h2>Title</h2><p>First</p><p>Second</p>", &mut rtf, false);
+
+        // The first <p> after heading should use \sb0 and no \fi (suppress_indent).
+        assert!(
+            rtf.contains("\\pard\\s0\\ql\\sb0\\sa120\\f0\\fs24 First"),
+            "First paragraph after heading should suppress indent with \\sb0, got: {rtf}"
+        );
+
+        // The second <p> should have normal \fi360 indent.
+        assert!(
+            rtf.contains("\\pard\\s0\\ql\\sa120\\fi360\\f0\\fs24 Second"),
+            "Second paragraph should have \\fi360 indent, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn first_paragraph_after_break_suppresses_indent() {
+        let mut rtf = String::new();
+        // Simulate content called with after_break=true (as book_to_rtf does).
+        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, true);
+
+        // First paragraph: suppressed indent (\\sb0, no \\fi).
+        assert!(
+            rtf.contains("\\pard\\s0\\ql\\sb0\\sa120\\f0\\fs24 First"),
+            "First paragraph after break should suppress indent, got: {rtf}"
+        );
+
+        // Second paragraph: normal indent.
+        assert!(
+            rtf.contains("\\pard\\s0\\ql\\sa120\\fi360\\f0\\fs24 Second"),
+            "Second paragraph should have normal indent, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn paragraphs_use_left_alignment() {
+        let mut rtf = String::new();
+        html_to_rtf("<p>Text</p>", &mut rtf, false);
+        assert!(
+            rtf.contains("\\ql"),
+            "Body paragraphs should use \\ql left alignment, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn chapter_title_centered_with_spacing_in_book() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("My Title".into()),
+            content: "<p>Body</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        // Chapter title should be centered.
+        assert!(
+            rtf.contains("\\qc"),
+            "Chapter title should be centered, got: {rtf}"
+        );
+        // Chapter title should have spacing.
+        assert!(
+            rtf.contains("\\sb360\\sa120"),
+            "Chapter title should have spacing, got: {rtf}"
+        );
     }
 }
