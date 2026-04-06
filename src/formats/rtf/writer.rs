@@ -373,6 +373,12 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &Hash
     // True after a heading close or when entering after a chapter title / page break.
     let mut suppress_indent = after_break;
 
+    // When true, skip leading whitespace (especially newlines) at the start of
+    // paragraph content.  Without this, a newline between `<p ...>` and the
+    // actual text is converted to `\par`, which closes the aligned paragraph
+    // before any visible text appears (breaking `\qr` / `\qc` alignment).
+    let mut skip_leading_ws = false;
+
     while pos < len {
         if bytes[pos] == b'<' {
             // Parse the tag.
@@ -403,6 +409,7 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &Hash
                     rtf.push_str(align);
                     rtf.push_str("\\sa120\\fi360\\f0\\fs24 ");
                 }
+                skip_leading_ws = true;
             } else if tag_bytes.eq_ignore_ascii_case(b"</p>") {
                 rtf.push_str("\\par\n");
             } else if tag_bytes.eq_ignore_ascii_case(b"<br>")
@@ -458,6 +465,8 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &Hash
 
             pos = tag_end;
         } else if bytes[pos] == b'&' {
+            // HTML entity — never whitespace, so stop skipping.
+            skip_leading_ws = false;
             // HTML entity.
             let (ch, consumed) = decode_html_entity(html, pos);
             write_rtf_char(rtf, ch);
@@ -467,6 +476,13 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &Hash
             let Some(ch) = html[pos..].chars().next() else {
                 break;
             };
+            if skip_leading_ws {
+                if ch.is_whitespace() {
+                    pos += ch.len_utf8();
+                    continue;
+                }
+                skip_leading_ws = false;
+            }
             write_rtf_char(rtf, ch);
             pos += ch.len_utf8();
         }
@@ -1282,6 +1298,56 @@ mod tests {
         assert!(
             rtf.contains("\\outlinelevel5"),
             "H6 style should have \\outlinelevel5, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn leading_newline_in_paragraph_is_trimmed() {
+        let mut rtf = String::new();
+        let mut align_map = HashMap::new();
+        align_map.insert("right".to_string(), "right".to_string());
+        // Simulate HTML with a newline between <p> tag and text content,
+        // as commonly found in real-world EPUBs.
+        html_to_rtf(
+            "<p class=\"right\">\nSt. Petersburgh, Dec. 11th</p>",
+            &mut rtf,
+            false,
+            &align_map,
+        );
+        // The \qr paragraph should contain the text directly, without a
+        // spurious \par from the leading newline.
+        assert!(
+            rtf.contains("\\qr"),
+            "Should contain \\qr, got: {rtf}"
+        );
+        assert!(
+            !rtf.contains("\\qr\\sa120\\fi360\\f0\\fs24 \\par"),
+            "Leading newline should not produce \\par before text, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("St. Petersburgh"),
+            "Text content should be present, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn leading_whitespace_trimmed_for_left_aligned_paragraph() {
+        let mut rtf = String::new();
+        let empty_map = HashMap::new();
+        html_to_rtf(
+            "<p>\n  Hello world</p>",
+            &mut rtf,
+            false,
+            &empty_map,
+        );
+        // Should not start with \par from the leading newline.
+        assert!(
+            !rtf.contains("\\fs24 \\par"),
+            "Leading whitespace should not produce \\par, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("Hello world"),
+            "Text content should be present, got: {rtf}"
         );
     }
 }
