@@ -61,6 +61,12 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                 let name = e.name();
                 let tag = xml_utils::local_tag_name(name.as_ref());
                 match tag {
+                    "package" => {
+                        // Capture the OPF version attribute for roundtrip preservation.
+                        if let Some(ver) = xml_utils::get_attribute(e, "version") {
+                            data.metadata.extended.insert("opf:version".to_string(), ver);
+                        }
+                    },
                     "metadata" => section = Section::Metadata,
                     "manifest" => section = Section::Manifest,
                     "spine" => {
@@ -124,6 +130,14 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                 match tag {
                     "metadata" | "manifest" | "spine" | "guide" => section = Section::None,
                     _ if section == Section::Metadata && !current_dc_tag.is_empty() => {
+                        // Store every dc:date element for roundtrip preservation,
+                        // regardless of the event attribute.
+                        if current_dc_tag == "date" && !current_text.is_empty() {
+                            data.metadata.additional_dates.push((
+                                current_date_event.clone(),
+                                current_text.clone(),
+                            ));
+                        }
                         // Skip dc:date elements with opf:event="conversion";
                         // don't overwrite an already-set publication_date unless
                         // the new date explicitly has event="publication".
@@ -682,5 +696,74 @@ mod tests {
         let date = data.metadata.publication_date.expect("publication_date should be set");
         assert_eq!(date.format("%Y-%m-%d").to_string(), "2008-06-27",
             "publication_date should be set from event=publication regardless of element order");
+    }
+
+    #[test]
+    fn parses_opf_version_attribute() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(
+            data.metadata.extended.get("opf:version").map(|s| s.as_str()),
+            Some("2.0"),
+            "OPF version should be captured from the <package> element"
+        );
+    }
+
+    #[test]
+    fn parses_opf_version_3() {
+        let data = parse_opf_xml(sample_opf()).unwrap();
+        assert_eq!(
+            data.metadata.extended.get("opf:version").map(|s| s.as_str()),
+            Some("3.0"),
+            "OPF version 3.0 should be captured from the sample OPF"
+        );
+    }
+
+    #[test]
+    fn additional_dates_capture_all_dc_date_elements() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date opf:event="publication">2008-06-27</dc:date>
+    <dc:date opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(data.metadata.additional_dates.len(), 2,
+            "Both dc:date elements should be stored in additional_dates");
+        assert_eq!(data.metadata.additional_dates[0],
+            (Some("publication".to_string()), "2008-06-27".to_string()));
+        assert_eq!(data.metadata.additional_dates[1],
+            (Some("conversion".to_string()), "2026-03-01T08:32:03.786809+00:00".to_string()));
+    }
+
+    #[test]
+    fn additional_dates_captures_date_without_event() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:date>2024-01-15</dc:date>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(data.metadata.additional_dates.len(), 1);
+        assert_eq!(data.metadata.additional_dates[0],
+            (None, "2024-01-15".to_string()));
     }
 }

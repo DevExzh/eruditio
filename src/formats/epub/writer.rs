@@ -80,9 +80,18 @@ fn generate_opf(book: &Book) -> String {
 
     xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     xml.push('\n');
-    xml.push_str(
-        r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">"#,
-    );
+
+    // Use the preserved OPF version from source, defaulting to "3.0".
+    let opf_version = book
+        .metadata
+        .extended
+        .get("opf:version")
+        .map(|s| s.as_str())
+        .unwrap_or("3.0");
+    xml.push_str(&format!(
+        r#"<package xmlns="http://www.idpf.org/2007/opf" version="{}" unique-identifier="uid">"#,
+        opf_version
+    ));
     xml.push('\n');
 
     // Metadata
@@ -165,7 +174,21 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
         xml.push_str(&escape_html(rights));
         xml.push_str("</dc:rights>\n");
     }
-    if let Some(ref date) = m.publication_date {
+    // Write dc:date elements: prefer roundtrip-preserved entries, fall back
+    // to the parsed publication_date.
+    if !m.additional_dates.is_empty() {
+        for (event, value) in &m.additional_dates {
+            if let Some(ev) = event {
+                xml.push_str("    <dc:date opf:event=\"");
+                xml.push_str(&escape_html(ev));
+                xml.push_str("\">");
+            } else {
+                xml.push_str("    <dc:date>");
+            }
+            xml.push_str(&escape_html(value));
+            xml.push_str("</dc:date>\n");
+        }
+    } else if let Some(ref date) = m.publication_date {
         xml.push_str(&format!(
             "    <dc:date>{}</dc:date>\n",
             date.format("%Y-%m-%d")
@@ -665,6 +688,94 @@ mod tests {
             data.metadata.author_sort.as_deref(),
             Some("Author, Test"),
             "author_sort should survive OPF round-trip"
+        );
+    }
+
+    #[test]
+    fn opf_version_defaults_to_3() {
+        let book = sample_book();
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains(r#"version="3.0""#),
+            "Default OPF version should be 3.0 when no source version is set. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn opf_version_preserves_2_0() {
+        let mut book = sample_book();
+        book.metadata.extended.insert("opf:version".into(), "2.0".into());
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains(r#"version="2.0""#),
+            "OPF version should be preserved as 2.0 from source. Got:\n{}",
+            opf
+        );
+        assert!(
+            !opf.contains(r#"version="3.0""#),
+            "OPF version should NOT be 3.0 when source was 2.0. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn opf_version_round_trips_through_opf() {
+        use crate::formats::epub::opf::parse_opf_xml;
+
+        let mut book = sample_book();
+        book.metadata.extended.insert("opf:version".into(), "2.0".into());
+
+        let opf_xml = generate_opf(&book);
+        let data = parse_opf_xml(&opf_xml).unwrap();
+
+        assert_eq!(
+            data.metadata.extended.get("opf:version").map(|s| s.as_str()),
+            Some("2.0"),
+            "OPF version 2.0 should survive round-trip"
+        );
+    }
+
+    #[test]
+    fn multiple_dates_round_trip_through_opf() {
+        use crate::formats::epub::opf::parse_opf_xml;
+
+        let mut book = sample_book();
+        book.metadata.additional_dates = vec![
+            (Some("publication".into()), "2008-06-27".into()),
+            (Some("conversion".into()), "2026-03-01T08:32:03.786809+00:00".into()),
+        ];
+
+        let opf_xml = generate_opf(&book);
+        assert!(opf_xml.contains(r#"opf:event="publication">2008-06-27</dc:date>"#),
+            "Publication date should appear in output. Got:\n{}", opf_xml);
+        assert!(opf_xml.contains(r#"opf:event="conversion">2026-03-01T08:32:03.786809+00:00</dc:date>"#),
+            "Conversion date should appear in output. Got:\n{}", opf_xml);
+
+        // Parse back and verify both dates survived.
+        let data = parse_opf_xml(&opf_xml).unwrap();
+        assert_eq!(data.metadata.additional_dates.len(), 2,
+            "Both dates should survive round-trip");
+        assert_eq!(data.metadata.additional_dates[0].1, "2008-06-27");
+        assert_eq!(data.metadata.additional_dates[1].1, "2026-03-01T08:32:03.786809+00:00");
+    }
+
+    #[test]
+    fn single_date_without_additional_dates_still_emitted() {
+        let mut book = sample_book();
+        book.metadata.publication_date = Some(
+            chrono::NaiveDate::from_ymd_opt(2024, 3, 15)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
+        // additional_dates is empty; the writer should fall back to publication_date
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains("<dc:date>2024-03-15</dc:date>"),
+            "publication_date should be emitted when additional_dates is empty. Got:\n{}",
+            opf
         );
     }
 }

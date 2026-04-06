@@ -21,6 +21,10 @@ pub struct Metadata {
     pub rights: Option<String>,
     /// Reference to a manifest item ID containing the cover image.
     pub cover_image_id: Option<String>,
+    /// All `dc:date` elements from the source, stored as `(opf:event, raw_value)` pairs
+    /// for roundtrip preservation. The first tuple element is the `opf:event` attribute
+    /// (e.g. `"publication"`, `"conversion"`), or `None` if the attribute was absent.
+    pub additional_dates: Vec<(Option<String>, String)>,
     /// Catch-all for format-specific metadata that doesn't map to a named field.
     pub extended: HashMap<String, String>,
 }
