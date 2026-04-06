@@ -1,5 +1,7 @@
 //! RTF writer — generates RTF documents from `Book`.
 
+use std::collections::HashMap;
+
 use crate::domain::Book;
 use crate::formats::common::html_utils::{strip_leading_heading, strip_tags};
 
@@ -19,12 +21,12 @@ pub fn book_to_rtf(book: &Book) -> String {
     // Stylesheet.
     rtf.push_str("{\\stylesheet\n");
     rtf.push_str("{\\s0\\ql\\sa120\\fi360\\f0\\fs24 Normal;}\n");
-    rtf.push_str("{\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b Heading 1;}\n");
-    rtf.push_str("{\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b Heading 2;}\n");
-    rtf.push_str("{\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b Heading 3;}\n");
-    rtf.push_str("{\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b Heading 4;}\n");
-    rtf.push_str("{\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i Heading 5;}\n");
-    rtf.push_str("{\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i Heading 6;}\n");
+    rtf.push_str("{\\s1\\qc\\sb360\\sa120\\outlinelevel0\\f0\\fs48\\b Heading 1;}\n");
+    rtf.push_str("{\\s2\\qc\\sb300\\sa120\\outlinelevel1\\f0\\fs36\\b Heading 2;}\n");
+    rtf.push_str("{\\s3\\qc\\sb240\\sa120\\outlinelevel2\\f0\\fs32\\b Heading 3;}\n");
+    rtf.push_str("{\\s4\\qc\\sb200\\sa120\\outlinelevel3\\f0\\fs28\\b Heading 4;}\n");
+    rtf.push_str("{\\s5\\qc\\sb160\\sa120\\outlinelevel4\\f0\\fs24\\b\\i Heading 5;}\n");
+    rtf.push_str("{\\s6\\qc\\sb120\\sa120\\outlinelevel5\\f0\\fs24\\i Heading 6;}\n");
     rtf.push_str("}\n");
 
     // Info group (metadata).
@@ -39,6 +41,9 @@ pub fn book_to_rtf(book: &Book) -> String {
 
     // Default font and size.
     rtf.push_str("\\f0\\fs24\n");
+
+    // Build a class-to-alignment map from CSS resources in the book.
+    let align_map = build_class_alignment_map(book);
 
     // Content.
     let chapters = book.chapters();
@@ -63,7 +68,7 @@ pub fn book_to_rtf(book: &Book) -> String {
 
         // Convert HTML content to RTF.
         // First paragraph after a chapter title (or page break) suppresses indent.
-        html_to_rtf(content, &mut rtf, true);
+        html_to_rtf(content, &mut rtf, true, &align_map);
     }
 
     rtf.push_str("}\n");
@@ -256,6 +261,99 @@ fn parse_png_dimensions(data: &[u8]) -> Option<(u16, u16)> {
     Some((width.min(65535) as u16, height.min(65535) as u16))
 }
 
+/// Builds a map from CSS class name to `text-align` value by parsing CSS
+/// stylesheets found in the book's manifest.
+///
+/// Only recognises simple selectors of the form `p.classname`, `.classname`,
+/// or `element.classname` blocks that contain `text-align: left|center|right`.
+fn build_class_alignment_map(book: &Book) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+
+    for resource in book.resources() {
+        if resource.media_type != "text/css" {
+            continue;
+        }
+        let Ok(css) = std::str::from_utf8(resource.data) else {
+            continue;
+        };
+        parse_css_alignment_rules(css, &mut map);
+    }
+
+    map
+}
+
+/// Parses CSS text to extract class-name to text-align mappings.
+///
+/// Handles selectors like `p.right`, `.center`, `div.myclass` where the
+/// declaration block contains `text-align: left|center|right`.
+fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
+    let css_lower = css.to_ascii_lowercase();
+    let len = css_lower.len();
+    let mut pos = 0;
+
+    while pos < len {
+        // Find the next '{'.
+        let brace_start = match css_lower[pos..].find('{') {
+            Some(offset) => pos + offset,
+            None => break,
+        };
+
+        // Find the matching '}'.
+        let brace_end = match css_lower[brace_start..].find('}') {
+            Some(offset) => brace_start + offset,
+            None => break,
+        };
+
+        // Extract selector and declaration block.
+        let selector = css_lower[pos..brace_start].trim();
+        let declarations = &css_lower[brace_start + 1..brace_end];
+
+        // Check if declarations contain text-align.
+        if let Some(ta_pos) = declarations.find("text-align") {
+            let after_ta = &declarations[ta_pos + 10..];
+            let after_colon = after_ta
+                .trim_start()
+                .strip_prefix(':')
+                .unwrap_or(after_ta)
+                .trim_start();
+
+            let align_value = if after_colon.starts_with("right") {
+                Some("right")
+            } else if after_colon.starts_with("center") {
+                Some("center")
+            } else if after_colon.starts_with("left") {
+                Some("left")
+            } else {
+                None
+            };
+
+            if let Some(align) = align_value {
+                // Extract class name from selector. Support:
+                //   .classname
+                //   p.classname
+                //   element.classname
+                // Split selector on commas for grouped selectors.
+                for sel in selector.split(',') {
+                    let sel = sel.trim();
+                    if let Some(dot_pos) = sel.find('.') {
+                        // Extract class name after the dot (stop at space, colon, etc.)
+                        let class_part = &sel[dot_pos + 1..];
+                        let class_name: String = class_part
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                            .collect();
+                        if !class_name.is_empty() {
+                            map.insert(class_name, align.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        pos = brace_end + 1;
+    }
+}
+
 /// Converts simple HTML content to RTF control words.
 ///
 /// Handles: `<p>`, `<br>`, `<b>`, `<i>`, `<em>`, `<strong>`, `<h1>`-`<h6>`.
@@ -263,7 +361,10 @@ fn parse_png_dimensions(data: &[u8]) -> Option<(u16, u16)> {
 ///
 /// `after_break` suppresses first-line indent on the first paragraph (used after
 /// chapter titles and page breaks).
-fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool) {
+///
+/// `align_map` maps CSS class names to their `text-align` values (e.g.
+/// `"right"` -> `"right"`) so that `<p class="right">` emits `\qr`.
+fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool, align_map: &HashMap<String, String>) {
     let mut pos = 0;
     let bytes = html.as_bytes();
     let len = bytes.len();
@@ -289,11 +390,18 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool) {
                 && (tag_bytes.len() == 3 || tag_bytes[2] == b' ' || tag_bytes[2] == b'>')
             {
                 // Start of paragraph — emit paragraph formatting.
+                // Check for text-align in the tag's style attribute or class.
+                let tag_str = &html[pos..tag_end];
+                let align = alignment_from_tag(tag_str, align_map);
                 if suppress_indent {
-                    rtf.push_str("\\pard\\s0\\ql\\sb0\\sa120\\f0\\fs24 ");
+                    rtf.push_str("\\pard\\s0");
+                    rtf.push_str(align);
+                    rtf.push_str("\\sb0\\sa120\\f0\\fs24 ");
                     suppress_indent = false;
                 } else {
-                    rtf.push_str("\\pard\\s0\\ql\\sa120\\fi360\\f0\\fs24 ");
+                    rtf.push_str("\\pard\\s0");
+                    rtf.push_str(align);
+                    rtf.push_str("\\sa120\\fi360\\f0\\fs24 ");
                 }
             } else if tag_bytes.eq_ignore_ascii_case(b"</p>") {
                 rtf.push_str("\\par\n");
@@ -412,6 +520,68 @@ fn decode_html_entity(html: &str, pos: usize) -> (char, usize) {
     ('&', 1)
 }
 
+/// Extracts the `text-align` value from an HTML tag's `style` attribute or
+/// `class` attribute (resolved via the CSS alignment map).
+///
+/// Given the full tag string (e.g., `<p style="text-align: right">` or
+/// `<p class="right">`), returns the RTF alignment command (`\qr`, `\qc`,
+/// or `\ql`).
+fn alignment_from_tag(tag_str: &str, align_map: &HashMap<String, String>) -> &'static str {
+    let tag_lower = tag_str.to_ascii_lowercase();
+
+    // 1. Check inline style="..." for text-align.
+    if let Some(style_start) = tag_lower.find("style=") {
+        let rest = &tag_lower[style_start + 6..];
+        // The style value is in quotes (single or double).
+        let quote = rest.as_bytes().first().copied();
+        if matches!(quote, Some(b'"') | Some(b'\'')) {
+            let inner = &rest[1..];
+            if let Some(end) = inner.find(quote.unwrap() as char) {
+                let style_value = &inner[..end];
+                if let Some(ta_pos) = style_value.find("text-align") {
+                    let after_ta = &style_value[ta_pos + 10..]; // skip "text-align"
+                    let after_colon = after_ta
+                        .trim_start()
+                        .strip_prefix(':')
+                        .unwrap_or(after_ta)
+                        .trim_start();
+                    if after_colon.starts_with("right") {
+                        return "\\qr";
+                    } else if after_colon.starts_with("center") {
+                        return "\\qc";
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Check class="..." and resolve against the CSS alignment map.
+    if !align_map.is_empty() {
+        if let Some(class_start) = tag_lower.find("class=") {
+            let rest = &tag_lower[class_start + 6..];
+            let quote = rest.as_bytes().first().copied();
+            if matches!(quote, Some(b'"') | Some(b'\'')) {
+                let inner = &rest[1..];
+                if let Some(end) = inner.find(quote.unwrap() as char) {
+                    let class_value = &inner[..end];
+                    // A class attribute can contain multiple space-separated classes.
+                    for class_name in class_value.split_whitespace() {
+                        if let Some(align) = align_map.get(class_name) {
+                            match align.as_str() {
+                                "right" => return "\\qr",
+                                "center" => return "\\qc",
+                                _ => {},
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "\\ql"
+}
+
 /// Writes a single character to RTF, escaping as needed.
 fn write_rtf_char(rtf: &mut String, ch: char) {
     match ch {
@@ -482,7 +652,8 @@ mod tests {
     #[test]
     fn html_to_rtf_handles_paragraphs() {
         let mut rtf = String::new();
-        html_to_rtf("<p>Hello</p><p>World</p>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<p>Hello</p><p>World</p>", &mut rtf, false, &empty_map);
         assert!(rtf.contains("Hello"));
         assert!(rtf.contains("\\par"));
         assert!(rtf.contains("World"));
@@ -491,7 +662,8 @@ mod tests {
     #[test]
     fn html_to_rtf_handles_bold_italic() {
         let mut rtf = String::new();
-        html_to_rtf("<b>Bold</b> and <i>Italic</i>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<b>Bold</b> and <i>Italic</i>", &mut rtf, false, &empty_map);
         assert!(rtf.contains("{\\b Bold}"));
         assert!(rtf.contains("{\\i Italic}"));
     }
@@ -571,22 +743,24 @@ mod tests {
             "Stylesheet should contain Normal style with alignment and spacing"
         );
         assert!(
-            rtf.contains("\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b Heading 1;"),
-            "Stylesheet should contain Heading 1 style with center alignment"
+            rtf.contains("\\s1\\qc\\sb360\\sa120\\outlinelevel0\\f0\\fs48\\b Heading 1;"),
+            "Stylesheet should contain Heading 1 style with outline level"
         );
         assert!(
-            rtf.contains("\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i Heading 6;"),
-            "Stylesheet should contain Heading 6 style with center alignment"
+            rtf.contains("\\s6\\qc\\sb120\\sa120\\outlinelevel5\\f0\\fs24\\i Heading 6;"),
+            "Stylesheet should contain Heading 6 style with outline level"
         );
     }
 
     #[test]
     fn heading_levels_produce_different_font_sizes() {
         let mut rtf = String::new();
+        let empty_map = HashMap::new();
         html_to_rtf(
             "<h1>H1</h1><h2>H2</h2><h3>H3</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
             &mut rtf,
             false,
+            &empty_map,
         );
 
         assert!(
@@ -618,7 +792,8 @@ mod tests {
     #[test]
     fn normal_style_restored_after_heading() {
         let mut rtf = String::new();
-        html_to_rtf("<h2>Title</h2><p>Body</p>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<h2>Title</h2><p>Body</p>", &mut rtf, false, &empty_map);
 
         // After the heading, the next <p> restores Normal style with \pard\s0\ql.
         assert!(
@@ -816,7 +991,8 @@ mod tests {
     #[test]
     fn headings_have_center_alignment() {
         let mut rtf = String::new();
-        html_to_rtf("<h1>Centered</h1>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<h1>Centered</h1>", &mut rtf, false, &empty_map);
         assert!(
             rtf.contains("\\qc"),
             "Headings should contain \\qc for center alignment, got: {rtf}"
@@ -826,7 +1002,8 @@ mod tests {
     #[test]
     fn headings_have_space_before_and_after() {
         let mut rtf = String::new();
-        html_to_rtf("<h1>H1</h1><h3>H3</h3><h6>H6</h6>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<h1>H1</h1><h3>H3</h3><h6>H6</h6>", &mut rtf, false, &empty_map);
 
         // H1: sb360, sa120
         assert!(
@@ -848,10 +1025,12 @@ mod tests {
     #[test]
     fn heading_spacing_scales_by_level() {
         let mut rtf = String::new();
+        let empty_map = HashMap::new();
         html_to_rtf(
             "<h1>H1</h1><h2>H2</h2><h3>H3</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
             &mut rtf,
             false,
+            &empty_map,
         );
 
         // Verify each level has its own sb value (descending).
@@ -866,7 +1045,8 @@ mod tests {
     #[test]
     fn body_paragraphs_have_space_after() {
         let mut rtf = String::new();
-        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, false, &empty_map);
         assert!(
             rtf.contains("\\sa120"),
             "Body paragraphs should have \\sa120 space after, got: {rtf}"
@@ -876,7 +1056,8 @@ mod tests {
     #[test]
     fn body_paragraphs_have_first_line_indent() {
         let mut rtf = String::new();
-        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, false, &empty_map);
 
         // The first paragraph gets \fi360 (no after_break suppression).
         assert!(
@@ -888,7 +1069,8 @@ mod tests {
     #[test]
     fn headings_do_not_have_first_line_indent() {
         let mut rtf = String::new();
-        html_to_rtf("<h2>Title</h2>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<h2>Title</h2>", &mut rtf, false, &empty_map);
 
         // The heading paragraph should NOT contain \fi.
         let heading_part = &rtf[..rtf.find("\\par").unwrap_or(rtf.len())];
@@ -901,7 +1083,8 @@ mod tests {
     #[test]
     fn first_paragraph_after_heading_suppresses_indent() {
         let mut rtf = String::new();
-        html_to_rtf("<h2>Title</h2><p>First</p><p>Second</p>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<h2>Title</h2><p>First</p><p>Second</p>", &mut rtf, false, &empty_map);
 
         // The first <p> after heading should use \sb0 and no \fi (suppress_indent).
         assert!(
@@ -919,8 +1102,9 @@ mod tests {
     #[test]
     fn first_paragraph_after_break_suppresses_indent() {
         let mut rtf = String::new();
+        let empty_map = HashMap::new();
         // Simulate content called with after_break=true (as book_to_rtf does).
-        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, true);
+        html_to_rtf("<p>First</p><p>Second</p>", &mut rtf, true, &empty_map);
 
         // First paragraph: suppressed indent (\\sb0, no \\fi).
         assert!(
@@ -938,7 +1122,8 @@ mod tests {
     #[test]
     fn paragraphs_use_left_alignment() {
         let mut rtf = String::new();
-        html_to_rtf("<p>Text</p>", &mut rtf, false);
+        let empty_map = HashMap::new();
+        html_to_rtf("<p>Text</p>", &mut rtf, false, &empty_map);
         assert!(
             rtf.contains("\\ql"),
             "Body paragraphs should use \\ql left alignment, got: {rtf}"
@@ -964,6 +1149,139 @@ mod tests {
         assert!(
             rtf.contains("\\sb360\\sa120"),
             "Chapter title should have spacing, got: {rtf}"
+        );
+    }
+
+    // --- Tests for right-align and class-based alignment ---
+
+    #[test]
+    fn inline_style_right_align_emits_qr() {
+        let mut rtf = String::new();
+        let empty_map = HashMap::new();
+        html_to_rtf(
+            "<p style=\"text-align: right\">Right aligned</p>",
+            &mut rtf,
+            false,
+            &empty_map,
+        );
+        assert!(
+            rtf.contains("\\qr"),
+            "Paragraph with text-align: right should emit \\qr, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("Right aligned"),
+            "Content should be preserved, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn inline_style_center_align_emits_qc() {
+        let mut rtf = String::new();
+        let empty_map = HashMap::new();
+        html_to_rtf(
+            "<p style=\"text-align: center\">Centered</p>",
+            &mut rtf,
+            false,
+            &empty_map,
+        );
+        assert!(
+            rtf.contains("\\qc"),
+            "Paragraph with text-align: center should emit \\qc, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn class_based_right_align_emits_qr() {
+        let mut rtf = String::new();
+        let mut align_map = HashMap::new();
+        align_map.insert("right".to_string(), "right".to_string());
+        html_to_rtf(
+            "<p class=\"right\">Right aligned</p>",
+            &mut rtf,
+            false,
+            &align_map,
+        );
+        assert!(
+            rtf.contains("\\qr"),
+            "Paragraph with class='right' should emit \\qr, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn class_based_center_align_emits_qc() {
+        let mut rtf = String::new();
+        let mut align_map = HashMap::new();
+        align_map.insert("center".to_string(), "center".to_string());
+        html_to_rtf(
+            "<p class=\"center\">Centered</p>",
+            &mut rtf,
+            false,
+            &align_map,
+        );
+        assert!(
+            rtf.contains("\\qc"),
+            "Paragraph with class='center' should emit \\qc, got: {rtf}"
+        );
+    }
+
+    #[test]
+    fn parse_css_alignment_rules_extracts_class() {
+        let mut map = HashMap::new();
+        parse_css_alignment_rules("p.right { text-align: right; }", &mut map);
+        assert_eq!(map.get("right"), Some(&"right".to_string()));
+    }
+
+    #[test]
+    fn parse_css_alignment_rules_dot_only_selector() {
+        let mut map = HashMap::new();
+        parse_css_alignment_rules(".centered { text-align: center; }", &mut map);
+        assert_eq!(map.get("centered"), Some(&"center".to_string()));
+    }
+
+    #[test]
+    fn parse_css_alignment_rules_multiple_rules() {
+        let mut map = HashMap::new();
+        parse_css_alignment_rules(
+            "p.right { text-align: right; }\n.center { text-align: center; }",
+            &mut map,
+        );
+        assert_eq!(map.get("right"), Some(&"right".to_string()));
+        assert_eq!(map.get("center"), Some(&"center".to_string()));
+    }
+
+    #[test]
+    fn stylesheet_has_outline_levels() {
+        let mut book = Book::new();
+        book.add_chapter(&Chapter {
+            title: Some("Title".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let rtf = book_to_rtf(&book);
+        assert!(
+            rtf.contains("\\outlinelevel0"),
+            "H1 style should have \\outlinelevel0, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\outlinelevel1"),
+            "H2 style should have \\outlinelevel1, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\outlinelevel2"),
+            "H3 style should have \\outlinelevel2, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\outlinelevel3"),
+            "H4 style should have \\outlinelevel3, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\outlinelevel4"),
+            "H5 style should have \\outlinelevel4, got: {rtf}"
+        );
+        assert!(
+            rtf.contains("\\outlinelevel5"),
+            "H6 style should have \\outlinelevel5, got: {rtf}"
         );
     }
 }
