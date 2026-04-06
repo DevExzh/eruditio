@@ -321,27 +321,29 @@ fn html_to_rtf(html: &str, rtf: &mut String, after_break: bool) {
             } else if tag_bytes.len() >= 4
                 && tag_bytes[0] == b'<'
                 && tag_bytes[1].eq_ignore_ascii_case(&b'h')
-                && tag_bytes[2].is_ascii_digit()
+                && matches!(tag_bytes[2], b'1'..=b'6')
             {
                 // Heading — centered, with level-scaled spacing.
+                // Wrap in a group `{...}` to scope bold/italic character formatting.
                 let level = tag_bytes[2] - b'0';
                 let style_ref = match level {
-                    1 => "\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
-                    2 => "\\pard\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b ",
-                    3 => "\\pard\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b ",
-                    4 => "\\pard\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b ",
-                    5 => "\\pard\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i ",
-                    6 => "\\pard\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i ",
-                    _ => "\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
+                    1 => "{\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
+                    2 => "{\\pard\\s2\\qc\\sb300\\sa120\\f0\\fs36\\b ",
+                    3 => "{\\pard\\s3\\qc\\sb240\\sa120\\f0\\fs32\\b ",
+                    4 => "{\\pard\\s4\\qc\\sb200\\sa120\\f0\\fs28\\b ",
+                    5 => "{\\pard\\s5\\qc\\sb160\\sa120\\f0\\fs24\\b\\i ",
+                    6 => "{\\pard\\s6\\qc\\sb120\\sa120\\f0\\fs24\\i ",
+                    _ => "{\\pard\\s1\\qc\\sb360\\sa120\\f0\\fs48\\b ",
                 };
                 rtf.push_str(style_ref);
             } else if tag_bytes.len() >= 5
                 && tag_bytes[0] == b'<'
                 && tag_bytes[1] == b'/'
                 && tag_bytes[2].eq_ignore_ascii_case(&b'h')
+                && matches!(tag_bytes.get(3), Some(b'1'..=b'6'))
             {
-                // End heading paragraph and suppress indent on next paragraph.
-                rtf.push_str("\\par\n");
+                // End heading paragraph, close group, and suppress indent on next paragraph.
+                rtf.push_str("\\par}\n");
                 suppress_indent = true;
             }
             // Other tags are silently skipped.

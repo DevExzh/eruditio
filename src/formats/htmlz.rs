@@ -616,22 +616,43 @@ fn strip_xhtml_wrapper(content: &str) -> String {
     }
 
     // Remove <head>...</head> blocks (including contents like <style>, <link>, <meta>, <title>).
-    while let Some(start) = s.find("<head") {
-        if let Some(end) = s[start..].find("</head>") {
-            s.replace_range(start..start + end + 7, "");
-        } else if let Some(end) = s[start..].find("/>") {
-            // Self-closing <head/>
-            s.replace_range(start..start + end + 2, "");
-        } else {
-            break;
+    // Must verify the character after "<head" is '>' or whitespace to avoid matching <header>.
+    {
+        let mut search_from = 0;
+        while let Some(rel) = s[search_from..].find("<head") {
+            let start = search_from + rel;
+            let after = start + 5; // length of "<head"
+            let next_ch = s.as_bytes().get(after).copied().unwrap_or(b'>');
+            if next_ch != b'>' && !next_ch.is_ascii_whitespace() && next_ch != b'/' {
+                // Matched something like <header> — skip it.
+                search_from = start + 5;
+                continue;
+            }
+            if let Some(end) = s[start..].find("</head>") {
+                s.replace_range(start..start + end + 7, "");
+                search_from = start; // re-check from same position
+            } else {
+                break;
+            }
         }
     }
     // Also handle uppercase <HEAD>...</HEAD>.
-    while let Some(start) = s.find("<HEAD") {
-        if let Some(end) = s[start..].find("</HEAD>") {
-            s.replace_range(start..start + end + 7, "");
-        } else {
-            break;
+    {
+        let mut search_from = 0;
+        while let Some(rel) = s[search_from..].find("<HEAD") {
+            let start = search_from + rel;
+            let after = start + 5;
+            let next_ch = s.as_bytes().get(after).copied().unwrap_or(b'>');
+            if next_ch != b'>' && !next_ch.is_ascii_whitespace() && next_ch != b'/' {
+                search_from = start + 5;
+                continue;
+            }
+            if let Some(end) = s[start..].find("</HEAD>") {
+                s.replace_range(start..start + end + 7, "");
+                search_from = start;
+            } else {
+                break;
+            }
         }
     }
 
@@ -691,20 +712,42 @@ fn strip_xhtml_wrapper(content: &str) -> String {
 fn strip_link_tags(content: &str) -> String {
     let mut s = content.to_string();
 
-    while let Some(start) = s.find("<link ") {
-        // Find the end of the tag: either "/>" or ">"
-        if let Some(end_offset) = s[start..].find('>') {
-            s.replace_range(start..start + end_offset + 1, "");
-        } else {
-            break;
+    // Search for "<link" followed by whitespace or ">", to avoid false matches.
+    {
+        let mut search_from = 0;
+        while let Some(rel) = s[search_from..].find("<link") {
+            let start = search_from + rel;
+            let after = start + 5; // length of "<link"
+            let next_ch = s.as_bytes().get(after).copied().unwrap_or(b'>');
+            if !next_ch.is_ascii_whitespace() && next_ch != b'>' && next_ch != b'/' {
+                search_from = start + 5;
+                continue;
+            }
+            if let Some(end_offset) = s[start..].find('>') {
+                s.replace_range(start..start + end_offset + 1, "");
+                search_from = start;
+            } else {
+                break;
+            }
         }
     }
     // Also handle <LINK ...> (uppercase).
-    while let Some(start) = s.find("<LINK ") {
-        if let Some(end_offset) = s[start..].find('>') {
-            s.replace_range(start..start + end_offset + 1, "");
-        } else {
-            break;
+    {
+        let mut search_from = 0;
+        while let Some(rel) = s[search_from..].find("<LINK") {
+            let start = search_from + rel;
+            let after = start + 5;
+            let next_ch = s.as_bytes().get(after).copied().unwrap_or(b'>');
+            if !next_ch.is_ascii_whitespace() && next_ch != b'>' && next_ch != b'/' {
+                search_from = start + 5;
+                continue;
+            }
+            if let Some(end_offset) = s[start..].find('>') {
+                s.replace_range(start..start + end_offset + 1, "");
+                search_from = start;
+            } else {
+                break;
+            }
         }
     }
 

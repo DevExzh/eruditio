@@ -270,7 +270,6 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     let mut in_anchor = false;
     let mut in_emphasis = false;
     let mut in_strong = false;
-    let mut _in_heading = false;
 
     while pos < len {
         if bytes[pos] == b'<' {
@@ -347,7 +346,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     pos += gt + 1;
                 } else if tag_lower.len() >= 4
                     && tag_lower.as_bytes()[1] == b'h'
-                    && tag_lower.as_bytes()[2].is_ascii_digit()
+                    && matches!(tag_lower.as_bytes()[2], b'1'..=b'6')
                     && (tag_lower.as_bytes()[3] == b'>' || tag_lower.as_bytes()[3] == b' ')
                     && !tag_lower.starts_with("</")
                 {
@@ -359,13 +358,12 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     }
                     flush_paragraph(&mut out, &mut inline_buf);
                     inline_buf.push_str("<strong>");
-                    _in_heading = true;
                     in_p = true;
                     pos += gt + 1;
                 } else if tag_lower.len() >= 5
                     && tag_lower.as_bytes()[1] == b'/'
                     && tag_lower.as_bytes()[2] == b'h'
-                    && tag_lower.as_bytes()[3].is_ascii_digit()
+                    && matches!(tag_lower.as_bytes()[3], b'1'..=b'6')
                     && tag_lower.as_bytes()[4] == b'>'
                 {
                     // Closing </h1>..</h6> tag
@@ -377,7 +375,6 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     }
                     flush_paragraph(&mut out, &mut inline_buf);
                     reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
-                    _in_heading = false;
                     in_p = false;
                     pos += gt + 1;
                 } else if tag_lower == "<b>" || tag_lower == "<strong>"
@@ -505,21 +502,39 @@ fn is_external_url(url: &str) -> bool {
 
 /// Generates a deterministic UUID-like identifier from book metadata.
 ///
-/// Uses a simple hash of the title and authors to produce a stable ID
-/// formatted as a UUID v4-like string.
+/// Uses FNV-1a hashing (stable across Rust versions, unlike `DefaultHasher`)
+/// of the title, authors, and language to produce a reproducible ID.
 fn generate_document_id(book: &Book) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    book.metadata.title.hash(&mut hasher);
-    for author in &book.metadata.authors {
-        author.hash(&mut hasher);
+    // FNV-1a 64-bit: offset_basis and prime are fixed constants.
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x00000100000001B3;
+
+    let mut h = FNV_OFFSET;
+    for b in book.metadata.title.as_deref().unwrap_or("").bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
     }
-    let h = hasher.finish();
-    // Generate a second hash value for more bits
-    let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
-    h.hash(&mut hasher2);
-    book.metadata.language.hash(&mut hasher2);
-    let h2 = hasher2.finish();
+    for author in &book.metadata.authors {
+        h ^= 0xFF; // separator
+        h = h.wrapping_mul(FNV_PRIME);
+        for b in author.bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+    }
+    // Mix in language for additional differentiation.
+    h ^= 0xFE; // separator
+    h = h.wrapping_mul(FNV_PRIME);
+    for b in book.metadata.language.as_deref().unwrap_or("").bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+
+    // Derive a second 64-bit value by continuing the hash with a different seed byte.
+    let mut h2 = h;
+    h2 ^= 0xFD;
+    h2 = h2.wrapping_mul(FNV_PRIME);
+
     // Format as UUID-like: 8-4-4-4-12
     format!(
         "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
