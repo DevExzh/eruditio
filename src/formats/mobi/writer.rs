@@ -58,6 +58,192 @@ fn build_fcis(text_length: u32) -> Vec<u8> {
 /// EOF record.
 const EOF_RECORD: &[u8] = &[0xE9, 0x8E, 0x0D, 0x0A];
 
+/// INDX header record length (standard for Mobi6).
+const INDX_HEADER_LEN: usize = 192;
+
+/// Encodes a value as a Variable Width Integer (VWI).
+///
+/// Each byte uses 7 data bits with the MSB set on all bytes except the last.
+fn encode_vwi(value: u32) -> Vec<u8> {
+    if value == 0 {
+        return vec![0];
+    }
+    let mut bytes = Vec::new();
+    let mut v = value;
+    while v > 0 {
+        bytes.push((v & 0x7F) as u8);
+        v >>= 7;
+    }
+    bytes.reverse();
+    // Set MSB on all bytes except the last.
+    for i in 0..bytes.len() - 1 {
+        bytes[i] |= 0x80;
+    }
+    bytes
+}
+
+/// Builds the 3 NCX index records (INDX header, INDX data, CNCX) from chapter entries.
+///
+/// Each entry in `chapters` is `(title, byte_offset)` where byte_offset is
+/// the position of the chapter start within the uncompressed HTML text.
+///
+/// Returns `(indx_header_record, indx_data_record, cncx_record)`.
+fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let entry_count = chapters.len();
+
+    // --- Build CNCX record (chapter title strings) ---
+    let mut cncx = Vec::new();
+    let mut cncx_offsets: Vec<usize> = Vec::with_capacity(entry_count);
+    for (title, _) in chapters {
+        cncx_offsets.push(cncx.len());
+        let title_bytes = title.as_bytes();
+        let len = title_bytes.len() as u16;
+        cncx.extend_from_slice(&len.to_be_bytes());
+        cncx.extend_from_slice(title_bytes);
+    }
+
+    // --- Build INDX header record ---
+    // Layout: 192-byte INDX header + TAGX section + IDXT stub
+    let tagx_data = build_tagx_section();
+    let idxt_offset_in_header = INDX_HEADER_LEN + tagx_data.len();
+
+    // IDXT section for header record: just the magic, no entries.
+    let mut header_idxt = Vec::new();
+    header_idxt.extend_from_slice(b"IDXT");
+    // Pad to even length.
+    if header_idxt.len() % 2 != 0 {
+        header_idxt.push(0);
+    }
+
+    let header_total = INDX_HEADER_LEN + tagx_data.len() + header_idxt.len();
+    let mut indx_header = vec![0u8; header_total];
+
+    // INDX magic.
+    indx_header[0..4].copy_from_slice(b"INDX");
+    // Header length.
+    write_u32_be(&mut indx_header, 4, INDX_HEADER_LEN as u32);
+    // Index type = 0 (normal).
+    write_u32_be(&mut indx_header, 8, 0);
+    // Unknown fields at 12, 16 = 0 (already zero).
+    // IDXT offset within this record.
+    write_u32_be(&mut indx_header, 20, idxt_offset_in_header as u32);
+    // Index count (number of INDX data records that follow) = 1.
+    write_u32_be(&mut indx_header, 24, 1);
+    // Index encoding = UTF-8 (65001).
+    write_u32_be(&mut indx_header, 28, 65001);
+    // Index language = 0xFFFFFFFF.
+    write_u32_be(&mut indx_header, 32, 0xFFFF_FFFF);
+    // Total index entry count (= number of chapters).
+    write_u32_be(&mut indx_header, 36, entry_count as u32);
+    // ORDT offset = 0, LIGT offset = 0, LIGT entry count = 0 (already zero).
+    // CNCX record count = 1.
+    write_u32_be(&mut indx_header, 52, 1);
+    // Remaining header fields (56-191) are zeros.
+
+    // Write TAGX section after header.
+    indx_header[INDX_HEADER_LEN..INDX_HEADER_LEN + tagx_data.len()]
+        .copy_from_slice(&tagx_data);
+
+    // Write IDXT stub after TAGX.
+    let idxt_start = INDX_HEADER_LEN + tagx_data.len();
+    indx_header[idxt_start..idxt_start + header_idxt.len()].copy_from_slice(&header_idxt);
+
+    // --- Build INDX data record ---
+    // Layout: 192-byte INDX header + entry data + IDXT section
+    // We first build all entries, tracking their offsets, then assemble.
+    let mut entry_data = Vec::new();
+    let mut entry_offsets: Vec<u16> = Vec::with_capacity(entry_count);
+
+    for (i, (_, byte_offset)) in chapters.iter().enumerate() {
+        // Record the offset of this entry relative to the start of this record.
+        let entry_start = INDX_HEADER_LEN + entry_data.len();
+        entry_offsets.push(entry_start as u16);
+
+        // Text key: zero-padded 5-digit string.
+        let key = format!("{:05}", i);
+        let key_bytes = key.as_bytes();
+
+        // Key length byte.
+        entry_data.push(key_bytes.len() as u8);
+        // Key bytes.
+        entry_data.extend_from_slice(key_bytes);
+
+        // Control byte: bitmask of which tags are present.
+        // Tags 1, 2, 3 all present = 0x07.
+        entry_data.push(0x07);
+
+        // Tag 1: byte offset of chapter start in HTML text.
+        entry_data.extend_from_slice(&encode_vwi(*byte_offset as u32));
+        // Tag 2: length (0, not used).
+        entry_data.extend_from_slice(&encode_vwi(0));
+        // Tag 3: label offset into CNCX record.
+        entry_data.extend_from_slice(&encode_vwi(cncx_offsets[i] as u32));
+    }
+
+    // IDXT section for data record.
+    let idxt_offset = INDX_HEADER_LEN + entry_data.len();
+    let mut data_idxt = Vec::new();
+    data_idxt.extend_from_slice(b"IDXT");
+    for &offset in &entry_offsets {
+        data_idxt.extend_from_slice(&offset.to_be_bytes());
+    }
+    // Pad to 4-byte alignment.
+    while data_idxt.len() % 4 != 0 {
+        data_idxt.push(0);
+    }
+
+    let data_total = INDX_HEADER_LEN + entry_data.len() + data_idxt.len();
+    let mut indx_data = vec![0u8; data_total];
+
+    // INDX magic.
+    indx_data[0..4].copy_from_slice(b"INDX");
+    // Header length.
+    write_u32_be(&mut indx_data, 4, INDX_HEADER_LEN as u32);
+    // Index type = 0.
+    write_u32_be(&mut indx_data, 8, 0);
+    // IDXT offset within this record.
+    write_u32_be(&mut indx_data, 20, idxt_offset as u32);
+    // Entry count (number of entries in THIS record).
+    write_u32_be(&mut indx_data, 24, entry_count as u32);
+    // Remaining header fields are zeros.
+
+    // Write entry data after header.
+    indx_data[INDX_HEADER_LEN..INDX_HEADER_LEN + entry_data.len()]
+        .copy_from_slice(&entry_data);
+
+    // Write IDXT section.
+    indx_data[idxt_offset..idxt_offset + data_idxt.len()].copy_from_slice(&data_idxt);
+
+    (indx_header, indx_data, cncx)
+}
+
+/// Builds the TAGX section for the NCX INDX header record.
+///
+/// Defines three tags:
+///   Tag 1 (position): 1 value, bitmask 0x01
+///   Tag 2 (length):   1 value, bitmask 0x02
+///   Tag 3 (label):    1 value, bitmask 0x04
+///   End-of-table marker: [0, 0, 0, 1]
+fn build_tagx_section() -> Vec<u8> {
+    let mut tagx = Vec::with_capacity(28);
+    tagx.extend_from_slice(b"TAGX");
+    // TAGX total length: 4 (magic) + 4 (length) + 4 (control byte count) + 4*4 (tag entries) = 28.
+    write_u32_be_vec(&mut tagx, 28);
+    // Control byte count = 1.
+    write_u32_be_vec(&mut tagx, 1);
+    // Tag entries: [tag, values_per_entry, bitmask, eof_flag]
+    tagx.extend_from_slice(&[1, 1, 0x01, 0]); // Tag 1: position
+    tagx.extend_from_slice(&[2, 1, 0x02, 0]); // Tag 2: length
+    tagx.extend_from_slice(&[3, 1, 0x04, 0]); // Tag 3: label offset
+    tagx.extend_from_slice(&[0, 0, 0, 1]);    // End-of-table marker
+    tagx
+}
+
+/// Helper to append a big-endian u32 to a Vec<u8>.
+fn write_u32_be_vec(buf: &mut Vec<u8>, value: u32) {
+    buf.extend_from_slice(&value.to_be_bytes());
+}
+
 /// Maximum thumbnail width for Kindle library display.
 const THUMBNAIL_MAX_WIDTH: u32 = 180;
 /// Maximum thumbnail height for Kindle library display.
@@ -141,8 +327,8 @@ fn find_start_reading_offset(html: &str) -> u32 {
 
 /// Generates a complete MOBI file from a `Book` and returns the raw bytes.
 pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
-    // Convert book content to HTML.
-    let html = book_to_mobi_html(book);
+    // Convert book content to HTML and collect chapter info for NCX.
+    let (html, chapter_entries) = book_to_mobi_html(book);
     let text_bytes = html.as_bytes();
 
     // Split and compress text records.
@@ -183,8 +369,17 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     // Calculate structural record indices (0-based PDB record indices).
     let thumbnail_record_count = if thumbnail_data.is_some() { 1 } else { 0 };
     let image_count = image_refs.len();
-    let flis_record_num =
+
+    // Build INDX/CNCX records for NCX navigation.
+    let (indx_header_rec, indx_data_rec, cncx_rec) = build_ncx_indx(&chapter_entries);
+    let ncx_record_count = 3; // INDX header + INDX data + CNCX
+
+    // NCX index points to the first INDX record (right after images/thumbnail).
+    let ncx_index =
         (1 + text_record_count + image_count + thumbnail_record_count) as u32;
+
+    // FLIS/FCIS come after the INDX/CNCX records.
+    let flis_record_num = ncx_index + ncx_record_count as u32;
     let fcis_record_num = flis_record_num + 1;
 
     // Build EXTH.
@@ -201,13 +396,16 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
         unique_id,
         flis_record_num,
         fcis_record_num,
+        ncx_index,
     );
 
     // Structural records: FLIS, FCIS, EOF.
     let fcis = build_fcis(text_bytes.len() as u32);
 
     // Calculate total number of records and pre-compute total output size.
-    let num_records = 1 + text_record_count + image_count + thumbnail_record_count + 3; // record0 + text + images + thumbnail + FLIS + FCIS + EOF
+    // record0 + text + images + thumbnail + INDX_header + INDX_data + CNCX + FLIS + FCIS + EOF
+    let num_records = 1 + text_record_count + image_count + thumbnail_record_count
+        + ncx_record_count + 3;
     let header_table_size = 78 + num_records * 8 + 2;
 
     // Calculate record offsets and total data size in a single pass.
@@ -238,6 +436,18 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
             pos += thumb.len() as u32;
         }
     }
+
+    // INDX header record
+    offsets.push(pos);
+    pos += indx_header_rec.len() as u32;
+
+    // INDX data record
+    offsets.push(pos);
+    pos += indx_data_rec.len() as u32;
+
+    // CNCX record
+    offsets.push(pos);
+    pos += cncx_rec.len() as u32;
 
     // FLIS
     offsets.push(pos);
@@ -272,6 +482,11 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
             output.extend_from_slice(thumb);
         }
     }
+    // INDX/CNCX records.
+    output.extend_from_slice(&indx_header_rec);
+    output.extend_from_slice(&indx_data_rec);
+    output.extend_from_slice(&cncx_rec);
+    // Structural records.
     output.extend_from_slice(FLIS_RECORD);
     output.extend_from_slice(&fcis);
     output.extend_from_slice(EOF_RECORD);
@@ -319,6 +534,7 @@ fn build_record0(
     unique_id: u32,
     flis_record_num: u32,
     fcis_record_num: u32,
+    ncx_index: u32,
 ) -> Vec<u8> {
     let title_bytes = title.as_bytes();
     let exth_len = exth_data.len();
@@ -406,8 +622,8 @@ fn build_record0(
     // extra bytes at the record boundary belong to a multi-byte character.
     write_u32_be(&mut data, 240, 1);
 
-    // NCX index = NULL.
-    write_u32_be(&mut data, 244, NULL_INDEX);
+    // NCX index.
+    write_u32_be(&mut data, 244, ncx_index);
 
     // --- EXTH header ---
     if !exth_data.is_empty() {
@@ -551,7 +767,11 @@ const FILEPOS_PLACEHOLDER: &str = "0000000000";
 /// - A `<guide>` section in `<head>` with "toc" and "text" references
 /// - A TOC section at the start of `<body>` listing all chapters
 /// - `<mbp:pagebreak />` tags separating chapters
-fn book_to_mobi_html(book: &Book) -> String {
+///
+/// Returns `(html, chapters)` where `chapters` is a `Vec<(title, byte_offset)>`
+/// for each chapter in the generated HTML. The byte offsets point to the start
+/// of each chapter's content within the HTML string.
+fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     // Collect chapter info: (manifest_id index, toc_title, has_content).
     let mut chapter_info: Vec<(usize, Option<String>)> = Vec::new();
     let toc = &book.toc;
@@ -726,7 +946,20 @@ fn book_to_mobi_html(book: &Book) -> String {
         bytes[*placeholder_pos..*placeholder_pos + 10].copy_from_slice(replacement.as_bytes());
     }
 
-    html
+    // Build the chapter info vector: (title, byte_offset) for each chapter.
+    let chapter_entries: Vec<(String, usize)> = chapter_info
+        .iter()
+        .enumerate()
+        .map(|(i, (_spine_idx, ch_title))| {
+            let title = ch_title
+                .clone()
+                .unwrap_or_else(|| format!("Chapter {}", i + 1));
+            let offset = chapter_start_offsets[i];
+            (title, offset)
+        })
+        .collect();
+
+    (html, chapter_entries)
 }
 
 /// Searches the TOC for an entry whose href matches the manifest item href.
@@ -1136,10 +1369,10 @@ mod tests {
         let mobi_data = write_mobi(&book).unwrap();
         let pdb = PdbFile::parse(mobi_data).unwrap();
 
-        // Record layout: [record0, text..., cover, thumbnail, FLIS, FCIS, EOF]
-        // With 1 text record: record0=0, text=1, cover=2, thumbnail=3, FLIS=4, FCIS=5, EOF=6
+        // Record layout: [record0, text..., cover, thumbnail, INDX_hdr, INDX_data, CNCX, FLIS, FCIS, EOF]
+        // With 1 text record: record0=0, text=1, cover=2, thumbnail=3, INDX_hdr=4, INDX_data=5, CNCX=6, FLIS=7, FCIS=8, EOF=9
         let num_records = pdb.record_count();
-        assert!(num_records >= 7, "should have at least 7 records (record0 + text + cover + thumb + FLIS + FCIS + EOF), got {num_records}");
+        assert!(num_records >= 10, "should have at least 10 records (record0 + text + cover + thumb + INDX*3 + FLIS + FCIS + EOF), got {num_records}");
 
         // The cover is at index 2 (after record0 and 1 text record).
         let cover_record = pdb.record_data(2).unwrap();
@@ -1209,8 +1442,8 @@ mod tests {
         let mobi_data = write_mobi(&book).unwrap();
         let pdb = PdbFile::parse(mobi_data).unwrap();
 
-        // Record layout: [record0, text, img*3, thumbnail, FLIS, FCIS, EOF] = 9 records
-        assert_eq!(pdb.record_count(), 9, "expected 9 records (1+1+3+1+3), got {}", pdb.record_count());
+        // Record layout: [record0, text, img*3, thumbnail, INDX_hdr, INDX_data, CNCX, FLIS, FCIS, EOF] = 12 records
+        assert_eq!(pdb.record_count(), 12, "expected 12 records (1+1+3+1+3+3), got {}", pdb.record_count());
 
         // The thumbnail is the 4th image record (index 5 = record0 + 1 text + 3 images).
         // It's a JPEG and should be smaller than the large cover.
@@ -1248,8 +1481,8 @@ mod tests {
         let mobi_data = write_mobi(&book).unwrap();
         let pdb = PdbFile::parse(mobi_data).unwrap();
 
-        // Record layout without thumbnail: [record0, text, cover, FLIS, FCIS, EOF] = 6 records
-        assert_eq!(pdb.record_count(), 6, "no thumbnail record should be generated for small cover");
+        // Record layout without thumbnail: [record0, text, cover, INDX_hdr, INDX_data, CNCX, FLIS, FCIS, EOF] = 9 records
+        assert_eq!(pdb.record_count(), 9, "no thumbnail record should be generated for small cover");
 
         // EXTH 202 should fall back to 0 (same as cover).
         let record0 = pdb.record_data(0).unwrap();
@@ -1612,7 +1845,7 @@ mod tests {
             id: Some("ch2".into()),
         });
 
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
 
         // Should contain filepos= attributes (from TOC links and guide references).
         assert!(
@@ -1644,7 +1877,7 @@ mod tests {
             id: Some("ch2".into()),
         });
 
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
         let bytes = html.as_bytes();
 
         // Extract filepos values from TOC <a> tags.
@@ -1690,7 +1923,7 @@ mod tests {
             id: Some("ch2".into()),
         });
 
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
 
         // Guide section should exist.
         assert!(html.contains("<guide>"), "HTML should contain a <guide> section");
@@ -1743,7 +1976,7 @@ mod tests {
             id: Some("ch1".into()),
         });
 
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
 
         let toc_pos = html.find("Table of Contents").expect("should have TOC heading");
         let content_pos = html.find("<p>Content</p>").expect("should have chapter content");
@@ -1766,7 +1999,7 @@ mod tests {
         book.spine.push(SpineItem::new("ch1"));
         // No TOC entries added.
 
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
 
         // Without any TOC entries (no titles), guide and TOC sections are omitted.
         assert!(
@@ -1804,7 +2037,7 @@ mod tests {
             id: Some("ch3".into()),
         });
 
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
 
         // All filepos=0000000000 should have been replaced with actual offsets.
         assert!(
@@ -1844,7 +2077,7 @@ mod tests {
 
         // The decompressed/decoded text should preserve filepos references.
         // At minimum, verify the original HTML contains them (pre-compression).
-        let html = book_to_mobi_html(&book);
+        let (html, _) = book_to_mobi_html(&book);
         let filepos_count = html.matches("filepos=").count();
         assert!(
             filepos_count >= 5,
@@ -1861,5 +2094,251 @@ mod tests {
             all_content.contains("Closing text"),
             "decoded MOBI should contain epilogue content"
         );
+    }
+
+    // --- INDX / NCX navigation record tests ---
+
+    #[test]
+    fn vwi_encoding_single_byte() {
+        assert_eq!(encode_vwi(0), vec![0]);
+        assert_eq!(encode_vwi(1), vec![1]);
+        assert_eq!(encode_vwi(127), vec![127]);
+    }
+
+    #[test]
+    fn vwi_encoding_two_bytes() {
+        // 128 = 0x80 → [0x81, 0x00]
+        assert_eq!(encode_vwi(128), vec![0x81, 0x00]);
+        // 16383 = 0x3FFF → [0xFF, 0x7F]
+        assert_eq!(encode_vwi(16383), vec![0xFF, 0x7F]);
+    }
+
+    #[test]
+    fn vwi_encoding_three_bytes() {
+        // 16384 = 0x4000 → [0x81, 0x80, 0x00]
+        assert_eq!(encode_vwi(16384), vec![0x81, 0x80, 0x00]);
+    }
+
+    #[test]
+    fn build_ncx_indx_produces_three_records() {
+        let chapters = vec![
+            ("Chapter 1".to_string(), 100),
+            ("Chapter 2".to_string(), 5000),
+            ("Chapter 3".to_string(), 12000),
+        ];
+        let (indx_header, indx_data, cncx) = build_ncx_indx(&chapters);
+
+        // All three records should be non-empty.
+        assert!(!indx_header.is_empty(), "INDX header record should not be empty");
+        assert!(!indx_data.is_empty(), "INDX data record should not be empty");
+        assert!(!cncx.is_empty(), "CNCX record should not be empty");
+    }
+
+    #[test]
+    fn indx_header_starts_with_magic_and_contains_tagx() {
+        let chapters = vec![
+            ("Ch1".to_string(), 0),
+            ("Ch2".to_string(), 1000),
+        ];
+        let (indx_header, _, _) = build_ncx_indx(&chapters);
+
+        // Starts with "INDX" magic.
+        assert_eq!(&indx_header[0..4], b"INDX", "INDX header should start with INDX magic");
+
+        // Contains "TAGX" section.
+        let has_tagx = indx_header
+            .windows(4)
+            .any(|w| w == b"TAGX");
+        assert!(has_tagx, "INDX header should contain TAGX section");
+    }
+
+    #[test]
+    fn indx_data_starts_with_magic_and_contains_idxt() {
+        let chapters = vec![
+            ("Ch1".to_string(), 0),
+            ("Ch2".to_string(), 1000),
+        ];
+        let (_, indx_data, _) = build_ncx_indx(&chapters);
+
+        // Starts with "INDX" magic.
+        assert_eq!(&indx_data[0..4], b"INDX", "INDX data should start with INDX magic");
+
+        // Contains "IDXT" section.
+        let has_idxt = indx_data
+            .windows(4)
+            .any(|w| w == b"IDXT");
+        assert!(has_idxt, "INDX data should contain IDXT section");
+    }
+
+    #[test]
+    fn cncx_record_contains_chapter_titles() {
+        let chapters = vec![
+            ("Introduction".to_string(), 0),
+            ("The Adventure Begins".to_string(), 5000),
+        ];
+        let (_, _, cncx) = build_ncx_indx(&chapters);
+
+        // CNCX should contain both chapter titles as length-prefixed strings.
+        let title1 = "Introduction";
+        let title2 = "The Adventure Begins";
+
+        // First string: 2-byte length + data.
+        let len1 = u16::from_be_bytes([cncx[0], cncx[1]]) as usize;
+        assert_eq!(len1, title1.len());
+        assert_eq!(&cncx[2..2 + len1], title1.as_bytes());
+
+        // Second string follows.
+        let offset2 = 2 + len1;
+        let len2 = u16::from_be_bytes([cncx[offset2], cncx[offset2 + 1]]) as usize;
+        assert_eq!(len2, title2.len());
+        assert_eq!(&cncx[offset2 + 2..offset2 + 2 + len2], title2.as_bytes());
+    }
+
+    #[test]
+    fn ncx_index_points_to_correct_record() {
+        use crate::formats::common::palm_db::read_u32_be;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("NCX Index Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>Content 1</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter 2".into()),
+            content: "<p>Content 2</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+
+        // Read ncx_index from offset 244 in record0.
+        let ncx_index = read_u32_be(record0, 244);
+
+        // ncx_index should not be NULL_INDEX.
+        assert_ne!(ncx_index, NULL_INDEX, "ncx_index should not be NULL_INDEX");
+
+        // The record at ncx_index should start with "INDX" magic.
+        let indx_record = pdb.record_data(ncx_index as usize).unwrap();
+        assert_eq!(
+            &indx_record[0..4], b"INDX",
+            "record at ncx_index should start with INDX magic"
+        );
+
+        // The next record should also be INDX (the data record).
+        let indx_data_record = pdb.record_data(ncx_index as usize + 1).unwrap();
+        assert_eq!(
+            &indx_data_record[0..4], b"INDX",
+            "record after ncx_index should be INDX data record"
+        );
+
+        // The record after that is the CNCX record (raw label strings, no fixed magic).
+        // Verify FLIS follows after the 3 NCX records.
+        let flis_record = pdb.record_data(ncx_index as usize + 3).unwrap();
+        assert_eq!(
+            &flis_record[0..4], b"FLIS",
+            "FLIS should follow the 3 NCX records"
+        );
+    }
+
+    #[test]
+    fn single_chapter_produces_valid_indx() {
+        use crate::formats::common::palm_db::read_u32_be;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Single Chapter INDX".into());
+        book.add_chapter(&Chapter {
+            title: Some("Only Chapter".into()),
+            content: "<p>The only chapter content.</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let data = write_mobi(&book).unwrap();
+        let pdb = PdbFile::parse(data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+
+        let ncx_index = read_u32_be(record0, 244);
+        assert_ne!(ncx_index, NULL_INDEX, "single-chapter book should still have NCX index");
+
+        // Verify the INDX header record is valid.
+        let indx_header = pdb.record_data(ncx_index as usize).unwrap();
+        assert_eq!(&indx_header[0..4], b"INDX");
+
+        // Total entry count (at header offset 36) should be 1.
+        let entry_count = read_u32_be(indx_header, 36);
+        assert_eq!(entry_count, 1, "single-chapter book should have 1 INDX entry");
+    }
+
+    #[test]
+    fn indx_round_trip_chapter_count_matches() {
+        let mut book = Book::new();
+        book.metadata.title = Some("INDX Round Trip".into());
+        book.metadata.authors.push("Test Author".into());
+        for i in 1..=5 {
+            book.add_chapter(&Chapter {
+                title: Some(format!("Chapter {}", i)),
+                content: format!("<p>Content of chapter {}.</p>", i),
+                id: Some(format!("ch{}", i)),
+            });
+        }
+
+        // Write MOBI.
+        let mobi_data = write_mobi(&book).unwrap();
+
+        // Read back and verify we get all 5 chapters.
+        let mut cursor = std::io::Cursor::new(mobi_data.clone());
+        let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
+        let chapters = decoded.chapters();
+
+        // The reader may or may not parse INDX, but the chapters should be present
+        // (they're in the HTML text with pagebreaks).
+        assert!(
+            chapters.len() >= 5,
+            "round-tripped book should have at least 5 chapters, got {}",
+            chapters.len()
+        );
+
+        // Verify INDX records are structurally valid.
+        let pdb = PdbFile::parse(mobi_data).unwrap();
+        let record0 = pdb.record_data(0).unwrap();
+        let ncx_index = crate::formats::common::palm_db::read_u32_be(record0, 244);
+        assert_ne!(ncx_index, NULL_INDEX);
+
+        let indx_header = pdb.record_data(ncx_index as usize).unwrap();
+        let total_entries = crate::formats::common::palm_db::read_u32_be(indx_header, 36);
+        assert_eq!(
+            total_entries, 5,
+            "INDX should report 5 chapter entries for a 5-chapter book"
+        );
+
+        // Verify the INDX data record has the correct entry count.
+        let indx_data = pdb.record_data(ncx_index as usize + 1).unwrap();
+        let data_entries = crate::formats::common::palm_db::read_u32_be(indx_data, 24);
+        assert_eq!(
+            data_entries, 5,
+            "INDX data record should have 5 entries"
+        );
+    }
+
+    #[test]
+    fn indx_header_has_correct_cncx_count() {
+        use crate::formats::common::palm_db::read_u32_be;
+
+        let chapters = vec![
+            ("Ch1".to_string(), 0),
+            ("Ch2".to_string(), 1000),
+        ];
+        let (indx_header, _, _) = build_ncx_indx(&chapters);
+
+        // CNCX record count at header offset 52 should be 1.
+        let cncx_count = read_u32_be(&indx_header, 52);
+        assert_eq!(cncx_count, 1, "CNCX record count should be 1");
+
+        // Index encoding at header offset 28 should be 65001 (UTF-8).
+        let encoding = read_u32_be(&indx_header, 28);
+        assert_eq!(encoding, 65001, "index encoding should be UTF-8 (65001)");
     }
 }
