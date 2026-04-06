@@ -213,7 +213,10 @@ fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option
 /// of the book) and a byte offset within that part.
 ///
 /// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
-fn try_resolve_pos_fid(after_kindle: &str, chapter_count: usize) -> Option<(String, usize)> {
+/// Parses a `pos:fid:XXXX:off:YYYY` reference from the string following `"kindle:"`.
+///
+/// Returns `(fid, offset, bytes_consumed_after_"kindle:")` or `None` if malformed.
+fn parse_pos_fid(after_kindle: &str) -> Option<(usize, usize, usize)> {
     let rest = after_kindle.strip_prefix("pos:fid:")?;
     let consumed_prefix = 8; // "pos:fid:"
 
@@ -237,21 +240,20 @@ fn try_resolve_pos_fid(after_kindle: &str, chapter_count: usize) -> Option<(Stri
     if off_end == 0 {
         return None;
     }
+    let off_code = &off_rest[..off_end];
+    let offset = decode_kindle_base32(off_code)?;
 
     let total_consumed = consumed_prefix + fid_end + off_prefix_len + off_end;
+    Some((fid, offset, total_consumed))
+}
 
-    // Map fid to a chapter index. In KF8, the fid corresponds to the part index
-    // within the concatenated flow 0 content.
-    if chapter_count == 0 {
-        return None;
-    }
+fn try_resolve_pos_fid(after_kindle: &str, chapter_count: usize) -> Option<(String, usize)> {
+    let (fid, _offset, total_consumed) = parse_pos_fid(after_kindle)?;
 
-    // Out-of-range fid: leave the reference unresolved rather than misdirecting.
-    if fid >= chapter_count {
+    if chapter_count == 0 || fid >= chapter_count {
         return None;
     }
     let replacement = format!("mobi_ch_{}.xhtml", fid);
-
     Some((replacement, total_consumed))
 }
 
@@ -320,7 +322,7 @@ fn parse_div_insert_positions(pdb: &PdbFile, fragment_index: usize) -> Option<Ve
     let header_data = pdb.record_data(fragment_index).ok()?;
     let (indx_count, _) = parse_indx_header_fields(header_data)?;
 
-    // We need control_byte_count to skip control bytes in sub-record entries.
+    // Validate that the INDX record contains a TAGX section (well-formed structure).
     let _control_byte_count = find_tagx_control_byte_count(header_data)?;
 
     let mut insert_positions = Vec::new();
@@ -597,83 +599,29 @@ fn resolve_remaining_pos_fid(html: &str, resolver: &PosFidResolver) -> String {
 
     while let Some(pos) = remaining.find("kindle:pos:fid:") {
         result.push_str(&remaining[..pos]);
-        let after_kindle = &remaining[pos + 7..]; // skip "kindle:" to match try_resolve_pos_fid input
+        let after_kindle = &remaining[pos + 7..]; // skip "kindle:"
 
-        let rest = match after_kindle.strip_prefix("pos:fid:") {
-            Some(r) => r,
-            None => {
-                result.push_str("kindle:");
-                remaining = after_kindle;
-                continue;
-            }
-        };
-        let consumed_prefix = 8; // "pos:fid:"
+        if let Some((fid, offset, consumed)) = parse_pos_fid(after_kindle) {
+            let total_consumed = 7 + consumed; // 7 for "kindle:"
 
-        // Extract fid code.
-        let fid_end = match rest.find(':') {
-            Some(e) if e > 0 => e,
-            _ => {
-                result.push_str("kindle:");
-                remaining = after_kindle;
-                continue;
+            // Try to resolve using the full resolver.
+            if let Some((filename, anchor)) = resolver.resolve(fid, offset) {
+                let replacement = if let Some(anchor_id) = anchor {
+                    format!("{}#{}", filename, anchor_id)
+                } else {
+                    filename
+                };
+                result.push_str(&replacement);
+            } else {
+                // Could not resolve: keep the original reference.
+                result.push_str(&remaining[pos..pos + total_consumed]);
             }
-        };
-        let fid_code = &rest[..fid_end];
-        let fid = match decode_kindle_base32(fid_code) {
-            Some(f) => f,
-            None => {
-                result.push_str("kindle:");
-                remaining = after_kindle;
-                continue;
-            }
-        };
-
-        // Skip ":off:".
-        let after_fid = &rest[fid_end..];
-        let off_rest = match after_fid.strip_prefix(":off:") {
-            Some(r) => r,
-            None => {
-                result.push_str("kindle:");
-                remaining = after_kindle;
-                continue;
-            }
-        };
-        let off_prefix_len = 5;
-
-        // Extract offset code.
-        let off_end = off_rest
-            .find(|c: char| !c.is_ascii_alphanumeric())
-            .unwrap_or(off_rest.len());
-        if off_end == 0 {
+            remaining = &remaining[pos + total_consumed..];
+        } else {
+            // Malformed pos:fid reference; keep "kindle:" and advance.
             result.push_str("kindle:");
             remaining = after_kindle;
-            continue;
         }
-        let off_code = &off_rest[..off_end];
-        let offset = match decode_kindle_base32(off_code) {
-            Some(o) => o,
-            None => {
-                result.push_str("kindle:");
-                remaining = after_kindle;
-                continue;
-            }
-        };
-
-        let total_consumed = 7 + consumed_prefix + fid_end + off_prefix_len + off_end;
-
-        // Try to resolve using the full resolver.
-        if let Some((filename, anchor)) = resolver.resolve(fid, offset) {
-            let replacement = if let Some(anchor_id) = anchor {
-                format!("{}#{}", filename, anchor_id)
-            } else {
-                filename
-            };
-            result.push_str(&replacement);
-        } else {
-            // Could not resolve: keep the original reference.
-            result.push_str(&remaining[pos..pos + total_consumed]);
-        }
-        remaining = &remaining[pos + total_consumed..];
     }
 
     result.push_str(remaining);
