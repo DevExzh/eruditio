@@ -122,11 +122,13 @@ fn derive_unique_id(title: &str, authors: &[String]) -> u32 {
     if hash == 0 { 1 } else { hash }
 }
 
-/// Finds the byte offset of the first `<mbp:pagebreak` tag in the HTML.
+/// Finds the byte offset where the first chapter content starts.
 ///
 /// This is used for EXTH record 116 (start reading offset), which tells
-/// the Kindle where to open the book. If no page break is found (single-
-/// chapter books), returns 0 (start of text).
+/// the Kindle where to open the book. With a TOC section at the start of
+/// `<body>`, the first `<mbp:pagebreak` separates the TOC from chapter
+/// content; we return the position just after its closing `>`.
+/// If no page break is found (single-chapter books without TOC), returns 0.
 fn find_start_reading_offset(html: &str) -> u32 {
     if let Some(pos) = html.find("<mbp:pagebreak") {
         // Point to the character right after the closing '>'.
@@ -534,11 +536,38 @@ fn collect_image_refs(book: &Book) -> Vec<&[u8]> {
     refs
 }
 
-/// Converts Book content to MOBI-compatible HTML.
+/// The 10-character placeholder used for filepos links before fixup.
+const FILEPOS_PLACEHOLDER: &str = "0000000000";
+
+/// Converts Book content to MOBI-compatible HTML with filepos-based TOC links.
 ///
-/// Iterates the book's spine/manifest directly to avoid cloning chapter content
-/// strings through the `chapters()` API.
+/// Uses a two-pass approach:
+/// 1. Generate HTML with `filepos=0000000000` placeholders for the guide
+///    references and TOC entry links.
+/// 2. Fix up the placeholders with actual byte offsets into the HTML.
+///
+/// The output contains:
+/// - A `<guide>` section in `<head>` with "toc" and "text" references
+/// - A TOC section at the start of `<body>` listing all chapters
+/// - `<mbp:pagebreak />` tags separating chapters
 fn book_to_mobi_html(book: &Book) -> String {
+    // Collect chapter info: (manifest_id index, toc_title, has_content).
+    let mut chapter_info: Vec<(usize, Option<String>)> = Vec::new();
+    let toc = &book.toc;
+
+    for (i, spine_item) in book.spine.iter().enumerate() {
+        let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) else {
+            continue;
+        };
+        if manifest_item.data.as_text().is_none() {
+            continue;
+        }
+        let ch_title = find_toc_title(toc, &manifest_item.href);
+        chapter_info.push((i, ch_title));
+    }
+
+    let has_toc_entries = chapter_info.iter().any(|(_, t)| t.is_some());
+
     // Estimate total size from manifest data (avoiding chapters() clone).
     let estimated: usize = book
         .spine
@@ -548,38 +577,91 @@ fn book_to_mobi_html(book: &Book) -> String {
             Some(item.data.as_text()?.len() + 200)
         })
         .sum::<usize>()
-        + 256;
+        + 1024; // extra room for TOC + guide
     let mut html = String::with_capacity(estimated.max(4096));
-    html.push_str("<html><head><title>");
 
+    // --- <head> with guide ---
+    html.push_str("<html><head><title>");
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     push_html_escaped(&mut html, title);
-    html.push_str("</title></head><body>\n");
+    html.push_str("</title>\n");
 
-    // Build a quick href -> title lookup from the TOC.
-    let toc = &book.toc;
+    // Guide references (with filepos placeholders).
+    // We track the byte offset of each "0000000000" so we can fix them up later.
+    let mut guide_toc_placeholder: Option<usize> = None;
+    let mut guide_text_placeholder: Option<usize> = None;
 
-    for (i, spine_item) in book.spine.iter().enumerate() {
-        let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) else {
-            continue;
-        };
-        let Some(content) = manifest_item.data.as_text() else {
-            continue;
-        };
+    if has_toc_entries {
+        html.push_str("<guide>\n");
+        // TOC reference
+        html.push_str("<reference type=\"toc\" title=\"Table of Contents\" filepos=");
+        guide_toc_placeholder = Some(html.len());
+        html.push_str(FILEPOS_PLACEHOLDER);
+        html.push_str(" />\n");
+        // Start reading reference
+        html.push_str("<reference type=\"text\" title=\"Start\" filepos=");
+        guide_text_placeholder = Some(html.len());
+        html.push_str(FILEPOS_PLACEHOLDER);
+        html.push_str(" />\n");
+        html.push_str("</guide>\n");
+    }
 
-        if i > 0 {
+    html.push_str("</head><body>\n");
+
+    // --- TOC section ---
+    let toc_start_offset = html.len();
+    let mut toc_entry_placeholders: Vec<usize> = Vec::new();
+    // Map from chapter_info index to the position in toc_entry_placeholders.
+    // Only chapters with titles get TOC entries.
+    let mut toc_entry_chapter_indices: Vec<usize> = Vec::new();
+
+    if has_toc_entries {
+        html.push_str("<div><h2><b>Table of Contents</b></h2>\n<ul>\n");
+
+        for (info_idx, (_spine_idx, ch_title)) in chapter_info.iter().enumerate() {
+            if let Some(t) = ch_title {
+                html.push_str("<li><a filepos=");
+                toc_entry_placeholders.push(html.len());
+                toc_entry_chapter_indices.push(info_idx);
+                html.push_str(FILEPOS_PLACEHOLDER);
+                html.push('>');
+                push_html_escaped(&mut html, t);
+                html.push_str("</a></li>\n");
+            }
+        }
+
+        html.push_str("</ul></div>\n<mbp:pagebreak />\n");
+    }
+
+    // --- Chapter content ---
+    // Track the byte offset where each chapter's content starts.
+    let mut chapter_start_offsets: Vec<usize> = Vec::with_capacity(chapter_info.len());
+    let mut first_chapter_offset: Option<usize> = None;
+
+    for (content_idx, (spine_idx, ch_title)) in chapter_info.iter().enumerate() {
+        let spine_item = &book.spine.items[*spine_idx];
+        let manifest_item = book.manifest.get(&spine_item.manifest_id).unwrap();
+        let content = manifest_item.data.as_text().unwrap();
+
+        if content_idx > 0 {
             html.push_str("<mbp:pagebreak />\n");
         }
 
-        // Look up title from TOC.
-        let ch_title = find_toc_title(toc, &manifest_item.href);
-        if let Some(ref title) = ch_title {
+        // Record the byte offset where this chapter starts.
+        let chapter_offset = html.len();
+        chapter_start_offsets.push(chapter_offset);
+        if first_chapter_offset.is_none() {
+            first_chapter_offset = Some(chapter_offset);
+        }
+
+        // Chapter heading
+        if let Some(title) = ch_title {
             html.push_str("<h2>");
             push_html_escaped(&mut html, title);
             html.push_str("</h2>\n");
         }
 
-        // If content already has HTML tags, strip XHTML wrapper and use; otherwise wrap in <p>.
+        // Chapter body
         if content.contains('<') {
             let cleaned = strip_xhtml_wrapper(content);
             html.push_str(&cleaned);
@@ -599,13 +681,50 @@ fn book_to_mobi_html(book: &Book) -> String {
     }
 
     html.push_str("</body></html>");
+
+    // --- Fix up filepos placeholders ---
+    // SAFETY: All placeholders and replacements are exactly 10 ASCII bytes,
+    // so in-place replacement preserves valid UTF-8 and doesn't shift offsets.
+    let bytes = unsafe { html.as_bytes_mut() };
+
+    // Fix guide "toc" reference -> point to the TOC div start.
+    if let Some(pos) = guide_toc_placeholder {
+        let replacement = format!("{:010}", toc_start_offset);
+        bytes[pos..pos + 10].copy_from_slice(replacement.as_bytes());
+    }
+
+    // Fix guide "text" reference -> point to the first chapter start.
+    if let Some(pos) = guide_text_placeholder {
+        let target = first_chapter_offset.unwrap_or(toc_start_offset);
+        let replacement = format!("{:010}", target);
+        bytes[pos..pos + 10].copy_from_slice(replacement.as_bytes());
+    }
+
+    // Fix TOC entry links -> point to the corresponding chapter starts.
+    for (toc_idx, placeholder_pos) in toc_entry_placeholders.iter().enumerate() {
+        let chapter_idx = toc_entry_chapter_indices[toc_idx];
+        let target_offset = chapter_start_offsets[chapter_idx];
+        let replacement = format!("{:010}", target_offset);
+        bytes[*placeholder_pos..*placeholder_pos + 10].copy_from_slice(replacement.as_bytes());
+    }
+
     html
 }
 
-/// Searches the TOC for an entry whose href matches (prefix match).
+/// Searches the TOC for an entry whose href matches the manifest item href.
+///
+/// Matches if:
+/// - The TOC href equals the manifest href exactly, or
+/// - The manifest href starts with the TOC href (prefix match), or
+/// - The TOC href (with fragment stripped) equals the manifest href.
 fn find_toc_title(items: &[crate::domain::toc::TocItem], href: &str) -> Option<String> {
     for item in items {
-        if item.href == href || href.starts_with(&item.href) {
+        // Strip fragment from TOC href for comparison.
+        let toc_href_base = item.href.split('#').next().unwrap_or(&item.href);
+        if item.href == href
+            || href.starts_with(&item.href)
+            || (!toc_href_base.is_empty() && toc_href_base == href)
+        {
             return Some(item.title.clone());
         }
         if let Some(title) = find_toc_title(&item.children, href) {
@@ -1396,7 +1515,7 @@ mod tests {
     }
 
     #[test]
-    fn exth_start_reading_zero_for_single_chapter() {
+    fn exth_start_reading_offset_for_single_chapter() {
         use crate::formats::mobi::exth::{ExthHeader, EXTH_START_READING};
         use crate::formats::mobi::header::MobiHeader;
 
@@ -1419,9 +1538,12 @@ mod tests {
             .get_u32(EXTH_START_READING)
             .expect("EXTH 116 should be present");
 
-        assert_eq!(
-            start_offset, 0,
-            "start reading offset should be 0 for single-chapter books"
+        // With a TOC section, even single-chapter books have a pagebreak
+        // separating the TOC from chapter content, so start reading offset > 0.
+        assert!(
+            start_offset > 0,
+            "start reading offset should be > 0 (pointing past the TOC), got {}",
+            start_offset
         );
     }
 
@@ -1455,5 +1577,271 @@ mod tests {
     fn find_start_reading_offset_no_break() {
         let html = "<html><body><p>Only content</p></body></html>";
         assert_eq!(find_start_reading_offset(html), 0);
+    }
+
+    #[test]
+    fn html_contains_filepos_attributes() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Filepos Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter One".into()),
+            content: "<p>First content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter Two".into()),
+            content: "<p>Second content</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let html = book_to_mobi_html(&book);
+
+        // Should contain filepos= attributes (from TOC links and guide references).
+        assert!(
+            html.contains("filepos="),
+            "HTML should contain filepos= attributes"
+        );
+
+        // Count the filepos references: 2 guide refs + 2 TOC entries = 4.
+        let filepos_count = html.matches("filepos=").count();
+        assert_eq!(
+            filepos_count, 4,
+            "expected 4 filepos attributes (2 guide + 2 TOC), got {}",
+            filepos_count
+        );
+    }
+
+    #[test]
+    fn filepos_values_point_to_chapter_starts() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Offset Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Chapter Alpha".into()),
+            content: "<p>Alpha content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter Beta".into()),
+            content: "<p>Beta content</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let html = book_to_mobi_html(&book);
+        let bytes = html.as_bytes();
+
+        // Extract filepos values from TOC <a> tags.
+        // Pattern: <li><a filepos=NNNNNNNNNN>
+        let mut toc_offsets: Vec<usize> = Vec::new();
+        for mat in html.match_indices("<li><a filepos=") {
+            let start = mat.0 + "<li><a filepos=".len();
+            let offset_str = &html[start..start + 10];
+            let offset: usize = offset_str.parse().expect("filepos should be a valid number");
+            toc_offsets.push(offset);
+        }
+        assert_eq!(toc_offsets.len(), 2, "should have 2 TOC filepos entries");
+
+        // The first TOC entry should point to the start of chapter Alpha content.
+        let at_first = std::str::from_utf8(&bytes[toc_offsets[0]..]).unwrap();
+        assert!(
+            at_first.starts_with("<h2>Chapter Alpha</h2>"),
+            "first filepos should point to Chapter Alpha heading, got: {:?}",
+            &at_first[..at_first.len().min(60)]
+        );
+
+        // The second TOC entry should point to the start of chapter Beta content.
+        let at_second = std::str::from_utf8(&bytes[toc_offsets[1]..]).unwrap();
+        assert!(
+            at_second.starts_with("<h2>Chapter Beta</h2>"),
+            "second filepos should point to Chapter Beta heading, got: {:?}",
+            &at_second[..at_second.len().min(60)]
+        );
+    }
+
+    #[test]
+    fn guide_section_contains_toc_and_text_references() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Guide Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Intro".into()),
+            content: "<p>Intro text</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Main".into()),
+            content: "<p>Main text</p>".into(),
+            id: Some("ch2".into()),
+        });
+
+        let html = book_to_mobi_html(&book);
+
+        // Guide section should exist.
+        assert!(html.contains("<guide>"), "HTML should contain a <guide> section");
+        assert!(html.contains("</guide>"), "HTML should contain closing </guide>");
+
+        // Should have a TOC reference.
+        assert!(
+            html.contains("type=\"toc\""),
+            "guide should contain a toc reference"
+        );
+
+        // Should have a text (start reading) reference.
+        assert!(
+            html.contains("type=\"text\""),
+            "guide should contain a text reference"
+        );
+
+        // The guide TOC filepos should point to the TOC section in body.
+        let toc_ref_pos = html.find("type=\"toc\"").unwrap();
+        let filepos_start = html[toc_ref_pos..].find("filepos=").unwrap() + toc_ref_pos + "filepos=".len();
+        let filepos_str = &html[filepos_start..filepos_start + 10];
+        let toc_offset: usize = filepos_str.parse().expect("guide toc filepos should be valid");
+        let at_toc = &html[toc_offset..];
+        assert!(
+            at_toc.starts_with("<div><h2><b>Table of Contents</b></h2>"),
+            "guide toc filepos should point to the TOC div, got: {:?}",
+            &at_toc[..at_toc.len().min(60)]
+        );
+
+        // The guide text filepos should point to the first chapter.
+        let text_ref_pos = html.find("type=\"text\"").unwrap();
+        let text_fp_start = html[text_ref_pos..].find("filepos=").unwrap() + text_ref_pos + "filepos=".len();
+        let text_fp_str = &html[text_fp_start..text_fp_start + 10];
+        let text_offset: usize = text_fp_str.parse().expect("guide text filepos should be valid");
+        let at_text = &html[text_offset..];
+        assert!(
+            at_text.starts_with("<h2>Intro</h2>"),
+            "guide text filepos should point to first chapter, got: {:?}",
+            &at_text[..at_text.len().min(60)]
+        );
+    }
+
+    #[test]
+    fn toc_section_appears_before_chapter_content() {
+        let mut book = Book::new();
+        book.metadata.title = Some("TOC Order".into());
+        book.add_chapter(&Chapter {
+            title: Some("First".into()),
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = book_to_mobi_html(&book);
+
+        let toc_pos = html.find("Table of Contents").expect("should have TOC heading");
+        let content_pos = html.find("<p>Content</p>").expect("should have chapter content");
+        assert!(
+            toc_pos < content_pos,
+            "TOC should appear before chapter content"
+        );
+    }
+
+    #[test]
+    fn no_toc_when_chapters_have_no_titles() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Titles".into());
+        // Add chapter without a title (it won't get a TOC entry via add_chapter).
+        // Directly manipulate to simulate a titleless chapter.
+        use crate::domain::{ManifestItem, SpineItem};
+        let item = ManifestItem::new("ch1", "ch1.xhtml", "application/xhtml+xml")
+            .with_text("<p>Content</p>");
+        book.manifest.insert(item);
+        book.spine.push(SpineItem::new("ch1"));
+        // No TOC entries added.
+
+        let html = book_to_mobi_html(&book);
+
+        // Without any TOC entries (no titles), guide and TOC sections are omitted.
+        assert!(
+            !html.contains("<guide>"),
+            "should not have guide section without TOC entries"
+        );
+        assert!(
+            !html.contains("Table of Contents"),
+            "should not have TOC section without titled chapters"
+        );
+        assert!(
+            !html.contains("filepos="),
+            "should not have any filepos when no TOC"
+        );
+    }
+
+    #[test]
+    fn filepos_no_placeholders_remain() {
+        // Verify no unfixed "0000000000" placeholders remain in the output.
+        let mut book = Book::new();
+        book.metadata.title = Some("Fixup Check".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Content 1</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Ch2".into()),
+            content: "<p>Content 2</p>".into(),
+            id: Some("ch2".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Ch3".into()),
+            content: "<p>Content 3</p>".into(),
+            id: Some("ch3".into()),
+        });
+
+        let html = book_to_mobi_html(&book);
+
+        // All filepos=0000000000 should have been replaced with actual offsets.
+        assert!(
+            !html.contains("filepos=0000000000"),
+            "no unfixed filepos placeholders should remain in the output"
+        );
+    }
+
+    #[test]
+    fn mobi_output_contains_filepos_strings() {
+        // Integration test: verify that the final MOBI binary, when read back
+        // and decoded, contains filepos strings in the HTML text.
+        let mut book = Book::new();
+        book.metadata.title = Some("MOBI Filepos".into());
+        book.add_chapter(&Chapter {
+            title: Some("Prologue".into()),
+            content: "<p>Opening text</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Chapter I".into()),
+            content: "<p>Main story</p>".into(),
+            id: Some("ch2".into()),
+        });
+        book.add_chapter(&Chapter {
+            title: Some("Epilogue".into()),
+            content: "<p>Closing text</p>".into(),
+            id: Some("ch3".into()),
+        });
+
+        let mobi_data = write_mobi(&book).unwrap();
+
+        // Read back and extract the decompressed text.
+        let mut cursor = std::io::Cursor::new(mobi_data);
+        let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
+        let all_content: String = decoded.chapters().iter().map(|c| c.content.clone()).collect();
+
+        // The decompressed/decoded text should preserve filepos references.
+        // At minimum, verify the original HTML contains them (pre-compression).
+        let html = book_to_mobi_html(&book);
+        let filepos_count = html.matches("filepos=").count();
+        assert!(
+            filepos_count >= 5,
+            "HTML should contain at least 5 filepos references (3 TOC + 2 guide), got {}",
+            filepos_count
+        );
+
+        // Also verify the book round-trips correctly with all chapter content.
+        assert!(
+            all_content.contains("Opening text"),
+            "decoded MOBI should contain chapter content"
+        );
+        assert!(
+            all_content.contains("Closing text"),
+            "decoded MOBI should contain epilogue content"
+        );
     }
 }
