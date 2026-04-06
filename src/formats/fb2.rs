@@ -250,13 +250,36 @@ fn reopen_inline_formatting(buf: &mut String, in_emphasis: bool, in_strong: bool
     }
 }
 
+/// Checks whether an opening HTML tag has an attribute that marks it as a
+/// Project Gutenberg page-header or page-footer block (which should be
+/// suppressed in FB2 output).
+///
+/// Matches: `id="pg-header"`, `id="pg-footer"`, or a `class` attribute
+/// containing the word `pgheader`.
+fn is_pg_boilerplate_tag(tag_str: &str) -> bool {
+    let lower = tag_str.to_ascii_lowercase();
+    if lower.contains("id=\"pg-header\"") || lower.contains("id=\"pg-footer\"")
+        || lower.contains("id='pg-header'") || lower.contains("id='pg-footer'")
+    {
+        return true;
+    }
+    // Check class attribute for "pgheader"
+    if lower.contains("pgheader") {
+        return true;
+    }
+    false
+}
+
 /// Converts HTML content into FB2 paragraph elements.
 ///
 /// - Wraps text inside `<p>` tags as FB2 `<p>` elements.
 /// - Converts `<a href="...">text</a>` to `<a l:href="...">text</a>`.
 /// - Emits `<empty-line/>` only for explicit `<br>` / `<br/>` tags in the source,
 ///   NOT after every paragraph boundary.
-/// - Text outside any `<p>` is treated as implicit paragraphs (split by newlines).
+/// - Text outside any `<p>` is accumulated per block element (not split
+///   per-newline) to avoid paragraph inflation.
+/// - Skips `<head>` content (e.g. `<title>` text from XHTML pages).
+/// - Skips Project Gutenberg page-header/footer boilerplate divs.
 fn html_to_fb2_paragraphs(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let bytes = html.as_bytes();
@@ -270,6 +293,13 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     let mut in_anchor = false;
     let mut in_emphasis = false;
     let mut in_strong = false;
+    // Track depth inside <head> to suppress page-title text injection.
+    let mut head_depth: u32 = 0;
+    // Track depth inside Project Gutenberg boilerplate divs (pg-header/pg-footer).
+    let mut pg_boilerplate_depth: u32 = 0;
+    // Track depth inside block-level elements (<div>, <li>, etc.) to avoid
+    // splitting their text content into one paragraph per newline.
+    let mut block_depth: u32 = 0;
 
     while pos < len {
         if bytes[pos] == b'<' {
@@ -278,6 +308,57 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 let tag_bytes = &bytes[pos..pos + gt + 1];
                 let tag_str = std::str::from_utf8(tag_bytes).unwrap_or("");
                 let tag_lower = tag_str.to_ascii_lowercase();
+
+                // --- <head> / </head>: skip everything in the HTML head ---
+                if tag_lower.starts_with("<head") && (tag_bytes.len() < 6 || tag_bytes[5] == b'>' || tag_bytes[5] == b' ') {
+                    head_depth += 1;
+                    pos += gt + 1;
+                    continue;
+                }
+                if tag_lower.starts_with("</head") {
+                    head_depth = head_depth.saturating_sub(1);
+                    pos += gt + 1;
+                    continue;
+                }
+                if head_depth > 0 {
+                    // Inside <head>: skip all tags and text
+                    pos += gt + 1;
+                    continue;
+                }
+
+                // --- Skip <html>, </html>, <body>, </body>, <!DOCTYPE>, <?xml?> etc. ---
+                if tag_lower.starts_with("<html") || tag_lower.starts_with("</html")
+                    || tag_lower.starts_with("<body") || tag_lower.starts_with("</body")
+                    || tag_lower.starts_with("<!") || tag_lower.starts_with("<?")
+                {
+                    pos += gt + 1;
+                    continue;
+                }
+
+                // --- Project Gutenberg boilerplate div tracking ---
+                let is_div_open = tag_lower.starts_with("<div") && (tag_bytes.len() < 5 || tag_bytes[4] == b'>' || tag_bytes[4] == b' ');
+                let is_div_close = tag_lower.starts_with("</div");
+                if is_div_open && pg_boilerplate_depth > 0 {
+                    // Nested div inside boilerplate — increase depth
+                    pg_boilerplate_depth += 1;
+                    pos += gt + 1;
+                    continue;
+                }
+                if is_div_open && is_pg_boilerplate_tag(tag_str) {
+                    pg_boilerplate_depth = 1;
+                    pos += gt + 1;
+                    continue;
+                }
+                if is_div_close && pg_boilerplate_depth > 0 {
+                    pg_boilerplate_depth -= 1;
+                    pos += gt + 1;
+                    continue;
+                }
+                if pg_boilerplate_depth > 0 {
+                    // Inside a PG boilerplate block: skip everything
+                    pos += gt + 1;
+                    continue;
+                }
 
                 if tag_lower.starts_with("<p") && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ') {
                     // Opening <p> tag – start accumulating inline content
@@ -303,10 +384,10 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     pos += gt + 1;
                 } else if tag_lower.starts_with("<br") {
                     // <br> or <br/> handling depends on context:
-                    // Inside a <p>: treat as soft break (space) to avoid paragraph inflation
-                    // Outside a <p>: emit empty-line in FB2
-                    if in_p {
-                        // Soft break within a paragraph – just add a space if needed
+                    // Inside a <p> or block element: treat as soft break (space)
+                    // Outside: emit empty-line in FB2
+                    if in_p || block_depth > 0 {
+                        // Soft break within a paragraph/block – just add a space if needed
                         let trimmed = inline_buf.trim_end();
                         if !trimmed.is_empty() && !trimmed.ends_with('>') {
                             inline_buf.push(' ');
@@ -399,8 +480,39 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     inline_buf.push_str("</emphasis>");
                     in_emphasis = false;
                     pos += gt + 1;
+                } else if is_div_open {
+                    // Opening <div> tag – treat as block boundary; flush any
+                    // pending text and start accumulating within this block so
+                    // that multi-line text inside a single <div> stays in one
+                    // paragraph instead of being split per-newline.
+                    if !in_p {
+                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                        if in_anchor {
+                            inline_buf.push_str("</a>");
+                            in_anchor = false;
+                        }
+                        flush_paragraph(&mut out, &mut inline_buf);
+                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                    }
+                    block_depth += 1;
+                    pos += gt + 1;
+                } else if is_div_close {
+                    // Closing </div> – flush accumulated block content
+                    if block_depth > 0 {
+                        block_depth -= 1;
+                    }
+                    if !in_p && block_depth == 0 {
+                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                        if in_anchor {
+                            inline_buf.push_str("</a>");
+                            in_anchor = false;
+                        }
+                        flush_paragraph(&mut out, &mut inline_buf);
+                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                    }
+                    pos += gt + 1;
                 } else {
-                    // Other tags (e.g. <div>, <span>, etc.) – skip the tag, keep going
+                    // Other tags (e.g. <span>, <ul>, <ol>, <table>, etc.) – skip the tag, keep going
                     pos += gt + 1;
                 }
             } else {
@@ -410,24 +522,47 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
             }
         } else {
             // Regular text content
+            if head_depth > 0 || pg_boilerplate_depth > 0 {
+                // Inside <head> or PG boilerplate: skip text entirely
+                let next_lt = memchr::memchr(b'<', &bytes[pos..]).unwrap_or(len - pos);
+                pos += next_lt;
+                continue;
+            }
             let next_lt = memchr::memchr(b'<', &bytes[pos..]).unwrap_or(len - pos);
             let text = &html[pos..pos + next_lt];
             if in_p {
-                // Inside a <p>, accumulate text
+                // Inside a <p>: accumulate text as-is (preserving whitespace
+                // that is meaningful for inline formatting boundaries).
                 inline_buf.push_str(&escape_html(text));
-            } else {
-                // Outside <p>: treat non-empty lines as paragraphs
-                for line in text.split('\n') {
-                    let trimmed = line.trim();
+            } else if block_depth > 0 {
+                // Inside a block element (<div>): accumulate text, joining
+                // newlines with spaces to avoid paragraph splits.
+                for (i, segment) in text.split('\n').enumerate() {
+                    if i > 0 {
+                        let buf_trimmed = inline_buf.trim_end();
+                        if !buf_trimmed.is_empty() && !buf_trimmed.ends_with('>') {
+                            inline_buf.push(' ');
+                        }
+                    }
+                    let trimmed = segment.trim();
                     if !trimmed.is_empty() {
                         inline_buf.push_str(&escape_html(trimmed));
-                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                        if in_anchor {
-                            inline_buf.push_str("</a>");
-                            in_anchor = false;
+                    }
+                }
+            } else {
+                // Outside <p> and outside block elements: accumulate text as a
+                // single implicit paragraph (join lines with spaces instead of
+                // flushing each line as a separate paragraph).
+                for (i, line) in text.split('\n').enumerate() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        if i > 0 {
+                            let buf_trimmed = inline_buf.trim_end();
+                            if !buf_trimmed.is_empty() && !buf_trimmed.ends_with('>') {
+                                inline_buf.push(' ');
+                            }
                         }
-                        flush_paragraph(&mut out, &mut inline_buf);
-                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                        inline_buf.push_str(&escape_html(trimmed));
                     }
                 }
             }
@@ -652,6 +787,27 @@ fn generate_fb2(book: &Book) -> String {
 
     // Document-info (metadata about this conversion)
     xml.push_str("    <document-info>\n");
+    // Copy book author(s) into document-info (matching Calibre behavior)
+    for author in &book.metadata.authors {
+        xml.push_str("      <author>\n");
+        let parts: Vec<&str> = author.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            xml.push_str("        <first-name>");
+            xml.push_str(&escape_html(parts[0]));
+            xml.push_str("</first-name>\n");
+            xml.push_str("        <last-name>");
+            xml.push_str(&escape_html(parts[1]));
+            xml.push_str("</last-name>\n");
+        } else {
+            xml.push_str("        <first-name>");
+            xml.push_str(&escape_html(author));
+            xml.push_str("</first-name>\n");
+        }
+        xml.push_str("      </author>\n");
+    }
+    if book.metadata.authors.is_empty() {
+        xml.push_str("      <author><first-name>Unknown</first-name></author>\n");
+    }
     xml.push_str("      <program-used>eruditio</program-used>\n");
     xml.push_str("      <date>");
     xml.push_str(&chrono::Utc::now().format("%Y-%m-%d").to_string());
@@ -701,14 +857,23 @@ fn generate_fb2(book: &Book) -> String {
     }
 
     for chapter in &book.chapters() {
+        // Convert HTML content to FB2 paragraphs.
+        let fb2_content = html_to_fb2_paragraphs(&chapter.content);
+
+        // Skip chapters that produce no visible content after conversion
+        // (e.g. the cover page wrapper whose only content is an <img> tag
+        // that was already handled by the cover image section above, or
+        // chapters whose XHTML only contains navigation/boilerplate).
+        if fb2_content.trim().is_empty() && chapter.title.is_none() {
+            continue;
+        }
+
         xml.push_str("    <section>\n");
         if let Some(ref ch_title) = chapter.title {
             xml.push_str("      <title><p>");
             xml.push_str(&escape_html(ch_title));
             xml.push_str("</p></title>\n");
         }
-        // Convert HTML content to FB2 paragraphs.
-        let fb2_content = html_to_fb2_paragraphs(&chapter.content);
         xml.push_str(&fb2_content);
         xml.push_str("    </section>\n");
     }
