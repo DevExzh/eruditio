@@ -164,12 +164,12 @@ impl MobiHeader {
         let full_title = extract_full_title(record0, full_name_offset, full_name_length);
 
         // KF8 fields (only if header is long enough).
-        let fragment_index = if header_length >= 232 {
+        let fragment_index = if header_length >= 236 {
             Some(read_u32_safe(record0, 248))
         } else {
             None
         };
-        let skeleton_index = if header_length >= 236 {
+        let skeleton_index = if header_length >= 240 {
             Some(read_u32_safe(record0, 252))
         } else {
             None

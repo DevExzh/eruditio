@@ -870,11 +870,14 @@ impl FormatReader for MobiReader {
             let chapter_count = raw_chapters.len();
 
             // Resolve kindle: references (embed, flow, pos:fid) in each chapter.
-            // First pass: basic resolution (handles embed, flow, and simple fid mapping).
-            // Second pass: resolve remaining kindle:pos:fid using the div table.
+            // When a PosFidResolver is available, skip the naive first-pass
+            // fid→chapter mapping (which lacks anchor precision) so ALL
+            // kindle:pos:fid references go through the anchor-aware second pass.
+            let effective_chapter_count =
+                if pos_fid_resolver.is_some() { 0 } else { chapter_count };
             for (i, ch) in raw_chapters.iter().enumerate() {
                 let mut resolved =
-                    resolve_kindle_references(&ch.content, &image_paths, &flow_paths, chapter_count);
+                    resolve_kindle_references(&ch.content, &image_paths, &flow_paths, effective_chapter_count);
 
                 // Second pass: use the full PosFidResolver for any remaining
                 // kindle:pos:fid references (cross-file TOC links, etc.).
