@@ -250,21 +250,58 @@ fn reopen_inline_formatting(buf: &mut String, in_emphasis: bool, in_strong: bool
     }
 }
 
+/// Writes FB2 `<author>` elements for each author in the slice.
+///
+/// Each author string is split on the first space into `<first-name>` and
+/// `<last-name>`. If there is no space, only `<first-name>` is emitted.
+/// When the slice is empty a single `<author><first-name>Unknown</first-name></author>`
+/// fallback is written.
+fn write_fb2_author_elements(xml: &mut String, authors: &[String], indent: &str) {
+    for author in authors {
+        xml.push_str(indent);
+        xml.push_str("<author>\n");
+        let parts: Vec<&str> = author.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            xml.push_str(indent);
+            xml.push_str("  <first-name>");
+            xml.push_str(&escape_html(parts[0]));
+            xml.push_str("</first-name>\n");
+            xml.push_str(indent);
+            xml.push_str("  <last-name>");
+            xml.push_str(&escape_html(parts[1]));
+            xml.push_str("</last-name>\n");
+        } else {
+            xml.push_str(indent);
+            xml.push_str("  <first-name>");
+            xml.push_str(&escape_html(author));
+            xml.push_str("</first-name>\n");
+        }
+        xml.push_str(indent);
+        xml.push_str("</author>\n");
+    }
+    if authors.is_empty() {
+        xml.push_str(indent);
+        xml.push_str("<author><first-name>Unknown</first-name></author>\n");
+    }
+}
+
 /// Checks whether an opening HTML tag has an attribute that marks it as a
 /// Project Gutenberg page-header or page-footer block (which should be
 /// suppressed in FB2 output).
 ///
 /// Matches: `id="pg-header"`, `id="pg-footer"`, or a `class` attribute
 /// containing the word `pgheader`.
-fn is_pg_boilerplate_tag(tag_str: &str) -> bool {
-    let lower = tag_str.to_ascii_lowercase();
-    if lower.contains("id=\"pg-header\"") || lower.contains("id=\"pg-footer\"")
-        || lower.contains("id='pg-header'") || lower.contains("id='pg-footer'")
+///
+/// The caller should pass the already-lowercased tag string to avoid
+/// redundant lowercasing.
+fn is_pg_boilerplate_tag(tag_lower: &str) -> bool {
+    if tag_lower.contains("id=\"pg-header\"") || tag_lower.contains("id=\"pg-footer\"")
+        || tag_lower.contains("id='pg-header'") || tag_lower.contains("id='pg-footer'")
     {
         return true;
     }
     // Check class attribute for "pgheader"
-    if lower.contains("pgheader") {
+    if tag_lower.contains("pgheader") {
         return true;
     }
     false
@@ -297,7 +334,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
     let mut head_depth: u32 = 0;
     // Track depth inside Project Gutenberg boilerplate divs (pg-header/pg-footer).
     let mut pg_boilerplate_depth: u32 = 0;
-    // Track depth inside block-level elements (<div>, <li>, etc.) to avoid
+    // Track depth inside block-level elements (<div>) to avoid
     // splitting their text content into one paragraph per newline.
     let mut block_depth: u32 = 0;
 
@@ -344,13 +381,13 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     pos += gt + 1;
                     continue;
                 }
-                if is_div_open && is_pg_boilerplate_tag(tag_str) {
+                if is_div_open && is_pg_boilerplate_tag(&tag_lower) {
                     pg_boilerplate_depth = 1;
                     pos += gt + 1;
                     continue;
                 }
                 if is_div_close && pg_boilerplate_depth > 0 {
-                    pg_boilerplate_depth -= 1;
+                    pg_boilerplate_depth = pg_boilerplate_depth.saturating_sub(1);
                     pos += gt + 1;
                     continue;
                 }
@@ -703,26 +740,7 @@ fn generate_fb2(book: &Book) -> String {
     }
 
     // Authors
-    for author in &book.metadata.authors {
-        xml.push_str("      <author>\n");
-        let parts: Vec<&str> = author.splitn(2, ' ').collect();
-        if parts.len() == 2 {
-            xml.push_str("        <first-name>");
-            xml.push_str(&escape_html(parts[0]));
-            xml.push_str("</first-name>\n");
-            xml.push_str("        <last-name>");
-            xml.push_str(&escape_html(parts[1]));
-            xml.push_str("</last-name>\n");
-        } else {
-            xml.push_str("        <first-name>");
-            xml.push_str(&escape_html(author));
-            xml.push_str("</first-name>\n");
-        }
-        xml.push_str("      </author>\n");
-    }
-    if book.metadata.authors.is_empty() {
-        xml.push_str("      <author><first-name>Unknown</first-name></author>\n");
-    }
+    write_fb2_author_elements(&mut xml, &book.metadata.authors, "      ");
 
     // Title
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
@@ -788,26 +806,7 @@ fn generate_fb2(book: &Book) -> String {
     // Document-info (metadata about this conversion)
     xml.push_str("    <document-info>\n");
     // Copy book author(s) into document-info (matching Calibre behavior)
-    for author in &book.metadata.authors {
-        xml.push_str("      <author>\n");
-        let parts: Vec<&str> = author.splitn(2, ' ').collect();
-        if parts.len() == 2 {
-            xml.push_str("        <first-name>");
-            xml.push_str(&escape_html(parts[0]));
-            xml.push_str("</first-name>\n");
-            xml.push_str("        <last-name>");
-            xml.push_str(&escape_html(parts[1]));
-            xml.push_str("</last-name>\n");
-        } else {
-            xml.push_str("        <first-name>");
-            xml.push_str(&escape_html(author));
-            xml.push_str("</first-name>\n");
-        }
-        xml.push_str("      </author>\n");
-    }
-    if book.metadata.authors.is_empty() {
-        xml.push_str("      <author><first-name>Unknown</first-name></author>\n");
-    }
+    write_fb2_author_elements(&mut xml, &book.metadata.authors, "      ");
     xml.push_str("      <program-used>eruditio</program-used>\n");
     xml.push_str("      <date>");
     xml.push_str(&chrono::Utc::now().format("%Y-%m-%d").to_string());
@@ -2231,6 +2230,202 @@ mod tests {
             "should have 2 <p> tags in body (1 title + 1 content), not {}: body is:\n{}",
             p_tags.len(),
             body
+        );
+    }
+
+    // =========================================================================
+    // Tests for code-quality review findings
+    // =========================================================================
+
+    #[test]
+    fn fb2_writer_head_content_suppressed() {
+        // <head> content (e.g. <title>) should NOT leak into FB2 output.
+        let mut book = Book::new();
+        book.metadata.title = Some("Head Suppression Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<html><head><title>Page Title</title></head><body><p>Content</p></body></html>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // The body content should be present
+        assert!(
+            xml.contains("<p>Content</p>"),
+            "body content should be present, got:\n{}",
+            xml
+        );
+        // The <title> text from <head> must NOT appear in any paragraph
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+        assert!(
+            !body.contains("Page Title"),
+            "<head><title> text should be suppressed from FB2 output, got:\n{}",
+            body
+        );
+    }
+
+    #[test]
+    fn fb2_writer_pg_boilerplate_filtered() {
+        // Project Gutenberg header/footer boilerplate divs should be suppressed.
+        let mut book = Book::new();
+        book.metadata.title = Some("PG Boilerplate Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: r#"<div id="pg-header"><p>Project Gutenberg header</p></div><p>Real content</p>"#.into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+
+        assert!(
+            !body.contains("Project Gutenberg header"),
+            "PG boilerplate text should be suppressed, got:\n{}",
+            body
+        );
+        assert!(
+            body.contains("<p>Real content</p>"),
+            "non-boilerplate content should be preserved, got:\n{}",
+            body
+        );
+    }
+
+    #[test]
+    fn fb2_writer_div_block_content_accumulation() {
+        // Multi-line text inside a single <div> should produce a single
+        // paragraph, not one paragraph per line.
+        let mut book = Book::new();
+        book.metadata.title = Some("Div Block Test".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<div>Line one\nLine two\nLine three</div>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+
+        // All three lines should appear in a single <p> element
+        assert!(
+            body.contains("Line one Line two Line three"),
+            "div content should be accumulated into a single paragraph, got:\n{}",
+            body
+        );
+        // Count content <p> tags (excluding section title)
+        let content_p_count = body.matches("<p>").count()
+            - if body.contains("<title><p>") { 1 } else { 0 };
+        assert_eq!(
+            content_p_count, 1,
+            "should produce exactly 1 content paragraph from a single <div>, got {} in:\n{}",
+            content_p_count, body
+        );
+    }
+
+    #[test]
+    fn fb2_writer_empty_chapter_skipped() {
+        // A chapter whose content is only an <img> tag (no text) and has no
+        // title should be skipped entirely.
+        let mut book = Book::new();
+        book.metadata.title = Some("Empty Chapter Test".into());
+        // Chapter with only an image tag and no title
+        book.add_chapter(&Chapter {
+            title: None,
+            content: r#"<img src="cover.jpg"/>"#.into(),
+            id: Some("cover-page".into()),
+        });
+        // A real chapter that should be present
+        book.add_chapter(&Chapter {
+            title: Some("Real Chapter".into()),
+            content: "<p>Real content here</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        let body_start = xml.find("<body>").unwrap();
+        let body_end = xml.find("</body>").unwrap();
+        let body = &xml[body_start..body_end];
+
+        // The real chapter must be present
+        assert!(
+            body.contains("Real content here"),
+            "real chapter content should be present, got:\n{}",
+            body
+        );
+
+        // Count <section> elements — should be exactly 1 (the real chapter)
+        // (no cover image section since no cover resource was added)
+        let section_count = body.matches("<section>").count();
+        assert_eq!(
+            section_count, 1,
+            "empty/image-only chapter without title should be skipped, but got {} sections in:\n{}",
+            section_count, body
+        );
+    }
+
+    #[test]
+    fn fb2_writer_document_info_author_population() {
+        // Verify that <document-info> contains the same author elements as
+        // <title-info>.
+        let mut book = Book::new();
+        book.metadata.title = Some("Doc Info Author Test".into());
+        book.metadata.authors.push("Jane Doe".into());
+        book.metadata.authors.push("Bob".into());
+        book.add_chapter(&Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Text</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        Fb2Writer::new().write_book(&book, &mut output).unwrap();
+        let xml = String::from_utf8(output).unwrap();
+
+        // Extract the document-info block
+        let di_start = xml.find("<document-info>").expect("missing <document-info>");
+        let di_end = xml.find("</document-info>").expect("missing </document-info>");
+        let di_block = &xml[di_start..di_end];
+
+        // Jane Doe should be split into first-name/last-name
+        assert!(
+            di_block.contains("<first-name>Jane</first-name>"),
+            "document-info should contain first-name Jane, got:\n{}",
+            di_block
+        );
+        assert!(
+            di_block.contains("<last-name>Doe</last-name>"),
+            "document-info should contain last-name Doe, got:\n{}",
+            di_block
+        );
+        // Single-name author "Bob" should appear as first-name only
+        assert!(
+            di_block.contains("<first-name>Bob</first-name>"),
+            "document-info should contain first-name Bob, got:\n{}",
+            di_block
+        );
+        // Should have 2 <author> elements in document-info
+        let author_count = di_block.matches("<author>").count();
+        assert_eq!(
+            author_count, 2,
+            "document-info should have 2 author elements, got {} in:\n{}",
+            author_count, di_block
         );
     }
 }
