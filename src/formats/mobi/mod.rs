@@ -255,6 +255,431 @@ fn try_resolve_pos_fid(after_kindle: &str, chapter_count: usize) -> Option<(Stri
     Some((replacement, total_consumed))
 }
 
+// --- INDX record parsing and PosFidResolver for full kindle:pos:fid resolution ---
+
+/// Parses the INDX record header and returns key fields.
+/// Returns (count, idxt_offset) or None if invalid.
+fn parse_indx_header_fields(data: &[u8]) -> Option<(usize, usize)> {
+    if data.len() < 4 || &data[..4] != b"INDX" {
+        return None;
+    }
+    // The header contains 44 u32 fields after the magic.
+    // Key offsets (as u32 field indices): 4=start (IDXT position), 5=count
+    if data.len() < 4 + 6 * 4 {
+        return None;
+    }
+    let count = read_u32_be(data, 4 + 5 * 4) as usize; // field 5: count
+    let idxt_start = read_u32_be(data, 4 + 4 * 4) as usize; // field 4: start (IDXT position)
+    Some((count, idxt_start))
+}
+
+/// Finds the TAGX section in an INDX header record and returns the
+/// control_byte_count. Handles the case where the tagx offset field is 0
+/// by scanning for the TAGX signature.
+fn find_tagx_control_byte_count(data: &[u8]) -> Option<usize> {
+    // Try the tagx offset from header field 43.
+    let header_tagx = if data.len() >= 4 + 44 * 4 {
+        read_u32_be(data, 4 + 43 * 4) as usize
+    } else {
+        0
+    };
+
+    let mut tagx_offset = header_tagx;
+    if tagx_offset + 12 > data.len()
+        || data.len() < tagx_offset + 4
+        || &data[tagx_offset..tagx_offset + 4] != b"TAGX"
+    {
+        // Fallback: scan for TAGX after header fields.
+        let scan_start = if data.len() >= 4 + 44 * 4 {
+            4 + 44 * 4
+        } else {
+            4
+        };
+        let sub = &data[scan_start..];
+        tagx_offset = sub
+            .windows(4)
+            .position(|w| w == b"TAGX")
+            .map(|pos| scan_start + pos)?;
+    }
+
+    if tagx_offset + 12 > data.len() || &data[tagx_offset..tagx_offset + 4] != b"TAGX" {
+        return None;
+    }
+
+    let control_byte_count = read_u32_be(data, tagx_offset + 8) as usize;
+    Some(control_byte_count)
+}
+
+/// Extracts the text keys (insert positions) from a KF8 div/fragment INDX index.
+///
+/// The div table entries have text keys that are zero-padded numeric strings
+/// representing byte positions (insert positions) in the raw text stream.
+/// Each entry corresponds to a content fragment; the `fid` value in
+/// `kindle:pos:fid:XXXX:off:YYYY` is an index into this table.
+fn parse_div_insert_positions(pdb: &PdbFile, fragment_index: usize) -> Option<Vec<usize>> {
+    let header_data = pdb.record_data(fragment_index).ok()?;
+    let (indx_count, _) = parse_indx_header_fields(header_data)?;
+
+    // We need control_byte_count to skip control bytes in sub-record entries.
+    let _control_byte_count = find_tagx_control_byte_count(header_data)?;
+
+    let mut insert_positions = Vec::new();
+
+    for rec_idx in 1..=indx_count {
+        let abs_idx = fragment_index + rec_idx;
+        let rec_data = match pdb.record_data(abs_idx) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let (entry_count, idxt_pos) = match parse_indx_header_fields(rec_data) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        // Verify IDXT signature.
+        if idxt_pos + 4 > rec_data.len() || &rec_data[idxt_pos..idxt_pos + 4] != b"IDXT" {
+            continue;
+        }
+
+        // Read IDXT entry offsets.
+        let mut idx_positions = Vec::with_capacity(entry_count + 1);
+        for j in 0..entry_count {
+            let pos_offset = idxt_pos + 4 + j * 2;
+            if pos_offset + 2 > rec_data.len() {
+                break;
+            }
+            let pos =
+                ((rec_data[pos_offset] as usize) << 8) | (rec_data[pos_offset + 1] as usize);
+            idx_positions.push(pos);
+        }
+        idx_positions.push(idxt_pos); // sentinel: last entry ends at IDXT
+
+        // Extract text keys from each entry.
+        for j in 0..entry_count {
+            if j + 1 >= idx_positions.len() {
+                break;
+            }
+            let start = idx_positions[j];
+            let end = idx_positions[j + 1];
+            if start >= end || start >= rec_data.len() {
+                insert_positions.push(0); // placeholder for invalid entries
+                continue;
+            }
+            let entry = &rec_data[start..end.min(rec_data.len())];
+            if entry.is_empty() {
+                insert_positions.push(0);
+                continue;
+            }
+
+            // First byte = text key length, followed by key bytes.
+            let key_len = entry[0] as usize;
+            if key_len == 0 || key_len + 1 > entry.len() {
+                insert_positions.push(0);
+                continue;
+            }
+            let key_bytes = &entry[1..1 + key_len];
+
+            // The text key is a zero-padded numeric string (the insert position).
+            match std::str::from_utf8(key_bytes).ok().and_then(|s| s.parse::<usize>().ok()) {
+                Some(pos) => insert_positions.push(pos),
+                None => insert_positions.push(0),
+            }
+        }
+    }
+
+    if insert_positions.is_empty() {
+        None
+    } else {
+        Some(insert_positions)
+    }
+}
+
+/// Splits raw bytes at `<?xml` boundaries and returns byte offset ranges
+/// for each resulting part. Falls back to `<html` boundaries if no multiple
+/// `<?xml` declarations are found.
+fn split_bytes_at_xml_boundaries(data: &[u8]) -> Vec<(usize, usize)> {
+    let xml_needle = b"<?xml";
+    let mut positions = Vec::new();
+
+    let mut search_from = 0;
+    while search_from + xml_needle.len() <= data.len() {
+        if let Some(offset) =
+            text_utils::find_case_insensitive(&data[search_from..], xml_needle)
+        {
+            positions.push(search_from + offset);
+            search_from = search_from + offset + 1;
+        } else {
+            break;
+        }
+    }
+
+    if positions.len() <= 1 {
+        let html_needle = b"<html";
+        let mut html_positions = Vec::new();
+        search_from = 0;
+        while search_from + html_needle.len() <= data.len() {
+            if let Some(offset) =
+                text_utils::find_case_insensitive(&data[search_from..], html_needle)
+            {
+                html_positions.push(search_from + offset);
+                search_from = search_from + offset + 1;
+            } else {
+                break;
+            }
+        }
+        if html_positions.len() > 1 {
+            positions = html_positions;
+        }
+    }
+
+    if positions.is_empty() {
+        return vec![(0, data.len())];
+    }
+
+    let mut ranges = Vec::with_capacity(positions.len());
+    for i in 0..positions.len() {
+        let start = positions[i];
+        let end = if i + 1 < positions.len() {
+            positions[i + 1]
+        } else {
+            data.len()
+        };
+        ranges.push((start, end));
+    }
+    ranges
+}
+
+/// Resolver for kindle:pos:fid references using the KF8 div table.
+///
+/// Maps (fid, offset) pairs to (chapter_filename, anchor_id) by:
+/// 1. Looking up the insert position from the div table entry at index `fid`
+/// 2. Adding the offset to get an absolute byte position in the raw text
+/// 3. Finding which chapter contains that position
+/// 4. Searching backwards for the nearest id/name anchor
+struct PosFidResolver {
+    /// Insert positions from the div table, indexed by div entry number.
+    insert_positions: Vec<usize>,
+    /// Byte ranges (start, end) for each chapter in the raw text (absolute).
+    chapter_byte_ranges: Vec<(usize, usize)>,
+    /// Raw bytes of each chapter (for anchor searching).
+    chapter_bytes: Vec<Vec<u8>>,
+}
+
+impl PosFidResolver {
+    fn resolve(&self, fid: usize, offset: usize) -> Option<(String, Option<String>)> {
+        let insert_pos = *self.insert_positions.get(fid)?;
+        let pos = insert_pos.checked_add(offset)?;
+
+        // Find which chapter contains this absolute position.
+        let chapter_idx = self.chapter_byte_ranges.iter().position(|(start, end)| {
+            pos >= *start && pos < *end
+        })?;
+
+        let (ch_start, _) = self.chapter_byte_ranges[chapter_idx];
+        let chapter_data = &self.chapter_bytes[chapter_idx];
+
+        // Compute position within the chapter's byte data.
+        let pos_in_chapter = pos.saturating_sub(ch_start).min(chapter_data.len());
+
+        // Search backwards for the nearest id= or name= anchor.
+        let anchor = find_nearest_anchor(chapter_data, pos_in_chapter);
+
+        let filename = format!("mobi_ch_{}.xhtml", chapter_idx);
+        Some((filename, anchor))
+    }
+}
+
+/// Searches backwards from a byte position in XHTML content to find the
+/// nearest element with an `id` or `name` attribute. Mirrors Calibre's
+/// `get_id_tag()` method.
+fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
+    let pos = pos.min(data.len());
+
+    // If pos is inside a tag, extend to end of that tag.
+    let search_end = {
+        let next_gt = data[pos..].iter().position(|&b| b == b'>').map(|i| pos + i);
+        let next_lt = data[pos..].iter().position(|&b| b == b'<').map(|i| pos + i);
+        match (next_gt, next_lt) {
+            (Some(gt), Some(lt)) if gt < lt => gt + 1,
+            (Some(gt), None) => gt + 1,
+            _ => pos,
+        }
+    };
+
+    let block = &data[..search_end];
+
+    // Iterate over tags in reverse order.
+    let mut end = block.len();
+    loop {
+        let pgt = match block[..end].iter().rposition(|&b| b == b'>') {
+            Some(p) => p,
+            None => break,
+        };
+        let plt = match block[..pgt].iter().rposition(|&b| b == b'<') {
+            Some(p) => p,
+            None => break,
+        };
+        let tag = &block[plt..pgt + 1];
+
+        // Check for id="..." (on any tag) or name="..." (only on <a> tags).
+        if let Some(val) = extract_attr_value(tag, b"id") {
+            if !val.is_empty() {
+                return Some(val);
+            }
+        }
+        // Only check name= on <a> tags to avoid matching <meta name="..."> etc.
+        let tag_lower_start: Vec<u8> = tag.iter().take(3).map(|b| b.to_ascii_lowercase()).collect();
+        if tag_lower_start.starts_with(b"<a") && (tag.len() <= 2 || tag[2].is_ascii_whitespace()) {
+            if let Some(val) = extract_attr_value(tag, b"name") {
+                if !val.is_empty() {
+                    return Some(val);
+                }
+            }
+        }
+
+        end = plt;
+    }
+
+    None
+}
+
+/// Extracts the value of a named attribute from an HTML/XML tag byte slice.
+/// Case-insensitive attribute name matching, supports both single and double quotes.
+fn extract_attr_value(tag: &[u8], attr_name: &[u8]) -> Option<String> {
+    let tag_lower: Vec<u8> = tag.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let attr_lower: Vec<u8> = attr_name.iter().map(|b| b.to_ascii_lowercase()).collect();
+
+    // Search for ` attr=` pattern (space + attr name + equals).
+    let mut pattern = Vec::with_capacity(attr_lower.len() + 2);
+    pattern.push(b' ');
+    pattern.extend_from_slice(&attr_lower);
+    pattern.push(b'=');
+
+    let attr_pos = tag_lower
+        .windows(pattern.len())
+        .position(|w| w == pattern.as_slice())?;
+    let value_start = attr_pos + pattern.len();
+
+    if value_start >= tag.len() {
+        return None;
+    }
+
+    // Skip whitespace after '='.
+    let rest = &tag[value_start..];
+    let trimmed = rest
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .map(|i| &rest[i..])
+        .unwrap_or(rest);
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let quote = trimmed[0];
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+
+    let value_bytes = &trimmed[1..];
+    let end = value_bytes.iter().position(|&b| b == quote)?;
+    std::str::from_utf8(&value_bytes[..end]).ok().map(|s| s.to_string())
+}
+
+/// Resolves remaining `kindle:pos:fid` references in HTML content using
+/// the PosFidResolver. This is called as a second pass after the basic
+/// `resolve_kindle_references` to handle cross-file references that the
+/// simple fid-to-chapter mapping couldn't resolve.
+fn resolve_remaining_pos_fid(html: &str, resolver: &PosFidResolver) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut remaining = html;
+
+    while let Some(pos) = remaining.find("kindle:pos:fid:") {
+        result.push_str(&remaining[..pos]);
+        let after_kindle = &remaining[pos + 7..]; // skip "kindle:" to match try_resolve_pos_fid input
+
+        let rest = match after_kindle.strip_prefix("pos:fid:") {
+            Some(r) => r,
+            None => {
+                result.push_str("kindle:");
+                remaining = after_kindle;
+                continue;
+            }
+        };
+        let consumed_prefix = 8; // "pos:fid:"
+
+        // Extract fid code.
+        let fid_end = match rest.find(':') {
+            Some(e) if e > 0 => e,
+            _ => {
+                result.push_str("kindle:");
+                remaining = after_kindle;
+                continue;
+            }
+        };
+        let fid_code = &rest[..fid_end];
+        let fid = match decode_kindle_base32(fid_code) {
+            Some(f) => f,
+            None => {
+                result.push_str("kindle:");
+                remaining = after_kindle;
+                continue;
+            }
+        };
+
+        // Skip ":off:".
+        let after_fid = &rest[fid_end..];
+        let off_rest = match after_fid.strip_prefix(":off:") {
+            Some(r) => r,
+            None => {
+                result.push_str("kindle:");
+                remaining = after_kindle;
+                continue;
+            }
+        };
+        let off_prefix_len = 5;
+
+        // Extract offset code.
+        let off_end = off_rest
+            .find(|c: char| !c.is_ascii_alphanumeric())
+            .unwrap_or(off_rest.len());
+        if off_end == 0 {
+            result.push_str("kindle:");
+            remaining = after_kindle;
+            continue;
+        }
+        let off_code = &off_rest[..off_end];
+        let offset = match decode_kindle_base32(off_code) {
+            Some(o) => o,
+            None => {
+                result.push_str("kindle:");
+                remaining = after_kindle;
+                continue;
+            }
+        };
+
+        let total_consumed = 7 + consumed_prefix + fid_end + off_prefix_len + off_end;
+
+        // Try to resolve using the full resolver.
+        if let Some((filename, anchor)) = resolver.resolve(fid, offset) {
+            let replacement = if let Some(anchor_id) = anchor {
+                format!("{}#{}", filename, anchor_id)
+            } else {
+                filename
+            };
+            result.push_str(&replacement);
+        } else {
+            // Could not resolve: keep the original reference.
+            result.push_str(&remaining[pos..pos + total_consumed]);
+        }
+        remaining = &remaining[pos + total_consumed..];
+    }
+
+    result.push_str(remaining);
+    result
+}
+
 /// Detects the content type and file extension of a KF8 flow resource.
 fn detect_flow_type(data: &[u8]) -> (&'static str, &'static str) {
     let trimmed = trim_start_whitespace(data);
@@ -407,15 +832,58 @@ impl FormatReader for MobiReader {
                 decode_cp1252(main_html_bytes)
             };
 
+            // Compute byte offset ranges for each chapter in the raw bytes
+            // (before string decoding). These are needed for proper pos:fid
+            // resolution since kindle:pos:fid positions are byte offsets.
+            let flow0_start = fdst_entries
+                .as_ref()
+                .and_then(|e| e.first())
+                .map(|e| e.start)
+                .unwrap_or(0);
+            let chapter_byte_ranges = split_bytes_at_xml_boundaries(main_html_bytes);
+
+            // Build the PosFidResolver using the div table from the fragment index.
+            let pos_fid_resolver = mobi_header
+                .as_ref()
+                .and_then(|h| h.fragment_index)
+                .filter(|&idx| idx != NULL_INDEX)
+                .and_then(|frag_idx| parse_div_insert_positions(&pdb, frag_idx as usize))
+                .map(|insert_positions| {
+                    let abs_ranges: Vec<(usize, usize)> = chapter_byte_ranges
+                        .iter()
+                        .map(|(s, e)| (flow0_start + s, flow0_start + e))
+                        .collect();
+                    let ch_bytes: Vec<Vec<u8>> = chapter_byte_ranges
+                        .iter()
+                        .map(|(s, e)| main_html_bytes[*s..*e].to_vec())
+                        .collect();
+                    PosFidResolver {
+                        insert_positions,
+                        chapter_byte_ranges: abs_ranges,
+                        chapter_bytes: ch_bytes,
+                    }
+                });
+
             // Split KF8 content on XHTML document boundaries first,
             // so we know how many chapters exist for kindle:pos:fid resolution.
             let raw_chapters = split_kf8_content(&html_string);
             let chapter_count = raw_chapters.len();
 
             // Resolve kindle: references (embed, flow, pos:fid) in each chapter.
+            // First pass: basic resolution (handles embed, flow, and simple fid mapping).
+            // Second pass: resolve remaining kindle:pos:fid using the div table.
             for (i, ch) in raw_chapters.iter().enumerate() {
-                let resolved =
+                let mut resolved =
                     resolve_kindle_references(&ch.content, &image_paths, &flow_paths, chapter_count);
+
+                // Second pass: use the full PosFidResolver for any remaining
+                // kindle:pos:fid references (cross-file TOC links, etc.).
+                if let Some(ref resolver) = pos_fid_resolver {
+                    if resolved.contains("kindle:pos:fid:") {
+                        resolved = resolve_remaining_pos_fid(&resolved, resolver);
+                    }
+                }
+
                 book.add_chapter(&Chapter {
                     title: ch.title.clone(),
                     content: resolved,
