@@ -14,9 +14,10 @@ use image::ImageEncoder;
 
 use super::exth::{
     self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_CREATOR_BUILD,
-    EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR, EXTH_CREATOR_SOFTWARE, EXTH_DESCRIPTION, EXTH_ISBN,
-    EXTH_LANGUAGE, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS, EXTH_START_READING,
-    EXTH_SUBJECT, EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
+    EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR, EXTH_CREATOR_SOFTWARE, EXTH_DESCRIPTION,
+    EXTH_HAS_FAKE_COVER, EXTH_ISBN, EXTH_KF8_COVER_URI, EXTH_LANGUAGE,
+    EXTH_OVERRIDE_KINDLE_FONTS, EXTH_PUBLISHED_DATE, EXTH_PUBLISHER, EXTH_RIGHTS,
+    EXTH_START_READING, EXTH_SUBJECT, EXTH_THUMB_OFFSET, EXTH_UPDATED_TITLE,
 };
 use super::header::{COMPRESSION_PALMDOC, ENCODING_UTF8, NULL_INDEX};
 
@@ -480,6 +481,16 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
     // Build PDB header.
     let pdb_name = truncate_pdb_name(title);
     let mut output = build_pdb_header(&pdb_name, b"BOOK", b"MOBI", num_records as u16, &offsets);
+
+    // Set PalmDB creation_date and modification_date (offsets 36 and 40).
+    // Uses seconds since Unix epoch, matching Calibre's approach.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as u32)
+        .unwrap_or(0);
+    write_u32_be(&mut output, 36, now);
+    write_u32_be(&mut output, 40, now);
+
     output.reserve(total_size - output.len());
 
     // Append all records in order.
@@ -672,9 +683,10 @@ fn build_metadata_exth(
     let thumb_offset_bytes = thumb_offset.to_be_bytes();
     let start_reading_bytes = start_reading.to_be_bytes();
     let creator_software_bytes = 201u32.to_be_bytes(); // 201 = Linux
-    let creator_major_bytes = 0u32.to_be_bytes();
-    let creator_minor_bytes = 0u32.to_be_bytes();
+    let creator_major_bytes = 2u32.to_be_bytes();
+    let creator_minor_bytes = 9u32.to_be_bytes();
     let creator_build_bytes = 0u32.to_be_bytes();
+    let has_fake_cover_bytes = 0u32.to_be_bytes();
 
     let mut refs: Vec<(u32, &[u8])> = Vec::with_capacity(18);
 
@@ -745,6 +757,16 @@ fn build_metadata_exth(
         refs.push((EXTH_THUMB_OFFSET, &thumb_offset_bytes));
     }
 
+    // KF8 cover URI (EXTH 129) -- Calibre always writes this when a cover is present.
+    if has_cover {
+        refs.push((EXTH_KF8_COVER_URI, b"kindle:embed:0001"));
+    }
+
+    // Has fake cover flag (EXTH 203) -- Calibre always writes 0 when a cover is present.
+    if has_cover {
+        refs.push((EXTH_HAS_FAKE_COVER, &has_fake_cover_bytes));
+    }
+
     // Creator software version records (EXTH 204-207).
     refs.push((EXTH_CREATOR_SOFTWARE, &creator_software_bytes));
     refs.push((EXTH_CREATOR_MAJOR, &creator_major_bytes));
@@ -753,6 +775,9 @@ fn build_metadata_exth(
 
     // CDE type = EBOK (ebook).
     refs.push((EXTH_CDE_TYPE, b"EBOK"));
+
+    // Override Kindle fonts (EXTH 528) -- allows custom font overrides on Kindle.
+    refs.push((EXTH_OVERRIDE_KINDLE_FONTS, b"true"));
 
     exth::build_exth(&refs)
 }
@@ -1580,7 +1605,12 @@ mod tests {
 
         let data1 = write_mobi(&book).unwrap();
         let data2 = write_mobi(&book).unwrap();
-        assert_eq!(data1, data2, "same book should produce identical MOBI output");
+
+        // PalmDB timestamps at offsets 36-43 may differ between calls,
+        // so compare everything except those 8 bytes.
+        assert_eq!(data1.len(), data2.len(), "same book should produce same-length MOBI output");
+        assert_eq!(&data1[..36], &data2[..36], "header before timestamps should match");
+        assert_eq!(&data1[44..], &data2[44..], "data after timestamps should match");
     }
 
     #[test]

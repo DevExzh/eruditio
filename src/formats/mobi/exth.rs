@@ -27,9 +27,12 @@ pub(crate) const EXTH_CREATOR_SOFTWARE: u32 = 204;
 pub(crate) const EXTH_CREATOR_MAJOR: u32 = 205;
 pub(crate) const EXTH_CREATOR_MINOR: u32 = 206;
 pub(crate) const EXTH_CREATOR_BUILD: u32 = 207;
+pub(crate) const EXTH_HAS_FAKE_COVER: u32 = 203;
 pub(crate) const EXTH_UPDATED_TITLE: u32 = 503;
 pub(crate) const EXTH_LANGUAGE: u32 = 524;
+pub(crate) const EXTH_OVERRIDE_KINDLE_FONTS: u32 = 528;
 pub(crate) const EXTH_CDE_TYPE: u32 = 501;
+pub(crate) const EXTH_KF8_COVER_URI: u32 = 129;
 
 /// A single EXTH record.
 #[derive(Debug, Clone)]
