@@ -98,15 +98,17 @@ fn decode_kindle_base32(s: &str) -> Option<usize> {
     Some(result)
 }
 
-/// Resolves kindle:embed and kindle:flow references in HTML content.
+/// Resolves kindle:embed, kindle:flow, and kindle:pos:fid references in HTML content.
 /// Returns the HTML with references replaced by actual resource paths.
 ///
 /// - `image_paths`: indexed by 0-based image record number
 /// - `flow_paths`: indexed by flow number (flow 0 = None since it's the main content)
+/// - `chapter_count`: total number of content parts (for kindle:pos:fid resolution)
 fn resolve_kindle_references(
     html: &str,
     image_paths: &[String],
     flow_paths: &[Option<String>],
+    chapter_count: usize,
 ) -> String {
     let mut result = String::with_capacity(html.len());
     let mut remaining = html;
@@ -119,6 +121,9 @@ fn resolve_kindle_references(
             result.push_str(&replacement.0);
             remaining = &remaining[pos + 7 + replacement.1..];
         } else if let Some(replacement) = try_resolve_flow(after_kindle, flow_paths) {
+            result.push_str(&replacement.0);
+            remaining = &remaining[pos + 7 + replacement.1..];
+        } else if let Some(replacement) = try_resolve_pos_fid(after_kindle, chapter_count) {
             result.push_str(&replacement.0);
             remaining = &remaining[pos + 7 + replacement.1..];
         } else {
@@ -200,6 +205,52 @@ fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option
     // Look up the flow path.
     let path = flow_paths.get(index)?.as_ref()?;
     Some((path.clone(), total_consumed))
+}
+
+/// Tries to resolve a kindle:pos:fid:XXXX:off:YYYYYY reference.
+///
+/// These are KF8 internal cross-references encoding a fragment ID (which part
+/// of the book) and a byte offset within that part.
+///
+/// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
+fn try_resolve_pos_fid(after_kindle: &str, chapter_count: usize) -> Option<(String, usize)> {
+    let rest = after_kindle.strip_prefix("pos:fid:")?;
+    let consumed_prefix = 8; // "pos:fid:"
+
+    // Extract the fid code (base-32 encoded, terminated by ':').
+    let fid_end = rest.find(':')?;
+    if fid_end == 0 {
+        return None;
+    }
+    let fid_code = &rest[..fid_end];
+    let fid = decode_kindle_base32(fid_code)?;
+
+    // Skip ":off:".
+    let after_fid = &rest[fid_end..];
+    let off_rest = after_fid.strip_prefix(":off:")?;
+    let off_prefix_len = 5; // ":off:"
+
+    // Extract the offset code (base-32 encoded).
+    let off_end = off_rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(off_rest.len());
+    if off_end == 0 {
+        return None;
+    }
+
+    let total_consumed = consumed_prefix + fid_end + off_prefix_len + off_end;
+
+    // Map fid to a chapter index. In KF8, the fid corresponds to the part index
+    // within the concatenated flow 0 content.
+    if chapter_count == 0 {
+        return None;
+    }
+
+    // Clamp fid to valid chapter range.
+    let chapter_idx = if fid < chapter_count { fid } else { 0 };
+    let replacement = format!("mobi_ch_{}.xhtml", chapter_idx);
+
+    Some((replacement, total_consumed))
 }
 
 /// Detects the content type and file extension of a KF8 flow resource.
@@ -306,7 +357,7 @@ impl FormatReader for MobiReader {
         // For KF8 files, split flows and resolve kindle: references.
         let is_kf8 = mobi_header.as_ref().is_some_and(|h| h.is_kf8());
 
-        let content = if is_kf8 {
+        if is_kf8 {
             // Try to find and parse the FDST record for flow boundaries.
             let first_image = mobi_header
                 .as_ref()
@@ -354,25 +405,38 @@ impl FormatReader for MobiReader {
                 decode_cp1252(main_html_bytes)
             };
 
-            // Resolve kindle: references.
-            resolve_kindle_references(&html_string, &image_paths, &flow_paths)
+            // Split KF8 content on XHTML document boundaries first,
+            // so we know how many chapters exist for kindle:pos:fid resolution.
+            let raw_chapters = split_kf8_content(&html_string);
+            let chapter_count = raw_chapters.len();
+
+            // Resolve kindle: references (embed, flow, pos:fid) in each chapter.
+            for (i, ch) in raw_chapters.iter().enumerate() {
+                let resolved =
+                    resolve_kindle_references(&ch.content, &image_paths, &flow_paths, chapter_count);
+                book.add_chapter(&Chapter {
+                    title: ch.title.clone(),
+                    content: resolved,
+                    id: Some(format!("mobi_ch_{}", i)),
+                });
+            }
         } else {
             // Non-KF8: original behavior.
-            if mobi_header.as_ref().is_some_and(|h| h.is_utf8()) {
+            let content = if mobi_header.as_ref().is_some_and(|h| h.is_utf8()) {
                 crate::formats::common::text_utils::bytes_to_string(&text)
             } else {
                 decode_cp1252(&text)
-            }
-        };
+            };
 
-        // Split into chapters by filepos anchors or treat as single chapter.
-        let chapters = split_mobi_content(&content);
-        for (i, ch) in chapters.iter().enumerate() {
-            book.add_chapter(&Chapter {
-                title: ch.title.clone(),
-                content: ch.content.clone(),
-                id: Some(format!("mobi_ch_{}", i)),
-            });
+            // Split into chapters by pagebreaks or treat as single chapter.
+            let chapters = split_mobi_content(&content);
+            for (i, ch) in chapters.iter().enumerate() {
+                book.add_chapter(&Chapter {
+                    title: ch.title.clone(),
+                    content: ch.content.clone(),
+                    id: Some(format!("mobi_ch_{}", i)),
+                });
+            }
         }
 
         Ok(book)
@@ -662,6 +726,130 @@ fn detect_image_type(data: &[u8]) -> (&'static str, &'static str) {
     } else {
         ("bin", "application/octet-stream")
     }
+}
+
+/// Splits KF8 HTML content into chapters by detecting concatenated XHTML documents.
+///
+/// KF8 (AZW3) files store all content as a single byte stream in flow 0, but
+/// this stream actually contains multiple complete XHTML documents concatenated
+/// together. Each document has its own `<?xml` declaration, `<html>`, `<head>`,
+/// and `<body>` elements.
+///
+/// This function detects these XHTML document boundaries and splits the content
+/// into separate, well-formed chapters. If no multiple documents are detected,
+/// it falls back to `split_mobi_content()` (pagebreak-based splitting).
+fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
+    let parts = split_on_xhtml_boundaries(html);
+
+    if parts.len() <= 1 {
+        // No XHTML document boundaries found; fall back to pagebreak splitting.
+        return split_mobi_content(html);
+    }
+
+    let mut chapters = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Try to extract a title from the first heading in the body.
+        let title = extract_first_heading(trimmed);
+
+        chapters.push(SimpleChapter {
+            title: title.or_else(|| Some(format!("Part {}", i + 1))),
+            content: trimmed.to_string(),
+        });
+    }
+
+    if chapters.is_empty() {
+        chapters.push(SimpleChapter {
+            title: None,
+            content: html.to_string(),
+        });
+    }
+
+    chapters
+}
+
+/// Splits HTML content at XHTML document boundaries (`<?xml` declarations).
+///
+/// Returns a vector of string slices, each being a complete XHTML document.
+/// If the content does not contain multiple `<?xml` declarations, falls back
+/// to looking for multiple `<html` tags as boundaries.
+fn split_on_xhtml_boundaries(html: &str) -> Vec<&str> {
+    let bytes = html.as_bytes();
+    let xml_needle = b"<?xml";
+
+    // Count <?xml occurrences to determine if we have concatenated documents.
+    let xml_positions = find_all_case_insensitive(bytes, xml_needle);
+
+    if xml_positions.len() > 1 {
+        // Split at each <?xml declaration.
+        return split_at_positions(html, &xml_positions);
+    }
+
+    // No multiple <?xml declarations; check for multiple <html tags.
+    let html_needle = b"<html";
+    let html_positions = find_all_case_insensitive(bytes, html_needle);
+
+    if html_positions.len() > 1 {
+        return split_at_positions(html, &html_positions);
+    }
+
+    // Single document -- return as-is.
+    vec![html]
+}
+
+/// Finds all positions of a case-insensitive needle in a byte haystack.
+fn find_all_case_insensitive(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut search_from = 0;
+    while search_from + needle.len() <= haystack.len() {
+        if let Some(offset) =
+            text_utils::find_case_insensitive(&haystack[search_from..], needle)
+        {
+            let pos = search_from + offset;
+            positions.push(pos);
+            search_from = pos + 1;
+        } else {
+            break;
+        }
+    }
+    positions
+}
+
+/// Splits a string at the given byte positions. Each position becomes the start
+/// of a new part. Content before the first position (if any) is included as the
+/// first part only if non-empty.
+fn split_at_positions<'a>(html: &'a str, positions: &[usize]) -> Vec<&'a str> {
+    let mut parts = Vec::with_capacity(positions.len() + 1);
+
+    // If there's content before the first boundary, include it.
+    if positions[0] > 0 {
+        let prefix = html[..positions[0]].trim();
+        if !prefix.is_empty() {
+            parts.push(&html[..positions[0]]);
+        }
+    }
+
+    for i in 0..positions.len() {
+        let start = positions[i];
+        let end = if i + 1 < positions.len() {
+            positions[i + 1]
+        } else {
+            html.len()
+        };
+        if start < end {
+            parts.push(&html[start..end]);
+        }
+    }
+
+    if parts.is_empty() {
+        parts.push(html);
+    }
+
+    parts
 }
 
 /// Splits MOBI HTML content into chapters.
@@ -1162,7 +1350,7 @@ mod tests {
 
         // kindle:embed:0001 is 1-based, so index 1 maps to image_paths[0]
         let html = r#"<img src="kindle:embed:0001?mime=image/jpeg">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, r#"<img src="images/0.jpg">"#);
     }
 
@@ -1176,7 +1364,7 @@ mod tests {
 
         // kindle:embed:0002 (1-based) maps to image_paths[1]
         let html = r#"<img src="kindle:embed:0002?mime=image/png">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, r#"<img src="images/1.png">"#);
     }
 
@@ -1187,7 +1375,7 @@ mod tests {
 
         // kindle:embed:0001 (1-based) → image_paths[0]
         let html = r#"<img src="kindle:embed:0001">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, r#"<img src="images/0.jpg">"#);
     }
 
@@ -1198,7 +1386,7 @@ mod tests {
         let flow_paths: Vec<Option<String>> = vec![];
 
         let html = r#"<img src="kindle:embed:0000?mime=image/jpeg">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, html);
     }
 
@@ -1211,7 +1399,7 @@ mod tests {
         ];
 
         let html = r#"<link href="kindle:flow:0001?mime=text/css">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, r#"<link href="flows/flow_1.css">"#);
     }
 
@@ -1226,7 +1414,7 @@ mod tests {
         }
 
         let html = r#"<link href="kindle:flow:000A?mime=text/css">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, r#"<link href="flows/flow_10.css">"#);
     }
 
@@ -1248,7 +1436,7 @@ mod tests {
             r#"<img src="kindle:embed:0002?mime=image/png"/>"#,
             r#"<link href="kindle:flow:0002?mime=text/css"/>"#,
         );
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(
             result,
             concat!(
@@ -1266,7 +1454,7 @@ mod tests {
 
         // index 9999 is way out of range
         let html = r#"<img src="kindle:embed:009N?mime=image/jpeg">"#;
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         // Should be left unchanged since index is out of range
         assert_eq!(result, html);
     }
@@ -1277,7 +1465,7 @@ mod tests {
         let flow_paths: Vec<Option<String>> = vec![];
 
         let html = "<p>No kindle references here</p>";
-        let result = resolve_kindle_references(html, &image_paths, &flow_paths);
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
         assert_eq!(result, html);
     }
 
@@ -1299,5 +1487,176 @@ mod tests {
     fn detect_flow_type_svg_with_whitespace() {
         let data = b"  \n<svg><circle/></svg>";
         assert_eq!(detect_flow_type(data), ("svg", "image/svg+xml"));
+    }
+
+    // --- KF8 XHTML splitting tests ---
+
+    #[test]
+    fn split_kf8_content_multiple_xml_docs() {
+        let html = concat!(
+            "<?xml version=\"1.0\"?><html><body><p>Chapter 1</p></body></html>",
+            "<?xml version=\"1.0\"?><html><body><p>Chapter 2</p></body></html>",
+            "<?xml version=\"1.0\"?><html><body><p>Chapter 3</p></body></html>",
+        );
+        let chapters = split_kf8_content(html);
+        assert_eq!(chapters.len(), 3, "Should split into 3 chapters");
+        assert!(chapters[0].content.contains("Chapter 1"));
+        assert!(chapters[1].content.contains("Chapter 2"));
+        assert!(chapters[2].content.contains("Chapter 3"));
+    }
+
+    #[test]
+    fn split_kf8_content_each_part_is_complete() {
+        let doc1 = "<?xml version=\"1.0\"?><html><body><p>Part 1</p></body></html>";
+        let doc2 = "<?xml version=\"1.0\"?><html><body><p>Part 2</p></body></html>";
+        let html = format!("{}{}", doc1, doc2);
+        let chapters = split_kf8_content(&html);
+        assert_eq!(chapters.len(), 2);
+        // Each part should start with <?xml
+        assert!(chapters[0].content.starts_with("<?xml"));
+        assert!(chapters[1].content.starts_with("<?xml"));
+        // Each part should have exactly one <html> root
+        assert_eq!(chapters[0].content.matches("<html>").count(), 1);
+        assert_eq!(chapters[1].content.matches("<html>").count(), 1);
+    }
+
+    #[test]
+    fn split_kf8_content_single_doc_falls_back() {
+        let html = "<?xml version=\"1.0\"?><html><body><p>Only one doc</p></body></html>";
+        let chapters = split_kf8_content(html);
+        // Single document with no pagebreaks should produce 1 chapter.
+        assert_eq!(chapters.len(), 1);
+        assert!(chapters[0].content.contains("Only one doc"));
+    }
+
+    #[test]
+    fn split_kf8_content_no_xml_decl_multiple_html() {
+        // Some KF8 may have multiple <html> without <?xml declarations.
+        let html = "<html><body><p>Part 1</p></body></html><html><body><p>Part 2</p></body></html>";
+        let chapters = split_kf8_content(html);
+        assert_eq!(chapters.len(), 2, "Should split on <html> boundaries");
+        assert!(chapters[0].content.contains("Part 1"));
+        assert!(chapters[1].content.contains("Part 2"));
+    }
+
+    #[test]
+    fn split_kf8_content_with_headings() {
+        let html = concat!(
+            "<?xml version=\"1.0\"?><html><body><h1>Introduction</h1><p>Intro text</p></body></html>",
+            "<?xml version=\"1.0\"?><html><body><h2>Chapter One</h2><p>Content</p></body></html>",
+        );
+        let chapters = split_kf8_content(html);
+        assert_eq!(chapters.len(), 2);
+        assert_eq!(chapters[0].title.as_deref(), Some("Introduction"));
+        assert_eq!(chapters[1].title.as_deref(), Some("Chapter One"));
+    }
+
+    #[test]
+    fn split_on_xhtml_boundaries_preserves_content() {
+        let doc1 = "<?xml version=\"1.0\"?>\n<html>\n<body>\n<p>First</p>\n</body>\n</html>\n";
+        let doc2 = "<?xml version=\"1.0\"?>\n<html>\n<body>\n<p>Second</p>\n</body>\n</html>\n";
+        let combined = format!("{}{}", doc1, doc2);
+        let parts = split_on_xhtml_boundaries(&combined);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], doc1);
+        assert_eq!(parts[1], doc2);
+    }
+
+    // --- kindle:pos:fid resolution tests ---
+
+    #[test]
+    fn resolve_kindle_pos_fid_basic() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // kindle:pos:fid:0000:off:0000000000 -> chapter 0
+        let html = r#"<a href="kindle:pos:fid:0000:off:0000000000">Link</a>"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 10);
+        assert_eq!(result, r#"<a href="mobi_ch_0.xhtml">Link</a>"#);
+    }
+
+    #[test]
+    fn resolve_kindle_pos_fid_chapter_5() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // kindle:pos:fid:0005:off:0000000000 -> fid=5, chapter 5
+        let html = r#"<a href="kindle:pos:fid:0005:off:0000000000">Link</a>"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 10);
+        assert_eq!(result, r#"<a href="mobi_ch_5.xhtml">Link</a>"#);
+    }
+
+    #[test]
+    fn resolve_kindle_pos_fid_base32() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // kindle:pos:fid:000A:off:0000000100 -> fid=10 (A in base32)
+        let html = r#"<a href="kindle:pos:fid:000A:off:0000000100">Link</a>"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 20);
+        assert_eq!(result, r#"<a href="mobi_ch_10.xhtml">Link</a>"#);
+    }
+
+    #[test]
+    fn resolve_kindle_pos_fid_out_of_range_clamped() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // fid=99 but only 10 chapters: clamped to chapter 0
+        let html = r#"<a href="kindle:pos:fid:0033:off:0000000000">Link</a>"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 10);
+        assert_eq!(result, r#"<a href="mobi_ch_0.xhtml">Link</a>"#);
+    }
+
+    #[test]
+    fn resolve_kindle_pos_fid_zero_chapters() {
+        let image_paths: Vec<String> = vec![];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        // With 0 chapters, pos:fid cannot be resolved; left as-is.
+        let html = r#"<a href="kindle:pos:fid:0000:off:0000000000">Link</a>"#;
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 0);
+        assert_eq!(result, html);
+    }
+
+    #[test]
+    fn resolve_kindle_pos_fid_mixed_with_embed() {
+        let image_paths = vec!["images/0.jpg".to_string()];
+        let flow_paths: Vec<Option<String>> = vec![];
+
+        let html = concat!(
+            r#"<a href="kindle:pos:fid:0002:off:0000000000">Chapter link</a>"#,
+            r#"<img src="kindle:embed:0001?mime=image/jpeg"/>"#,
+        );
+        let result = resolve_kindle_references(html, &image_paths, &flow_paths, 5);
+        assert_eq!(
+            result,
+            concat!(
+                r#"<a href="mobi_ch_2.xhtml">Chapter link</a>"#,
+                r#"<img src="images/0.jpg"/>"#,
+            )
+        );
+    }
+
+    #[test]
+    fn try_resolve_pos_fid_parsing() {
+        // Verify the parser correctly handles the kindle:pos:fid format
+        let after_kindle = "pos:fid:0003:off:0000000042\"rest";
+        let result = try_resolve_pos_fid(after_kindle, 10);
+        assert!(result.is_some());
+        let (replacement, consumed) = result.unwrap();
+        assert_eq!(replacement, "mobi_ch_3.xhtml");
+        // consumed = "pos:fid:" (8) + "0003" (4) + ":off:" (5) + "0000000042" (10) = 27
+        assert_eq!(consumed, 27);
+    }
+
+    #[test]
+    fn find_all_case_insensitive_basic() {
+        let haystack = b"<?xml one><?xml two><?XML three>";
+        let positions = find_all_case_insensitive(haystack, b"<?xml");
+        assert_eq!(positions.len(), 3);
+        assert_eq!(positions[0], 0);
+        assert_eq!(positions[1], 10);
+        assert_eq!(positions[2], 20);
     }
 }
