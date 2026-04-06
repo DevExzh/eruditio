@@ -654,16 +654,32 @@ fn book_to_mobi_html(book: &Book) -> String {
             first_chapter_offset = Some(chapter_offset);
         }
 
-        // Chapter heading
+        // Chapter heading — only add if the content doesn't already start with one.
+        let cleaned_content = if content.contains('<') {
+            Some(strip_xhtml_wrapper(content))
+        } else {
+            None
+        };
+        let content_has_heading = cleaned_content
+            .as_deref()
+            .map(|c| {
+                let trimmed = c.trim_start();
+                trimmed.starts_with("<h1") || trimmed.starts_with("<h2")
+                    || trimmed.starts_with("<h3") || trimmed.starts_with("<H1")
+                    || trimmed.starts_with("<H2") || trimmed.starts_with("<H3")
+            })
+            .unwrap_or(false);
+
         if let Some(title) = ch_title {
-            html.push_str("<h2>");
-            push_html_escaped(&mut html, title);
-            html.push_str("</h2>\n");
+            if !content_has_heading {
+                html.push_str("<h2>");
+                push_html_escaped(&mut html, title);
+                html.push_str("</h2>\n");
+            }
         }
 
         // Chapter body
-        if content.contains('<') {
-            let cleaned = strip_xhtml_wrapper(content);
+        if let Some(cleaned) = cleaned_content {
             html.push_str(&cleaned);
         } else {
             let plain = strip_tags(content);
