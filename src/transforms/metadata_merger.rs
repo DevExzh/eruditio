@@ -92,7 +92,7 @@ mod tests {
     fn overrides_title() {
         let mut book = Book::new();
         book.metadata.title = Some("Original".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),

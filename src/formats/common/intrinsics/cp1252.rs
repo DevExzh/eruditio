@@ -116,16 +116,35 @@ mod x86 {
                     i += 32;
                     continue;
                 }
-                // Non-ASCII byte found -- copy ASCII prefix, decode the
-                // non-ASCII byte via lookup table, and stay in AVX2 loop.
-                let ascii_prefix = high_bits.trailing_zeros() as usize;
-                if ascii_prefix > 0 {
-                    // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                // Walk the entire bitmask: process ALL non-ASCII bytes in this
+                // chunk before advancing, avoiding redundant SIMD reloads.
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    // Copy ASCII bytes between chunk_pos and next_non_ascii.
+                    if next_non_ascii > chunk_pos {
+                        // SAFETY: bytes in [i+chunk_pos .. i+next_non_ascii]
+                        // have their high bit clear (0x00-0x7F), valid UTF-8.
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    // Decode the non-ASCII byte via LUT.
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    // Clear the lowest set bit.
+                    mask &= mask - 1;
+                }
+                // Copy remaining ASCII bytes after the last non-ASCII byte.
+                if chunk_pos < 32 {
+                    // SAFETY: remaining bytes have high bit clear, valid UTF-8.
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 32]);
                     result.push_str(ascii_slice);
                 }
-                result.push(CP1252_TABLE[data[i + ascii_prefix] as usize]);
-                i += ascii_prefix + 1;
+                i += 32;
             }
         }
 
@@ -143,16 +162,31 @@ mod x86 {
                     i += 16;
                     continue;
                 }
-                // Find the ASCII prefix length via trailing zeros of the mask.
-                let ascii_prefix = high_bits.trailing_zeros() as usize;
-                if ascii_prefix > 0 {
-                    // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                // Walk the entire 16-bit bitmask: process ALL non-ASCII bytes
+                // in this chunk before advancing.
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    if next_non_ascii > chunk_pos {
+                        // SAFETY: bytes in [i+chunk_pos .. i+next_non_ascii]
+                        // have their high bit clear (0x00-0x7F), valid UTF-8.
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    mask &= mask - 1;
+                }
+                if chunk_pos < 16 {
+                    // SAFETY: remaining bytes have high bit clear, valid UTF-8.
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
-                // Push the non-ASCII byte through the lookup table.
-                result.push(CP1252_TABLE[data[i + ascii_prefix] as usize]);
-                i += ascii_prefix + 1;
+                i += 16;
             }
         }
 
@@ -191,16 +225,31 @@ mod x86 {
                     i += 16;
                     continue;
                 }
-                // Find the ASCII prefix length via trailing zeros of the mask.
-                let ascii_prefix = high_bits.trailing_zeros() as usize;
-                if ascii_prefix > 0 {
-                    // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                // Walk the entire 16-bit bitmask: process ALL non-ASCII bytes
+                // in this chunk before advancing.
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    if next_non_ascii > chunk_pos {
+                        // SAFETY: bytes in [i+chunk_pos .. i+next_non_ascii]
+                        // have their high bit clear (0x00-0x7F), valid UTF-8.
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    mask &= mask - 1;
+                }
+                if chunk_pos < 16 {
+                    // SAFETY: remaining bytes have high bit clear, valid UTF-8.
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
-                // Push the non-ASCII byte through the lookup table.
-                result.push(CP1252_TABLE[data[i + ascii_prefix] as usize]);
-                i += ascii_prefix + 1;
+                i += 16;
             }
         }
 
@@ -250,25 +299,30 @@ mod aarch64 {
                     i += 16;
                     continue;
                 }
-                // Find first non-ASCII byte: shift each byte right by 7 to get
-                // 1 for bytes >= 0x80, 0 otherwise.
-                let high_bits = vshrq_n_u8::<7>(chunk);
-                let as_u64 = vreinterpretq_u64_u8(high_bits);
-                let lo = vgetq_lane_u64::<0>(as_u64);
-                let ascii_prefix = if lo != 0 {
-                    (lo.trailing_zeros() / 8) as usize
-                } else {
-                    let hi = vgetq_lane_u64::<1>(as_u64);
-                    8 + (hi.trailing_zeros() / 8) as usize
-                };
-                if ascii_prefix > 0 {
-                    // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
-                    result.push_str(ascii_slice);
+                // Non-ASCII bytes found -- process ALL 16 bytes in this chunk
+                // with a tight scalar loop, avoiding a SIMD reload.
+                let mut j = 0usize;
+                while j < 16 {
+                    let b = data[i + j];
+                    if b < 0x80 {
+                        // Find the run of consecutive ASCII bytes.
+                        let start = j;
+                        j += 1;
+                        while j < 16 && data[i + j] < 0x80 {
+                            j += 1;
+                        }
+                        // SAFETY: bytes in [i+start .. i+j] are 0x00-0x7F,
+                        // valid UTF-8.
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + start..i + j],
+                        );
+                        result.push_str(ascii_slice);
+                    } else {
+                        result.push(CP1252_TABLE[b as usize]);
+                        j += 1;
+                    }
                 }
-                // Push the non-ASCII byte through the lookup table.
-                result.push(CP1252_TABLE[data[i + ascii_prefix] as usize]);
-                i += ascii_prefix + 1;
+                i += 16;
             }
         }
 
@@ -319,16 +373,31 @@ mod wasm {
                     i += 16;
                     continue;
                 }
-                // Find the ASCII prefix length via trailing zeros of the mask.
-                let ascii_prefix = high_bits.trailing_zeros() as usize;
-                if ascii_prefix > 0 {
-                    // SAFETY: `ascii_prefix` bytes starting at `i` are ASCII.
-                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + ascii_prefix]);
+                // Walk the entire 16-bit bitmask: process ALL non-ASCII bytes
+                // in this chunk before advancing.
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    if next_non_ascii > chunk_pos {
+                        // SAFETY: bytes in [i+chunk_pos .. i+next_non_ascii]
+                        // have their high bit clear (0x00-0x7F), valid UTF-8.
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    mask &= mask - 1;
+                }
+                if chunk_pos < 16 {
+                    // SAFETY: remaining bytes have high bit clear, valid UTF-8.
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
-                // Push the non-ASCII byte through the lookup table.
-                result.push(CP1252_TABLE[data[i + ascii_prefix] as usize]);
-                i += ascii_prefix + 1;
+                i += 16;
             }
         }
 
@@ -361,12 +430,11 @@ pub(crate) fn decode_cp1252(data: &[u8]) -> String {
         return String::new();
     }
 
-    // Fast-path: if the entire input is ASCII, it's valid UTF-8 and we can
-    // convert without any table lookups or SIMD chunk processing.
-    if super::is_ascii::is_all_ascii(data) {
-        // SAFETY: All bytes are in 0x00-0x7F, which is valid UTF-8.
-        return unsafe { String::from_utf8_unchecked(data.to_vec()) };
-    }
+    // Note: the SIMD decode paths (AVX2, SSE2, NEON) already handle ASCII
+    // bytes at full throughput — they copy ASCII chunks directly and only fall
+    // back to the LUT for non-ASCII bytes.  A separate `is_all_ascii` pre-scan
+    // wastes a full buffer traversal when the input is not 100% ASCII (the
+    // common case for CP-1252 text with a few special characters).
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {

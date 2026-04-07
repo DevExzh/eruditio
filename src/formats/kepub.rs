@@ -250,7 +250,7 @@ mod tests {
         // Build a minimal EPUB via the EPUB writer.
         let mut book = Book::new();
         book.metadata.title = Some("Kepub Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello Kobo</p>".into(),
             id: Some("ch1".into()),
@@ -270,7 +270,7 @@ mod tests {
     fn kepub_writer_produces_valid_epub() {
         let mut book = Book::new();
         book.metadata.title = Some("Kobo Book".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter One".into()),
             content: "<p>Some text here.</p>".into(),
             id: Some("ch1".into()),
@@ -333,7 +333,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Round Trip".into());
         book.metadata.authors.push("Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter".into()),
             content: "<p>Content here</p>".into(),
             id: Some("ch1".into()),

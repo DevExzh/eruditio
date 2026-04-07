@@ -148,7 +148,7 @@ impl FormatReader for SnbReader {
                 let html = snbc_to_html(&crate::formats::common::text_utils::bytes_to_cow_str(
                     content,
                 ));
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title: Some(name.to_string()),
                     content: html,
                     id: Some(format!("snb_ch_{}", idx)),
@@ -167,7 +167,7 @@ impl FormatReader for SnbReader {
                     None => format!("<p>{}</p>", escape_html(&ch.title)),
                 };
 
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title: Some(ch.title.clone()),
                     content: html,
                     id: Some(format!("snb_ch_{}", idx)),
@@ -175,8 +175,8 @@ impl FormatReader for SnbReader {
             }
         }
 
-        if book.chapters().is_empty() {
-            book.add_chapter(&Chapter {
+        if book.chapter_count() == 0 {
+            book.add_chapter(Chapter {
                 title: book.metadata.title.clone(),
                 content: "<p></p>".into(),
                 id: Some("snb_empty".into()),
@@ -651,7 +651,7 @@ impl FormatWriter for SnbWriter {
         plain_files.push(("snbf/book.snbf".into(), meta_xml.into_bytes()));
 
         // 2. Build TOC and chapter SNBC files.
-        let chapters = book.chapters();
+        let chapters = book.chapter_views();
         let mut toc_xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<toc-snbf>\n");
 
         for (i, chapter) in chapters.iter().enumerate() {
@@ -1171,7 +1171,7 @@ mod tests {
         book.metadata.title = Some("SNB Write Test".into());
         book.metadata.authors = vec!["SNB Author".into()];
         book.metadata.language = Some("en".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello Bambook!</p>".into(),
             id: Some("ch1".into()),

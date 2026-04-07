@@ -77,14 +77,14 @@ impl FormatReader for CbcReader {
                 // Rewrite img src references to use prefixed resource IDs
                 let content = rewrite_img_refs(&chapter.content, filename);
 
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title: chapter_title,
                     content,
                     id: Some(chapter_id),
                 });
             }
 
-            page_offset += inner_book.chapters().len();
+            page_offset += inner_book.chapter_count();
         }
 
         book.metadata.title = Some("Comic Book Collection".into());

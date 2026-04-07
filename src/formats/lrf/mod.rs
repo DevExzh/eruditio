@@ -80,7 +80,7 @@ impl FormatReader for LrfReader {
         if chapters.is_empty() {
             // Fallback: collect all Text objects as a single chapter.
             let html = collect_all_text(&objects);
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: book.metadata.title.clone(),
                 content: if html.is_empty() {
                     "<p></p>".to_string()
@@ -91,7 +91,7 @@ impl FormatReader for LrfReader {
             });
         } else {
             for (idx, (title, content)) in chapters.into_iter().enumerate() {
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title,
                     content,
                     id: Some(format!("lrf_ch_{}", idx)),

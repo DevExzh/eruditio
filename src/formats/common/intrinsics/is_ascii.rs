@@ -24,25 +24,30 @@ mod x86 {
     use core::arch::x86_64::*;
 
     /// AVX2 implementation -- processes 32 bytes at a time.
+    ///
+    /// Uses an OR-accumulator to defer the high-bit check until after the
+    /// main loop, reducing the loop body to load + OR (no branch per chunk).
     #[target_feature(enable = "avx2")]
     pub(super) unsafe fn is_all_ascii_avx2(data: &[u8]) -> bool {
         let len = data.len();
         let mut i: usize = 0;
 
-        // --- 32-byte AVX2 chunks ---
-        while i + 32 <= len {
-            // SAFETY: `i + 32 <= len <= data.len()`, so the 32-byte unaligned
-            // load is within bounds. AVX2 is enabled by `target_feature`.
-            unsafe {
+        // --- 32-byte AVX2 chunks with OR-accumulator ---
+        // SAFETY: AVX2 is enabled by `target_feature`.
+        unsafe {
+            let mut acc = _mm256_setzero_si256();
+            while i + 32 <= len {
+                // SAFETY: `i + 32 <= len <= data.len()`, so the 32-byte
+                // unaligned load is within bounds.
                 let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
-                // movemask extracts the high bit of each byte. Any non-zero
-                // result means at least one byte has bit 7 set (non-ASCII).
-                let mask = _mm256_movemask_epi8(chunk) as u32;
-                if mask != 0 {
-                    return false;
-                }
+                acc = _mm256_or_si256(acc, chunk);
+                i += 32;
             }
-            i += 32;
+            // Check accumulated high bits: any non-ASCII byte in any chunk
+            // will have set bit 7 in the corresponding accumulator lane.
+            if _mm256_movemask_epi8(acc) as u32 != 0 {
+                return false;
+            }
         }
 
         // --- 16-byte SSE2 tail ---
@@ -58,42 +63,76 @@ mod x86 {
             i += 16;
         }
 
-        // --- scalar tail ---
-        while i < len {
-            if data[i] >= 0x80 {
-                return false;
+        // --- overlapping SSE2 tail (branchless) ---
+        // Instead of a per-byte scalar loop for the remaining 0-15 bytes,
+        // re-check the last 16 bytes with a single SSE2 load. The overlap
+        // with already-verified bytes is harmless. This eliminates up to 15
+        // branch mispredictions per call.
+        if i < len {
+            if len >= 16 {
+                unsafe {
+                    let chunk = _mm_loadu_si128(data.as_ptr().add(len - 16) as *const __m128i);
+                    let mask = _mm_movemask_epi8(chunk) as u32;
+                    if mask != 0 {
+                        return false;
+                    }
+                }
+            } else {
+                // Input shorter than 16 bytes total: scalar fallback (rare).
+                while i < len {
+                    if data[i] >= 0x80 {
+                        return false;
+                    }
+                    i += 1;
+                }
             }
-            i += 1;
         }
         true
     }
 
     /// SSE2 implementation -- processes 16 bytes at a time.
+    ///
+    /// Uses an OR-accumulator to defer the high-bit check until after the
+    /// main loop, reducing the loop body to load + OR (no branch per chunk).
     #[target_feature(enable = "sse2")]
     pub(super) unsafe fn is_all_ascii_sse2(data: &[u8]) -> bool {
         let len = data.len();
         let mut i: usize = 0;
 
-        // --- 16-byte SSE2 chunks ---
-        while i + 16 <= len {
-            // SAFETY: `i + 16 <= len <= data.len()`. SSE2 is enabled by
-            // `target_feature`.
-            unsafe {
+        // --- 16-byte SSE2 chunks with OR-accumulator ---
+        // SAFETY: SSE2 is enabled by `target_feature`.
+        unsafe {
+            let mut acc = _mm_setzero_si128();
+            while i + 16 <= len {
+                // SAFETY: `i + 16 <= len <= data.len()`, so the 16-byte
+                // unaligned load is within bounds.
                 let chunk = _mm_loadu_si128(data.as_ptr().add(i) as *const __m128i);
+                acc = _mm_or_si128(acc, chunk);
+                i += 16;
+            }
+            // Check accumulated high bits: any non-ASCII byte in any chunk
+            // will have set bit 7 in the corresponding accumulator lane.
+            if _mm_movemask_epi8(acc) as u32 != 0 {
+                return false;
+            }
+        }
+
+        // --- overlapping SSE2 tail ---
+        if i < len && len >= 16 {
+            unsafe {
+                let chunk = _mm_loadu_si128(data.as_ptr().add(len - 16) as *const __m128i);
                 let mask = _mm_movemask_epi8(chunk) as u32;
                 if mask != 0 {
                     return false;
                 }
             }
-            i += 16;
-        }
-
-        // --- scalar tail ---
-        while i < len {
-            if data[i] >= 0x80 {
-                return false;
+        } else {
+            while i < len {
+                if data[i] >= 0x80 {
+                    return false;
+                }
+                i += 1;
             }
-            i += 1;
         }
         true
     }
@@ -108,23 +147,29 @@ mod aarch64 {
     use core::arch::aarch64::*;
 
     /// NEON implementation -- processes 16 bytes at a time.
+    ///
+    /// Uses an OR-accumulator to defer the high-bit check until after the
+    /// main loop, reducing the loop body to load + OR (no branch per chunk).
     pub(super) unsafe fn is_all_ascii_neon(data: &[u8]) -> bool {
         let len = data.len();
         let mut i: usize = 0;
 
-        while i + 16 <= len {
-            // SAFETY: `i + 16 <= len <= data.len()`. NEON is always available
-            // on aarch64.
-            unsafe {
+        // --- 16-byte NEON chunks with OR-accumulator ---
+        // SAFETY: NEON is always available on aarch64.
+        unsafe {
+            let mut acc = vdupq_n_u8(0);
+            while i + 16 <= len {
+                // SAFETY: `i + 16 <= len <= data.len()`, so the 16-byte
+                // load is within bounds.
                 let chunk = vld1q_u8(data.as_ptr().add(i));
-                // Reinterpret as signed; if the minimum value is negative,
-                // at least one byte has bit 7 set (non-ASCII).
-                let as_signed = vreinterpretq_s8_u8(chunk);
-                if vminvq_s8(as_signed) < 0 {
-                    return false;
-                }
+                acc = vorrq_u8(acc, chunk);
+                i += 16;
             }
-            i += 16;
+            // Check accumulated high bits: if the maximum byte value >= 0x80,
+            // at least one byte across all chunks was non-ASCII.
+            if vmaxvq_u8(acc) >= 0x80 {
+                return false;
+            }
         }
 
         // --- scalar tail ---
@@ -147,24 +192,31 @@ mod wasm {
     use core::arch::wasm32::*;
 
     /// SIMD128 implementation -- processes 16 bytes at a time.
+    ///
+    /// Uses an OR-accumulator to defer the high-bit check until after the
+    /// main loop, reducing the loop body to load + OR (no branch per chunk).
     #[allow(dead_code)]
     #[target_feature(enable = "simd128")]
     pub(super) unsafe fn is_all_ascii_simd128(data: &[u8]) -> bool {
         let len = data.len();
         let mut i: usize = 0;
 
-        while i + 16 <= len {
-            // SAFETY: `i + 16 <= len <= data.len()`. simd128 is enabled by
-            // `target_feature`.
-            unsafe {
+        // --- 16-byte SIMD128 chunks with OR-accumulator ---
+        // SAFETY: simd128 is enabled by `target_feature`.
+        unsafe {
+            let mut acc = i8x16_splat(0);
+            while i + 16 <= len {
+                // SAFETY: `i + 16 <= len <= data.len()`, so the 16-byte
+                // load is within bounds.
                 let chunk = v128_load(data.as_ptr().add(i) as *const v128);
-                // i8x16_bitmask extracts the high bit of each byte.
-                let mask = i8x16_bitmask(chunk) as u32;
-                if mask != 0 {
-                    return false;
-                }
+                acc = v128_or(acc, chunk);
+                i += 16;
             }
-            i += 16;
+            // Check accumulated high bits: i8x16_bitmask extracts bit 7
+            // of each byte. Any non-zero result means non-ASCII was found.
+            if i8x16_bitmask(acc) as u32 != 0 {
+                return false;
+            }
         }
 
         // --- scalar tail ---

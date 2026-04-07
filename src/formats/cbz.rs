@@ -65,7 +65,7 @@ impl FormatReader for CbzReader {
             book.add_resource(&resource_id, name, data, &media_type);
 
             // In CBZ, each image is typically a page.
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some(format!("Page {}", index + 1)),
                 content: format!("<img src=\"{}\" alt=\"Page {}\" />", resource_id, index + 1),
                 id: Some(chapter_id),

@@ -127,33 +127,38 @@ mod x86 {
             // Broadcast 128-bit LUTs to both AVX2 lanes.
             let lo128 = _mm_loadu_si128(lo_lut.as_ptr() as *const __m128i);
             let hi128 = _mm_loadu_si128(hi_lut.as_ptr() as *const __m128i);
-            let lo256 = _mm256_broadcastsi128_si256(lo128);
-            let hi256 = _mm256_broadcastsi128_si256(hi128);
-            let mask_0f_256 = _mm256_set1_epi8(0x0F);
-            let zero256 = _mm256_setzero_si256();
-
-            // --- 32-byte AVX2 chunks ---
-            while i + 32 <= len {
-                let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
-                let lo_nib = _mm256_and_si256(chunk, mask_0f_256);
-                let hi_nib = _mm256_and_si256(_mm256_srli_epi16(chunk, 4), mask_0f_256);
-                let lo_match = _mm256_shuffle_epi8(lo256, lo_nib);
-                let hi_match = _mm256_shuffle_epi8(hi256, hi_nib);
-                let matched = _mm256_and_si256(lo_match, hi_match);
-
-                // Fast path: testz returns 1 when matched is all-zero (no match).
-                if _mm256_testz_si256(matched, matched) == 0 {
-                    let zero_mask =
-                        _mm256_movemask_epi8(_mm256_cmpeq_epi8(matched, zero256)) as u32;
-                    return Some(i + (!zero_mask).trailing_zeros() as usize);
-                }
-                i += 32;
-            }
-
-            // --- 16-byte SSSE3 tail ---
             let mask_0f_128 = _mm_set1_epi8(0x0F);
             let zero128 = _mm_setzero_si128();
 
+            // Short-input fast path: for inputs < 32 bytes, skip the AVX2
+            // loop entirely to avoid branch mispredictions from the loop exit
+            // condition failing on the first iteration. Directly use SSE2.
+            if len >= 32 {
+                let lo256 = _mm256_broadcastsi128_si256(lo128);
+                let hi256 = _mm256_broadcastsi128_si256(hi128);
+                let mask_0f_256 = _mm256_set1_epi8(0x0F);
+                let zero256 = _mm256_setzero_si256();
+
+                // --- 32-byte AVX2 chunks ---
+                while i + 32 <= len {
+                    let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
+                    let lo_nib = _mm256_and_si256(chunk, mask_0f_256);
+                    let hi_nib = _mm256_and_si256(_mm256_srli_epi16(chunk, 4), mask_0f_256);
+                    let lo_match = _mm256_shuffle_epi8(lo256, lo_nib);
+                    let hi_match = _mm256_shuffle_epi8(hi256, hi_nib);
+                    let matched = _mm256_and_si256(lo_match, hi_match);
+
+                    // Fast path: testz returns 1 when matched is all-zero (no match).
+                    if _mm256_testz_si256(matched, matched) == 0 {
+                        let zero_mask =
+                            _mm256_movemask_epi8(_mm256_cmpeq_epi8(matched, zero256)) as u32;
+                        return Some(i + (!zero_mask).trailing_zeros() as usize);
+                    }
+                    i += 32;
+                }
+            }
+
+            // --- 16-byte SSSE3 tail ---
             if i + 16 <= len {
                 let chunk = _mm_loadu_si128(haystack.as_ptr().add(i) as *const __m128i);
                 let lo_nib = _mm_and_si128(chunk, mask_0f_128);

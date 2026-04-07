@@ -46,26 +46,56 @@ impl Transform for TocGenerator {
     }
 }
 
-/// Extracts the text of the first heading (h1-h3) found in HTML content.
+/// Extracts the text of the first heading (h1-h6) found in HTML content.
 ///
-/// Uses byte-level scanning to avoid `format!` allocations for tag patterns
-/// on each heading level.
+/// Uses a single-pass byte-level scan so the actual first heading in document
+/// order is returned, regardless of its level. Previous versions scanned for
+/// h1, then h2, then h3 separately, which could miss an h2 that appeared
+/// before any h1.
 fn extract_first_heading(html: &str) -> Option<String> {
     let bytes = html.as_bytes();
-    // Pre-computed open/close patterns for h1, h2, h3.
-    const OPEN_TAGS: [&[u8]; 3] = [b"<h1", b"<h2", b"<h3"];
-    const CLOSE_TAGS: [&str; 3] = ["</h1>", "</h2>", "</h3>"];
-
-    for (open_tag, close_tag) in OPEN_TAGS.iter().zip(CLOSE_TAGS.iter()) {
-        if let Some(start) = memchr::memmem::find(bytes, open_tag) {
-            let content_start = memchr::memchr(b'>', &bytes[start..])? + start + 1;
-            let content_end = html[content_start..].find(close_tag)? + content_start;
-            let inner = &html[content_start..content_end];
-            let text = strip_inner_tags(inner).trim().to_string();
+    let len = bytes.len();
+    let mut i = 0;
+    while i + 3 < len {
+        if bytes[i] == b'<'
+            && (bytes[i + 1] == b'h' || bytes[i + 1] == b'H')
+            && bytes[i + 2] >= b'1'
+            && bytes[i + 2] <= b'6'
+            && (bytes[i + 3] == b'>'
+                || bytes[i + 3] == b' '
+                || bytes[i + 3] == b'\t'
+                || bytes[i + 3] == b'\n'
+                || bytes[i + 3] == b'\r')
+        {
+            let level = bytes[i + 2] - b'0';
+            // Find closing '>' of the opening tag.
+            let tag_end = match html[i..].find('>') {
+                Some(pos) => i + pos + 1,
+                None => {
+                    i += 1;
+                    continue;
+                }
+            };
+            // Build the closing tag and search case-insensitively.
+            let close_tag = [b'<', b'/', b'h', b'0' + level, b'>'];
+            let close_pos = match crate::formats::common::text_utils::find_case_insensitive(
+                &bytes[tag_end..],
+                &close_tag,
+            ) {
+                Some(pos) => tag_end + pos,
+                None => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let heading_html = &html[tag_end..close_pos];
+            let heading_text = strip_inner_tags(heading_html);
+            let text = heading_text.trim().to_string();
             if !text.is_empty() {
                 return Some(text);
             }
         }
+        i += 1;
     }
     None
 }
@@ -160,9 +190,34 @@ mod tests {
     }
 
     #[test]
+    fn picks_first_heading_in_document_order() {
+        // An h2 before an h1 should return the h2 (document order).
+        let html = "<h2>First</h2><h1>Second</h1>";
+        assert_eq!(extract_first_heading(html), Some("First".into()));
+    }
+
+    #[test]
+    fn handles_h4_through_h6() {
+        assert_eq!(
+            extract_first_heading("<h4>Level 4</h4>"),
+            Some("Level 4".into())
+        );
+        assert_eq!(
+            extract_first_heading("<h6>Level 6</h6>"),
+            Some("Level 6".into())
+        );
+    }
+
+    #[test]
+    fn case_insensitive_heading_tags() {
+        let html = "<H1>Upper</H1><p>text</p>";
+        assert_eq!(extract_first_heading(html), Some("Upper".into()));
+    }
+
+    #[test]
     fn generator_adds_missing_toc_entries() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<h1>Intro</h1><p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -180,7 +235,7 @@ mod tests {
     #[test]
     fn generator_preserves_existing_entries() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Already There".into()),
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -197,7 +252,7 @@ mod tests {
     #[test]
     fn generator_skips_items_without_headings() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>No heading here</p>".into(),
             id: Some("ch1".into()),
@@ -239,12 +294,12 @@ mod tests {
         // (e.g. "ch1.xhtml"). Without fragment stripping, the generator would
         // add duplicate entries for already-covered chapters.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<h1>Chapter One</h1><p>Content</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<h1>Chapter Two</h1><p>Content</p>".into(),
             id: Some("ch2".into()),
@@ -272,13 +327,13 @@ mod tests {
     fn generator_skips_cover_page_image_only() {
         let mut book = Book::new();
         // Simulate a cover page that is just an image with no heading.
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<div><img src=\"cover.jpg\" alt=\"Cover\" /></div>".into(),
             id: Some("cover".into()),
         });
         // Add a real chapter with a heading.
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<h1>Introduction</h1><p>Welcome</p>".into(),
             id: Some("ch1".into()),

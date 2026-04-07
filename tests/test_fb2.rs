@@ -63,7 +63,7 @@ fn fb2_writer_closes_emphasis_at_paragraph_boundary() {
     book.metadata.title = Some("Emphasis Close Test".into());
     // Simulate emphasis that spans across a paragraph boundary:
     // the </em> comes in the second <p>, so the writer must auto-close and reopen.
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Ch1".into()),
         content:
             r#"<p>Normal text <em>emphasized text</p><p>still emphasized</em> normal again</p>"#
@@ -97,7 +97,7 @@ fn fb2_writer_closes_strong_at_paragraph_boundary() {
     let mut book = Book::new();
     book.metadata.title = Some("Strong Close Test".into());
     // Simulate bold/strong that spans across a paragraph boundary
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Ch1".into()),
         content: r#"<p>Normal text <b>bold text</p><p>still bold</b> normal again</p>"#.into(),
         id: Some("ch1".into()),
@@ -129,7 +129,7 @@ fn fb2_writer_handles_nested_emphasis_strong_across_paragraphs() {
     let mut book = Book::new();
     book.metadata.title = Some("Nested Formatting Test".into());
     // Both emphasis AND strong span across a paragraph boundary simultaneously
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Ch1".into()),
         content: r#"<p>Normal <em><b>bold italic text</p><p>still bold italic</b></em> normal</p>"#
             .into(),
@@ -165,7 +165,7 @@ fn fb2_writer_handles_nested_emphasis_strong_across_paragraphs() {
 fn fb2_writer_emphasis_spanning_multiple_paragraphs() {
     let mut book = Book::new();
     book.metadata.title = Some("Multi-Para Emphasis Test".into());
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Ch1".into()),
         content: "<p>A <em>B</p><p>C</p><p>D</em> E</p>".into(),
         id: Some("ch1".into()),
@@ -199,7 +199,7 @@ fn fb2_writer_emphasis_spanning_multiple_paragraphs() {
 fn fb2_writer_emphasis_across_br_boundary() {
     let mut book = Book::new();
     book.metadata.title = Some("BR Emphasis Test".into());
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Ch1".into()),
         content: "<p>A <em>B<br/>C</em> D</p>".into(),
         id: Some("ch1".into()),

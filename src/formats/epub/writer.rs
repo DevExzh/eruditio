@@ -41,11 +41,14 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     // 5. Write all manifest items (content + resources).
     // Skip structural files that are already written above.
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
+    let mut zip_path = String::with_capacity(64);
     for item in book.manifest.iter() {
         if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
             continue;
         }
-        let zip_path = format!("OEBPS/{}", &item.href);
+        zip_path.clear();
+        zip_path.push_str("OEBPS/");
+        zip_path.push_str(&item.href);
         zip.start_file(&zip_path, deflated)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
         match &item.data {
@@ -236,7 +239,12 @@ fn generate_opf_manifest(book: &Book, xml: &mut String) {
         xml.push('"');
         if !item.properties.is_empty() {
             xml.push_str(" properties=\"");
-            xml.push_str(&escape_html(&item.properties.join(" ")));
+            for (i, prop) in item.properties.iter().enumerate() {
+                if i > 0 {
+                    xml.push(' ');
+                }
+                xml.push_str(&escape_html(prop));
+            }
             xml.push('"');
         }
         xml.push_str("/>\n");
@@ -390,12 +398,12 @@ mod tests {
         book.metadata.language = Some("en".into());
         book.metadata.identifier = Some("urn:test:12345".into());
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello World</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 2".into()),
             content: "<p>Goodbye World</p>".into(),
             id: Some("ch2".into()),

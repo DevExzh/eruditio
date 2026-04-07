@@ -2,7 +2,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::escape_html;
-use crate::formats::common::text_utils::contains_ascii_ci;
+use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive};
 use base64::Engine;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -84,7 +84,7 @@ impl FormatReader for Fb2Reader {
                                 || !current_section_content.is_empty())
                         {
                             section_counter += 1;
-                            book.add_chapter(&Chapter {
+                            book.add_chapter(Chapter {
                                 title: current_section_title.take(),
                                 content: std::mem::take(&mut current_section_content),
                                 id: Some(format!("section_{}", section_counter)),
@@ -186,7 +186,7 @@ impl FormatReader for Fb2Reader {
                                 || !current_section_content.is_empty()
                             {
                                 section_counter += 1;
-                                book.add_chapter(&Chapter {
+                                book.add_chapter(Chapter {
                                     title: current_section_title.take(),
                                     content: std::mem::take(&mut current_section_content),
                                     id: Some(format!("section_{}", section_counter)),
@@ -294,25 +294,34 @@ fn write_fb2_author_elements(xml: &mut String, authors: &[String], indent: &str)
     }
 }
 
+/// Case-insensitive ASCII `starts_with` — zero allocation.
+#[inline]
+fn starts_with_ci(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
+/// Case-insensitive ASCII equality — zero allocation.
+#[inline]
+fn eq_ci(s: &str, target: &str) -> bool {
+    s.len() == target.len() && s.as_bytes().eq_ignore_ascii_case(target.as_bytes())
+}
+
 /// Checks whether an opening HTML tag has an attribute that marks it as a
 /// Project Gutenberg page-header or page-footer block (which should be
 /// suppressed in FB2 output).
 ///
 /// Matches: `id="pg-header"`, `id="pg-footer"`, or a `class` attribute
 /// containing the word `pgheader`.
-///
-/// The caller should pass the already-lowercased tag string to avoid
-/// redundant lowercasing.
-fn is_pg_boilerplate_tag(tag_lower: &str) -> bool {
-    if tag_lower.contains("id=\"pg-header\"")
-        || tag_lower.contains("id=\"pg-footer\"")
-        || tag_lower.contains("id='pg-header'")
-        || tag_lower.contains("id='pg-footer'")
+fn is_pg_boilerplate_tag(tag_str: &str) -> bool {
+    if contains_ascii_ci(tag_str, "id=\"pg-header\"")
+        || contains_ascii_ci(tag_str, "id=\"pg-footer\"")
+        || contains_ascii_ci(tag_str, "id='pg-header'")
+        || contains_ascii_ci(tag_str, "id='pg-footer'")
     {
         return true;
     }
     // Check class attribute for "pgheader"
-    if tag_lower.contains("pgheader") {
+    if contains_ascii_ci(tag_str, "pgheader") {
         return true;
     }
     false
@@ -355,17 +364,16 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
             if let Some(gt) = memchr::memchr(b'>', &bytes[pos..]) {
                 let tag_bytes = &bytes[pos..pos + gt + 1];
                 let tag_str = std::str::from_utf8(tag_bytes).unwrap_or("");
-                let tag_lower = tag_str.to_ascii_lowercase();
 
                 // --- <head> / </head>: skip everything in the HTML head ---
-                if tag_lower.starts_with("<head")
+                if starts_with_ci(tag_str, "<head")
                     && (tag_bytes.len() < 6 || tag_bytes[5] == b'>' || tag_bytes[5] == b' ')
                 {
                     head_depth += 1;
                     pos += gt + 1;
                     continue;
                 }
-                if tag_lower.starts_with("</head") {
+                if starts_with_ci(tag_str, "</head") {
                     head_depth = head_depth.saturating_sub(1);
                     pos += gt + 1;
                     continue;
@@ -377,28 +385,28 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 }
 
                 // --- Skip <html>, </html>, <body>, </body>, <!DOCTYPE>, <?xml?> etc. ---
-                if tag_lower.starts_with("<html")
-                    || tag_lower.starts_with("</html")
-                    || tag_lower.starts_with("<body")
-                    || tag_lower.starts_with("</body")
-                    || tag_lower.starts_with("<!")
-                    || tag_lower.starts_with("<?")
+                if starts_with_ci(tag_str, "<html")
+                    || starts_with_ci(tag_str, "</html")
+                    || starts_with_ci(tag_str, "<body")
+                    || starts_with_ci(tag_str, "</body")
+                    || starts_with_ci(tag_str, "<!")
+                    || starts_with_ci(tag_str, "<?")
                 {
                     pos += gt + 1;
                     continue;
                 }
 
                 // --- Project Gutenberg boilerplate div tracking ---
-                let is_div_open = tag_lower.starts_with("<div")
+                let is_div_open = starts_with_ci(tag_str, "<div")
                     && (tag_bytes.len() < 5 || tag_bytes[4] == b'>' || tag_bytes[4] == b' ');
-                let is_div_close = tag_lower.starts_with("</div");
+                let is_div_close = starts_with_ci(tag_str, "</div");
                 if is_div_open && pg_boilerplate_depth > 0 {
                     // Nested div inside boilerplate — increase depth
                     pg_boilerplate_depth += 1;
                     pos += gt + 1;
                     continue;
                 }
-                if is_div_open && is_pg_boilerplate_tag(&tag_lower) {
+                if is_div_open && is_pg_boilerplate_tag(tag_str) {
                     pg_boilerplate_depth = 1;
                     pos += gt + 1;
                     continue;
@@ -414,7 +422,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     continue;
                 }
 
-                if tag_lower.starts_with("<p")
+                if starts_with_ci(tag_str, "<p")
                     && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ')
                 {
                     // Opening <p> tag – start accumulating inline content
@@ -427,7 +435,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     in_p = true;
                     pos += gt + 1;
-                } else if tag_lower.starts_with("</p") {
+                } else if starts_with_ci(tag_str, "</p") {
                     // Closing </p> tag – flush current paragraph
                     close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
                     if in_anchor {
@@ -438,7 +446,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     in_p = false;
                     pos += gt + 1;
-                } else if tag_lower.starts_with("<br") {
+                } else if starts_with_ci(tag_str, "<br") {
                     // <br> or <br/> handling depends on context:
                     // Inside a <p> or block element: treat as soft break (space)
                     // Outside: emit empty-line in FB2
@@ -459,7 +467,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     }
                     pos += gt + 1;
-                } else if tag_lower.starts_with("<a ") || tag_lower.starts_with("<a>") {
+                } else if starts_with_ci(tag_str, "<a ") || starts_with_ci(tag_str, "<a>") {
                     // Opening <a> tag – extract href and convert to l:href
                     if let Some(href) = extract_href(tag_str) {
                         // Only emit link for external URLs; internal EPUB references
@@ -474,18 +482,18 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     }
                     // If no href, just skip the tag (keep the text content)
                     pos += gt + 1;
-                } else if tag_lower.starts_with("</a") {
+                } else if starts_with_ci(tag_str, "</a") {
                     // Closing </a> tag
                     if in_anchor {
                         inline_buf.push_str("</a>");
                         in_anchor = false;
                     }
                     pos += gt + 1;
-                } else if tag_lower.len() >= 4
-                    && tag_lower.as_bytes()[1] == b'h'
-                    && matches!(tag_lower.as_bytes()[2], b'1'..=b'6')
-                    && (tag_lower.as_bytes()[3] == b'>' || tag_lower.as_bytes()[3] == b' ')
-                    && !tag_lower.starts_with("</")
+                } else if tag_str.len() >= 4
+                    && tag_str.as_bytes()[1].eq_ignore_ascii_case(&b'h')
+                    && matches!(tag_str.as_bytes()[2], b'1'..=b'6')
+                    && (tag_str.as_bytes()[3] == b'>' || tag_str.as_bytes()[3] == b' ')
+                    && tag_str.as_bytes()[1] != b'/'
                 {
                     // Opening <h1>..<h6> tag – treat as paragraph boundary + wrap in <strong>
                     close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
@@ -497,11 +505,11 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     inline_buf.push_str("<strong>");
                     in_p = true;
                     pos += gt + 1;
-                } else if tag_lower.len() >= 5
-                    && tag_lower.as_bytes()[1] == b'/'
-                    && tag_lower.as_bytes()[2] == b'h'
-                    && matches!(tag_lower.as_bytes()[3], b'1'..=b'6')
-                    && tag_lower.as_bytes()[4] == b'>'
+                } else if tag_str.len() >= 5
+                    && tag_str.as_bytes()[1] == b'/'
+                    && tag_str.as_bytes()[2].eq_ignore_ascii_case(&b'h')
+                    && matches!(tag_str.as_bytes()[3], b'1'..=b'6')
+                    && tag_str.as_bytes()[4] == b'>'
                 {
                     // Closing </h1>..</h6> tag
                     inline_buf.push_str("</strong>");
@@ -514,30 +522,30 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                     in_p = false;
                     pos += gt + 1;
-                } else if tag_lower == "<b>"
-                    || tag_lower == "<strong>"
-                    || tag_lower.starts_with("<b ")
-                    || tag_lower.starts_with("<strong ")
+                } else if eq_ci(tag_str, "<b>")
+                    || eq_ci(tag_str, "<strong>")
+                    || starts_with_ci(tag_str, "<b ")
+                    || starts_with_ci(tag_str, "<strong ")
                 {
                     // Opening bold tag → FB2 <strong>
                     inline_buf.push_str("<strong>");
                     in_strong = true;
                     pos += gt + 1;
-                } else if tag_lower == "</b>" || tag_lower == "</strong>" {
+                } else if eq_ci(tag_str, "</b>") || eq_ci(tag_str, "</strong>") {
                     // Closing bold tag
                     inline_buf.push_str("</strong>");
                     in_strong = false;
                     pos += gt + 1;
-                } else if tag_lower == "<i>"
-                    || tag_lower == "<em>"
-                    || tag_lower.starts_with("<i ")
-                    || tag_lower.starts_with("<em ")
+                } else if eq_ci(tag_str, "<i>")
+                    || eq_ci(tag_str, "<em>")
+                    || starts_with_ci(tag_str, "<i ")
+                    || starts_with_ci(tag_str, "<em ")
                 {
                     // Opening italic tag → FB2 <emphasis>
                     inline_buf.push_str("<emphasis>");
                     in_emphasis = true;
                     pos += gt + 1;
-                } else if tag_lower == "</i>" || tag_lower == "</em>" {
+                } else if eq_ci(tag_str, "</i>") || eq_ci(tag_str, "</em>") {
                     // Closing italic tag
                     inline_buf.push_str("</emphasis>");
                     in_emphasis = false;
@@ -685,8 +693,7 @@ fn is_only_empty_markup(bytes: &[u8]) -> bool {
 
 /// Extracts the `href` attribute value from an `<a ...>` tag string.
 fn extract_href(tag: &str) -> Option<String> {
-    let lower = tag.to_ascii_lowercase();
-    let href_pos = lower.find("href=")?;
+    let href_pos = find_case_insensitive(tag.as_bytes(), b"href=")?;
     let after_eq = href_pos + 5; // length of "href="
     let bytes = tag.as_bytes();
     if after_eq >= bytes.len() {
@@ -709,11 +716,10 @@ fn extract_href(tag: &str) -> Option<String> {
 
 /// Returns true if the URL is an external link (http, https, ftp, mailto).
 fn is_external_url(url: &str) -> bool {
-    let lower = url.to_ascii_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("ftp://")
-        || lower.starts_with("mailto:")
+    starts_with_ci(url, "http://")
+        || starts_with_ci(url, "https://")
+        || starts_with_ci(url, "ftp://")
+        || starts_with_ci(url, "mailto:")
 }
 
 /// Generates a deterministic UUID-like identifier from book metadata.
@@ -902,7 +908,7 @@ fn generate_fb2(book: &Book) -> String {
     // Calibre's use of <empty-line/> for section separation).
     let mut section_written = false;
 
-    for chapter in &book.chapters() {
+    for chapter in &book.chapter_views() {
         // Convert HTML content to FB2 paragraphs.
         let fb2_content = html_to_fb2_paragraphs(&chapter.content);
 
@@ -963,7 +969,7 @@ mod tests {
         book.metadata.authors.push("Jane Doe".into());
         book.metadata.language = Some("en".into());
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello world</p>".into(),
             id: Some("ch1".into()),
@@ -990,7 +996,7 @@ mod tests {
         book.metadata.title = Some("Round Trip".into());
         book.metadata.authors.push("Author Name".into());
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Section One".into()),
             content: "<p>First paragraph</p><p>Second paragraph</p>".into(),
             id: Some("s1".into()),
@@ -1131,7 +1137,7 @@ mod tests {
                 .and_utc(),
         );
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1167,7 +1173,7 @@ mod tests {
     fn fb2_writer_includes_document_info() {
         let mut book = Book::new();
         book.metadata.title = Some("Doc Info Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1212,7 +1218,7 @@ mod tests {
         book.metadata.title = Some("Genre Test".into());
         book.metadata.subjects.push("science_fiction".into());
         book.metadata.subjects.push("adventure".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1237,7 +1243,7 @@ mod tests {
     fn fb2_writer_includes_default_genre_when_no_subjects() {
         let mut book = Book::new();
         book.metadata.title = Some("Default Genre".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1258,7 +1264,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Cover Test".into());
         book.add_resource("cover", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1287,7 +1293,7 @@ mod tests {
     fn fb2_writer_omits_coverpage_when_no_cover_image() {
         let mut book = Book::new();
         book.metadata.title = Some("No Cover".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1307,7 +1313,7 @@ mod tests {
     fn fb2_writer_preserves_inline_formatting() {
         let mut book = Book::new();
         book.metadata.title = Some("Formatting Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>This is <b>bold</b> and <i>italic</i> text.</p><p>Also <strong>strong</strong> and <em>emphasis</em>.</p>".into(),
             id: Some("ch1".into()),
@@ -1339,7 +1345,7 @@ mod tests {
     fn fb2_writer_converts_hyperlinks() {
         let mut book = Book::new();
         book.metadata.title = Some("Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r#"<p>Click <a href="http://example.com">here</a> for more.</p>"#.into(),
             id: Some("ch1".into()),
@@ -1370,7 +1376,7 @@ mod tests {
         book.metadata.title = Some("Anchor Close Test".into());
         // Simulate a link that spans across a paragraph boundary:
         // the </a> comes after the </p>, so the writer must auto-close it.
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r#"<p><a href="https://example.org">link text</p><p>next paragraph</p>"#
                 .into(),
@@ -1404,7 +1410,7 @@ mod tests {
     fn fb2_writer_no_excessive_empty_lines() {
         let mut book = Book::new();
         book.metadata.title = Some("Empty Line Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>First paragraph</p><p>Second paragraph</p><p>Third paragraph</p>".into(),
             id: Some("ch1".into()),
@@ -1430,7 +1436,7 @@ mod tests {
     fn fb2_writer_emits_empty_line_for_br() {
         let mut book = Book::new();
         book.metadata.title = Some("BR Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Before break</p><br/><p>After break</p>".into(),
             id: Some("ch1".into()),
@@ -1671,7 +1677,7 @@ mod tests {
     fn fb2_writer_strips_internal_epub_links() {
         let mut book = Book::new();
         book.metadata.title = Some("Internal Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r#"<p>See <a href="@public@vhost@g@gutenberg@html@files@11@11-h@11-h-0.htm.html#link2HCH0001">Chapter 1</a> for details.</p>"#.into(),
             id: Some("ch1".into()),
@@ -1702,7 +1708,7 @@ mod tests {
     fn fb2_writer_strips_fragment_only_links() {
         let mut book = Book::new();
         book.metadata.title = Some("Fragment Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r##"<p>Go to <a href="#section1">Section 1</a> now.</p>"##.into(),
             id: Some("ch1".into()),
@@ -1728,7 +1734,7 @@ mod tests {
         // Verify that http/https/ftp/mailto links are still emitted
         let mut book = Book::new();
         book.metadata.title = Some("External Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r#"<p><a href="https://example.com">HTTPS</a> <a href="http://example.com">HTTP</a> <a href="ftp://files.example.com">FTP</a> <a href="mailto:test@example.com">Email</a></p>"#.into(),
             id: Some("ch1".into()),
@@ -1760,7 +1766,7 @@ mod tests {
     fn fb2_writer_strips_relative_path_links() {
         let mut book = Book::new();
         book.metadata.title = Some("Relative Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r#"<p>See <a href="chapter1.xhtml#section1">this section</a> please.</p>"#
                 .into(),
@@ -1790,7 +1796,7 @@ mod tests {
     fn fb2_writer_excludes_css_from_binary_elements() {
         let mut book = Book::new();
         book.metadata.title = Some("CSS Filter Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1838,7 +1844,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Cover Body Test".into());
         book.add_resource("cover", "images/cover.jpg", vec![0xFF, 0xD8], "image/jpeg");
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1884,7 +1890,7 @@ mod tests {
         book.metadata.title = Some("No Cover Body Test".into());
         // Add a non-cover image resource
         book.add_resource("img1", "images/photo.jpg", vec![0xFF, 0xD8], "image/jpeg");
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -1914,7 +1920,7 @@ mod tests {
     fn fb2_writer_wraps_h1_in_strong() {
         let mut book = Book::new();
         book.metadata.title = Some("Heading Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<h1>Chapter One</h1><p>Body text</p>".into(),
             id: Some("ch1".into()),
@@ -1944,7 +1950,7 @@ mod tests {
                 "<h{}>Heading {}</h{}><p>After heading</p>",
                 level, level, level
             );
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some("Ch1".into()),
                 content,
                 id: Some("ch1".into()),
@@ -1969,7 +1975,7 @@ mod tests {
     fn fb2_writer_heading_with_inline_formatting() {
         let mut book = Book::new();
         book.metadata.title = Some("Heading Inline Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<h2>Chapter <em>One</em></h2>".into(),
             id: Some("ch1".into()),
@@ -1990,7 +1996,7 @@ mod tests {
     fn fb2_writer_heading_between_paragraphs() {
         let mut book = Book::new();
         book.metadata.title = Some("Heading Between Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Before</p><h3>Middle Heading</h3><p>After</p>".into(),
             id: Some("ch1".into()),
@@ -2022,7 +2028,7 @@ mod tests {
             vec![0x89, 0x50],
             "image/png",
         );
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2048,7 +2054,7 @@ mod tests {
         book.metadata.subjects.push("Fiction".into());
         book.metadata.subjects.push("Adventure".into());
         book.metadata.subjects.push("Classic".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2077,7 +2083,7 @@ mod tests {
     fn fb2_writer_omits_keywords_when_no_subjects() {
         let mut book = Book::new();
         book.metadata.title = Some("No Keywords Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2099,7 +2105,7 @@ mod tests {
         book.metadata.title = Some("Keywords Escape Test".into());
         book.metadata.subjects.push("Science & Fiction".into());
         book.metadata.subjects.push("Children's Books".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2123,7 +2129,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Doc ID Test".into());
         book.metadata.authors.push("Test Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2171,7 +2177,7 @@ mod tests {
             let mut book = Book::new();
             book.metadata.title = Some("Deterministic ID".into());
             book.metadata.authors.push("Author One".into());
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some("Ch1".into()),
                 content: "<p>Text</p>".into(),
                 id: Some("ch1".into()),
@@ -2209,7 +2215,7 @@ mod tests {
     fn fb2_writer_document_id_has_uuid_format() {
         let mut book = Book::new();
         book.metadata.title = Some("UUID Format Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2252,7 +2258,7 @@ mod tests {
     fn fb2_writer_br_inside_paragraph_is_soft_break() {
         let mut book = Book::new();
         book.metadata.title = Some("BR Soft Break Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Line one<br/>Line two</p>".into(),
             id: Some("ch1".into()),
@@ -2279,7 +2285,7 @@ mod tests {
     fn fb2_writer_br_outside_paragraph_produces_empty_line() {
         let mut book = Book::new();
         book.metadata.title = Some("BR Outside Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Para 1</p><br/><p>Para 2</p>".into(),
             id: Some("ch1".into()),
@@ -2304,7 +2310,7 @@ mod tests {
         // Multiple <br> tags within a single <p> should NOT produce extra paragraphs.
         let mut book = Book::new();
         book.metadata.title = Some("BR Inflation Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Line A<br/>Line B<br/>Line C</p>".into(),
             id: Some("ch1".into()),
@@ -2339,7 +2345,7 @@ mod tests {
         // <head> content (e.g. <title>) should NOT leak into FB2 output.
         let mut book = Book::new();
         book.metadata.title = Some("Head Suppression Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content:
                 "<html><head><title>Page Title</title></head><body><p>Content</p></body></html>"
@@ -2373,7 +2379,7 @@ mod tests {
         // Project Gutenberg header/footer boilerplate divs should be suppressed.
         let mut book = Book::new();
         book.metadata.title = Some("PG Boilerplate Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content:
                 r#"<div id="pg-header"><p>Project Gutenberg header</p></div><p>Real content</p>"#
@@ -2407,7 +2413,7 @@ mod tests {
         // paragraph, not one paragraph per line.
         let mut book = Book::new();
         book.metadata.title = Some("Div Block Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<div>Line one\nLine two\nLine three</div>".into(),
             id: Some("ch1".into()),
@@ -2444,13 +2450,13 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Empty Chapter Test".into());
         // Chapter with only an image tag and no title
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: r#"<img src="cover.jpg"/>"#.into(),
             id: Some("cover-page".into()),
         });
         // A real chapter that should be present
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Real Chapter".into()),
             content: "<p>Real content here</p>".into(),
             id: Some("ch1".into()),
@@ -2489,7 +2495,7 @@ mod tests {
         book.metadata.title = Some("Doc Info Author Test".into());
         book.metadata.authors.push("Jane Doe".into());
         book.metadata.authors.push("Bob".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2544,17 +2550,17 @@ mod tests {
         // for visual spacing (matching Calibre behavior).
         let mut book = Book::new();
         book.metadata.title = Some("Multi Section Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>First chapter content</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 2".into()),
             content: "<p>Second chapter content</p>".into(),
             id: Some("ch2".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 3".into()),
             content: "<p>Third chapter content</p>".into(),
             id: Some("ch3".into()),
@@ -2595,7 +2601,7 @@ mod tests {
         // A single chapter should NOT produce any inter-section empty-lines.
         let mut book = Book::new();
         book.metadata.title = Some("Single Section Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Only chapter</p>".into(),
             id: Some("ch1".into()),
@@ -2630,7 +2636,7 @@ mod tests {
             vec![0xFF, 0xD8],
             "image/jpeg",
         );
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -2664,13 +2670,13 @@ mod tests {
         // Verify external links are preserved across multiple chapters
         let mut book = Book::new();
         book.metadata.title = Some("Multi Chapter Links".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: r#"<p>Visit <a href="https://www.gutenberg.org">Project Gutenberg</a></p>"#
                 .into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch2".into()),
             content: r##"<p>Also <a href="http://example.com/page">this page</a> and <a href="#internal">internal</a></p>"##.into(),
             id: Some("ch2".into()),

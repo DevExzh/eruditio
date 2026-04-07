@@ -49,7 +49,7 @@ impl FormatReader for TxtReader {
             }
         }
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Main Content".into()),
             content: html_content,
             id: Some("main".into()),
@@ -169,9 +169,9 @@ fn strip_title_prefix<'a>(text: &'a str, title: &str) -> &'a str {
 /// else of interest.  We detect this by checking:
 ///   - the chapter title is "Cover" or empty, AND
 ///   - the stripped plain-text content is very short (under ~20 chars).
-fn is_cover_only_chapter(chapter: &Chapter) -> bool {
-    let title_is_cover = match chapter.title {
-        Some(ref t) => {
+fn is_cover_only_chapter(title: Option<&str>, content: &str) -> bool {
+    let title_is_cover = match title {
+        Some(t) => {
             let t = t.trim();
             t.is_empty() || t.eq_ignore_ascii_case("cover")
         },
@@ -180,7 +180,7 @@ fn is_cover_only_chapter(chapter: &Chapter) -> bool {
     if !title_is_cover {
         return false;
     }
-    let plain = strip_tags(&chapter.content);
+    let plain = strip_tags(content);
     let decoded = unescape_basic_entities(&plain);
     let trimmed = decoded.trim();
     trimmed.len() < 20
@@ -188,12 +188,12 @@ fn is_cover_only_chapter(chapter: &Chapter) -> bool {
 
 /// Converts a `Book` to plain text by stripping HTML from all chapters.
 pub fn book_to_plain_text(book: &Book) -> String {
-    let chapters = book.chapters();
+    let chapters = book.chapter_views();
     let mut parts = Vec::with_capacity(chapters.len());
 
     for chapter in &chapters {
         // Skip cover-only chapters to avoid "Cover" alt-text artifacts.
-        if is_cover_only_chapter(chapter) {
+        if is_cover_only_chapter(chapter.title.as_deref(), chapter.content) {
             continue;
         }
 
@@ -234,12 +234,12 @@ mod tests {
     #[test]
     fn txt_writer_produces_plain_text() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello <b>world</b></p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 2".into()),
             content: "<p>Goodbye</p>".into(),
             id: Some("ch2".into()),
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn txt_writer_no_duplicate_heading() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<h1>Ch 1</h1><p>Body text</p>".into(),
             id: Some("ch1".into()),
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn txt_writer_decodes_html_entities() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Test".into()),
             content: "<p>&amp; &lt; &gt; &quot; &#8212; &#8220;curly&#8221; &#169; &#174;</p>"
                 .into(),
@@ -309,7 +309,7 @@ mod tests {
         // Heading in HTML body contains <br/> which previously caused strip_leading_heading
         // to fail matching, resulting in the title appearing twice.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("CHAPTER I. Down the Rabbit-Hole".into()),
             content: "<h1>CHAPTER I.<br/>Down the Rabbit-Hole</h1><p>Alice was beginning to get very tired.</p>".into(),
             id: Some("ch1".into()),
@@ -329,7 +329,7 @@ mod tests {
         // This used to produce 3 occurrences: explicit title, pgheader boilerplate
         // text, and the heading remaining in the body.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("CHAPTER I. Down the Rabbit-Hole".into()),
             content: r#"<div class="pg-boilerplate pgheader section">
                 <h2>The Project Gutenberg eBook of Alice's Adventures in Wonderland</h2>
@@ -408,7 +408,7 @@ mod tests {
         // Block-level elements should produce line breaks in the plain text output,
         // not concatenated words.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>First paragraph.</p><p>Second paragraph.</p>".into(),
             id: Some("ch1".into()),
@@ -425,12 +425,12 @@ mod tests {
         // A cover-only chapter (just an <img> tag with alt "Cover") should be
         // suppressed to avoid "Cover" appearing as the first line of output.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Cover".into()),
             content: r#"<div><img src="cover.jpg" alt="Cover"/></div>"#.into(),
             id: Some("cover".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Once upon a time.</p>".into(),
             id: Some("ch1".into()),
@@ -449,12 +449,12 @@ mod tests {
     fn txt_writer_skips_empty_title_cover_chapter() {
         // A cover chapter with no title should also be suppressed.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: r#"<img src="cover.jpg" alt="Cover"/>"#.into(),
             id: Some("cover".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Body text.</p>".into(),
             id: Some("ch1".into()),
@@ -472,7 +472,7 @@ mod tests {
     fn txt_writer_keeps_real_chapter_named_cover() {
         // A chapter titled "Cover" with substantial body text should NOT be skipped.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Cover".into()),
             content: "<p>This is a long description of the front artwork and its significance to the story.</p>".into(),
             id: Some("cover".into()),
@@ -488,7 +488,7 @@ mod tests {
     fn txt_writer_suppresses_title_tag_text() {
         // Text inside <head><title>...</title></head> should not leak into output.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: r#"<?xml version="1.0"?>
 <html xmlns="http://www.w3.org/1999/xhtml">

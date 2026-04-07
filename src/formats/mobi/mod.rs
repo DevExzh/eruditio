@@ -853,7 +853,7 @@ impl FormatReader for MobiReader {
                     resolved = resolve_remaining_pos_fid(&resolved, resolver);
                 }
 
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title: ch.title.clone(),
                     content: resolved,
                     id: Some(format!("mobi_ch_{}", i)),
@@ -870,7 +870,7 @@ impl FormatReader for MobiReader {
             // Split into chapters by pagebreaks or treat as single chapter.
             let chapters = split_mobi_content(&content);
             for (i, ch) in chapters.iter().enumerate() {
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title: ch.title.clone(),
                     content: ch.content.clone(),
                     id: Some(format!("mobi_ch_{}", i)),

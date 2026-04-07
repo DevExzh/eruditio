@@ -82,10 +82,10 @@ impl FormatReader for OebReader {
                     let content =
                         crate::formats::common::text_utils::bytes_to_string(&content_bytes);
                     // Extract <body> content if present, else use full content.
-                    let body = extract_body(&content).unwrap_or_else(|| content.clone());
+                    let body = extract_body(&content).unwrap_or(&content).to_string();
                     let title = extract_title(&content);
 
-                    book.add_chapter(&Chapter {
+                    book.add_chapter(Chapter {
                         title,
                         content: body,
                         id: Some(format!("oeb_ch_{}", i)),
@@ -96,7 +96,7 @@ impl FormatReader for OebReader {
         }
 
         // If no chapters found, try reading all HTML files.
-        if book.chapters().is_empty() {
+        if book.chapter_count() == 0 {
             for i in 0..archive.len() {
                 let name = match archive.by_index(i) {
                     Ok(f) => f.name().to_string(),
@@ -107,9 +107,9 @@ impl FormatReader for OebReader {
                     || text_utils::ends_with_ascii_ci(&name, ".xhtml"))
                     && let Ok(bytes) = read_zip_entry(&mut archive, &name)
                 {
-                    let content = String::from_utf8_lossy(&bytes).into_owned();
-                    let body = extract_body(&content).unwrap_or_else(|| content.clone());
-                    book.add_chapter(&Chapter {
+                    let content = crate::formats::common::text_utils::bytes_to_string(&bytes);
+                    let body = extract_body(&content).unwrap_or(&content).to_string();
+                    book.add_chapter(Chapter {
                         title: None,
                         content: body,
                         id: Some(format!("oeb_file_{}", i)),
@@ -118,8 +118,8 @@ impl FormatReader for OebReader {
             }
         }
 
-        if book.chapters().is_empty() {
-            book.add_chapter(&Chapter {
+        if book.chapter_count() == 0 {
+            book.add_chapter(Chapter {
                 title: book.metadata.title.clone(),
                 content: "<p></p>".into(),
                 id: Some("oeb_empty".into()),
@@ -481,7 +481,7 @@ fn extract_all_tag_contents(xml: &str, tag: &str) -> Vec<String> {
 }
 
 /// Extracts a section between `<tag...>` and `</tag>`.
-fn extract_section(xml: &str, tag: &str) -> Option<String> {
+fn extract_section<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{}", tag);
     let close = format!("</{}>", tag);
 
@@ -489,7 +489,7 @@ fn extract_section(xml: &str, tag: &str) -> Option<String> {
     let content_start = xml[start..].find('>')? + start + 1;
     let content_end = xml[content_start..].find(&close)? + content_start;
 
-    Some(xml[content_start..content_end].to_string())
+    Some(&xml[content_start..content_end])
 }
 
 /// Extracts the value of an XML attribute from a tag string.
@@ -509,7 +509,7 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
 }
 
 /// Extracts the <body> content from an XHTML document.
-fn extract_body(html: &str) -> Option<String> {
+fn extract_body<'a>(html: &'a str) -> Option<&'a str> {
     let bytes = html.as_bytes();
     let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
     let content_start = html[body_start..].find('>')? + body_start + 1;
@@ -517,11 +517,7 @@ fn extract_body(html: &str) -> Option<String> {
         text_utils::find_case_insensitive(&bytes[content_start..], b"</body>")? + content_start;
 
     let body = html[content_start..content_end].trim();
-    if body.is_empty() {
-        None
-    } else {
-        Some(body.to_string())
-    }
+    if body.is_empty() { None } else { Some(body) }
 }
 
 /// Extracts the <title> content from an XHTML document.
@@ -579,11 +575,49 @@ fn guess_media_type(filename: &str) -> &'static str {
 }
 
 fn unescape_xml(s: &str) -> String {
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
+    let bytes = s.as_bytes();
+    // Fast path: if no ampersand, return clone
+    let first_amp = match memchr::memchr(b'&', bytes) {
+        Some(pos) => pos,
+        None => return s.to_string(),
+    };
+
+    let mut result = String::with_capacity(s.len());
+    result.push_str(&s[..first_amp]);
+    let mut i = first_amp;
+
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            let rest = &s[i..];
+            if rest.starts_with("&amp;") {
+                result.push('&');
+                i += 5;
+            } else if rest.starts_with("&lt;") {
+                result.push('<');
+                i += 4;
+            } else if rest.starts_with("&gt;") {
+                result.push('>');
+                i += 4;
+            } else if rest.starts_with("&quot;") {
+                result.push('"');
+                i += 6;
+            } else if rest.starts_with("&apos;") {
+                result.push('\'');
+                i += 6;
+            } else {
+                result.push('&');
+                i += 1;
+            }
+        } else {
+            // Find next ampersand or end of string
+            let next_amp = memchr::memchr(b'&', &bytes[i..])
+                .map(|p| i + p)
+                .unwrap_or(bytes.len());
+            result.push_str(&s[i..next_amp]);
+            i = next_amp;
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -596,12 +630,12 @@ mod tests {
         book.metadata.title = Some("OEB Test Book".into());
         book.metadata.authors.push("Test Author".into());
         book.metadata.language = Some("en".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter One".into()),
             content: "<p>Hello from OEB format!</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Two".into()),
             content: "<p>Second chapter content.</p>".into(),
             id: Some("ch2".into()),
@@ -634,7 +668,7 @@ mod tests {
         book.metadata.description = Some("A test description".into());
         book.metadata.publisher = Some("Test Press".into());
         book.metadata.language = Some("fr".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),

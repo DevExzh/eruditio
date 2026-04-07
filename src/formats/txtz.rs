@@ -108,7 +108,7 @@ mod tests {
     fn txtz_round_trip() {
         let mut book = Book::new();
         book.metadata.title = Some("TXTZ Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello from TXTZ</p>".into(),
             id: Some("ch1".into()),

@@ -46,7 +46,7 @@ pub fn book_to_rtf(book: &Book) -> String {
     let align_map = build_class_alignment_map(book);
 
     // Content.
-    let chapters = book.chapters();
+    let chapters = book.chapter_views();
     for (i, chapter) in chapters.iter().enumerate() {
         if i > 0 {
             // Page break between chapters.
@@ -548,7 +548,20 @@ fn decode_html_entity(html: &str, pos: usize) -> (char, usize) {
 /// `<p class="right">`), returns the RTF alignment command (`\qr`, `\qc`,
 /// or `\ql`).
 fn alignment_from_tag(tag_str: &str, align_map: &HashMap<String, String>) -> &'static str {
-    let tag_lower = tag_str.to_ascii_lowercase();
+    // Stack-based lowercasing avoids heap allocation for most tags.
+    let tag_bytes = tag_str.as_bytes();
+    let mut lower_buf = [0u8; 512];
+    let tag_lower: std::borrow::Cow<'_, str> = if tag_bytes.len() <= 512 {
+        for i in 0..tag_bytes.len() {
+            lower_buf[i] = tag_bytes[i].to_ascii_lowercase();
+        }
+        // SAFETY: ASCII lowercasing preserves UTF-8 validity.
+        std::borrow::Cow::Borrowed(unsafe {
+            std::str::from_utf8_unchecked(&lower_buf[..tag_bytes.len()])
+        })
+    } else {
+        std::borrow::Cow::Owned(tag_str.to_ascii_lowercase())
+    };
 
     // 1. Check inline style="..." for text-align.
     if let Some(style_start) = tag_lower.find("style=") {
@@ -644,7 +657,7 @@ mod tests {
     fn basic_rtf_output() {
         let mut book = Book::new();
         book.metadata.title = Some("Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello world</p>".into(),
             id: Some("ch1".into()),
@@ -733,7 +746,7 @@ mod tests {
     fn rtf_writer_no_duplicate_heading() {
         let mut book = Book::new();
         book.metadata.title = Some("Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<h1>Ch 1</h1><p>Body text</p>".into(),
             id: Some("ch1".into()),
@@ -752,7 +765,7 @@ mod tests {
     #[test]
     fn stylesheet_group_present() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Title".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),
@@ -830,7 +843,7 @@ mod tests {
     #[test]
     fn chapter_title_uses_heading1_style() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("My Chapter".into()),
             content: "<p>Body</p>".into(),
             id: Some("ch1".into()),
@@ -880,7 +893,7 @@ mod tests {
         book.metadata.title = Some("Test".into());
         book.metadata.cover_image_id = Some("cover-img".into());
         book.add_resource("cover-img", "images/cover.jpg", jpeg_data, "image/jpeg");
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -916,7 +929,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.cover_image_id = Some("cover-png".into());
         book.add_resource("cover-png", "images/cover.png", png_data, "image/png");
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -940,7 +953,7 @@ mod tests {
         let mut book = Book::new();
         // No cover_image_id set — fallback to heuristic matching.
         book.add_resource("my-cover", "images/cover.jpg", jpeg_data, "image/jpeg");
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -956,7 +969,7 @@ mod tests {
     #[test]
     fn no_pict_when_no_cover() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1168,7 +1181,7 @@ mod tests {
     #[test]
     fn chapter_title_centered_with_spacing_in_book() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("My Title".into()),
             content: "<p>Body</p>".into(),
             id: Some("ch1".into()),
@@ -1287,7 +1300,7 @@ mod tests {
     #[test]
     fn stylesheet_has_outline_levels() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Title".into()),
             content: "<p>Text</p>".into(),
             id: Some("ch1".into()),

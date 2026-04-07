@@ -10,7 +10,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{
-    PdbFile, build_pdb_header, read_u16_be, write_u16_be, write_u32_be,
+    PdbFile, build_pdb_header, read_u16_be, read_u32_be, write_u16_be, write_u32_be,
 };
 use crate::formats::common::text_utils::{decode_cp1252, strip_tags_and_unescape};
 use flate2::Compression;
@@ -48,7 +48,7 @@ impl FormatWriter for PdbWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         // Extract plain text from chapters by stripping HTML tags.
         let mut text = String::new();
-        for chapter in book.chapters() {
+        for chapter in book.chapter_views() {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
@@ -121,7 +121,7 @@ impl PdbZtxtWriter {
 impl FormatWriter for PdbZtxtWriter {
     fn write_book(&self, book: &Book, output: &mut dyn Write) -> Result<()> {
         let mut text = String::new();
-        for chapter in book.chapters() {
+        for chapter in book.chapter_views() {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
@@ -359,16 +359,20 @@ fn read_palmdoc(pdb: &PdbFile) -> Result<Book> {
     }
 
     let compression = read_u16_be(header_rec, 0);
+    let text_length = read_u32_be(header_rec, 4) as usize;
     let num_text_records = read_u16_be(header_rec, 8) as usize;
 
-    let mut raw_bytes = Vec::new();
+    let mut raw_bytes = Vec::with_capacity(text_length);
     let record_limit = num_text_records.min(pdb.record_count() - 1);
 
     for i in 1..=record_limit {
         let record = pdb.record_data(i)?;
-        let decompressed = match compression {
-            COMPRESSION_NONE => record.to_vec(),
-            COMPRESSION_PALMDOC => palmdoc::decompress(record)?,
+        match compression {
+            COMPRESSION_NONE => raw_bytes.extend_from_slice(record),
+            COMPRESSION_PALMDOC => {
+                let decompressed = palmdoc::decompress(record)?;
+                raw_bytes.extend_from_slice(&decompressed);
+            },
             other => {
                 return Err(EruditioError::Unsupported(format!(
                     "Unsupported PalmDOC compression type: {}",
@@ -376,7 +380,6 @@ fn read_palmdoc(pdb: &PdbFile) -> Result<Book> {
                 )));
             },
         };
-        raw_bytes.extend_from_slice(&decompressed);
     }
 
     // Single UTF-8 conversion after accumulating all records, avoiding
@@ -387,7 +390,7 @@ fn read_palmdoc(pdb: &PdbFile) -> Result<Book> {
     book.metadata.title = Some(pdb.header.name.clone());
 
     let html = text_to_html(&text);
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some(pdb.header.name.clone()),
         content: html,
         id: Some("main".into()),
@@ -453,7 +456,7 @@ fn read_ztxt(pdb: &PdbFile) -> Result<Book> {
     book.metadata.title = Some(pdb.header.name.clone());
 
     let html = text_to_html(&text_str);
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some(pdb.header.name.clone()),
         content: html,
         id: Some("main".into()),
@@ -610,7 +613,7 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
         format!("{}{}{}", html, footnote_html, sidebar_html)
     };
 
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some(pdb.header.name.clone()),
         content: full_html,
         id: Some("main".into()),
@@ -849,14 +852,14 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
             .into_iter()
             .next()
             .ok_or_else(|| EruditioError::Format("Plucker: expected HTML content".into()))?;
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some(pdb.header.name.clone()),
             content,
             id: Some("main".into()),
         });
     } else {
         for (i, html) in ordered_html.into_iter().enumerate() {
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some(format!("Section {}", i + 1)),
                 content: html,
                 id: Some(format!("section_{}", i)),
@@ -1260,15 +1263,15 @@ fn read_haodoo(pdb: &PdbFile, is_unicode: bool) -> Result<Book> {
         let ch_title = chapter_titles.get(i).cloned();
         let html = haodoo_text_to_html(&text);
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: ch_title,
             content: html,
             id: Some(format!("haodoo_ch_{}", i)),
         });
     }
 
-    if book.chapters().is_empty() {
-        book.add_chapter(&Chapter {
+    if book.chapter_count() == 0 {
+        book.add_chapter(Chapter {
             title: book.metadata.title.clone(),
             content: "<p></p>".into(),
             id: Some("haodoo_empty".into()),
@@ -1576,7 +1579,7 @@ mod tests {
     fn pdb_writer_round_trip() {
         let mut book = Book::new();
         book.metadata.title = Some("PDB Write Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello PalmDOC world!</p>".into(),
             id: Some("ch1".into()),
@@ -1612,7 +1615,7 @@ mod tests {
     fn ztxt_writer_round_trip() {
         let mut book = Book::new();
         book.metadata.title = Some("zTXT Write Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello zTXT world!</p>".into(),
             id: Some("ch1".into()),
@@ -1638,7 +1641,7 @@ mod tests {
     fn ereader_writer_round_trip() {
         let mut book = Book::new();
         book.metadata.title = Some("eReader Write Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello eReader world!</p>".into(),
             id: Some("ch1".into()),

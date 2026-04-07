@@ -27,7 +27,7 @@ pub(crate) fn extract_metadata(html: &str) -> Metadata {
 ///
 /// Returns the content between `<body>` and `</body>`, or the entire
 /// string if no body tags are found (for HTML fragments).
-pub(crate) fn extract_body(html: &str) -> String {
+pub(crate) fn extract_body(html: &str) -> &str {
     if let Some(body) = extract_between(html, "<body", "</body>") {
         body
     } else {
@@ -164,7 +164,7 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
 }
 
 /// Extracts content between an opening tag (with possible attributes) and closing tag.
-fn extract_between(html: &str, open_prefix: &str, close_tag: &str) -> Option<String> {
+fn extract_between<'a>(html: &'a str, open_prefix: &str, close_tag: &str) -> Option<&'a str> {
     let bytes = html.as_bytes();
     let start = text_utils::find_case_insensitive(bytes, open_prefix.as_bytes())?;
     let gt = html[start..].find('>')?;
@@ -173,7 +173,7 @@ fn extract_between(html: &str, open_prefix: &str, close_tag: &str) -> Option<Str
         text_utils::find_case_insensitive(&bytes[content_start..], close_tag.as_bytes())?
             + content_start;
 
-    Some(html[content_start..content_end].to_string())
+    Some(&html[content_start..content_end])
 }
 
 /// Extracts metadata from `<meta>` tags within head content.
@@ -189,10 +189,9 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
         };
 
         let tag = &head[abs_pos..=tag_end];
-        let tag_lower = tag.to_ascii_lowercase();
 
-        if let Some(name) = extract_attribute(&tag_lower, "name")
-            && let Some(content) = extract_attribute_ci(&tag_lower, tag, "content")
+        if let Some(name) = extract_attribute(tag, "name")
+            && let Some(content) = extract_attribute(tag, "content")
         {
             match name.as_str() {
                 "author" | "dc.creator" => {
@@ -220,9 +219,9 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
         }
 
         // Also check http-equiv for Content-Language.
-        if tag_lower.contains("http-equiv")
-            && tag_lower.contains("content-language")
-            && let Some(content) = extract_attribute_ci(&tag_lower, tag, "content")
+        if text_utils::contains_ascii_ci(tag, "http-equiv")
+            && text_utils::contains_ascii_ci(tag, "content-language")
+            && let Some(content) = extract_attribute(tag, "content")
         {
             meta.language = Some(content);
         }
@@ -231,24 +230,24 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
     }
 }
 
-/// Extracts an attribute value from an HTML tag string.
+/// Extracts an attribute value from an HTML tag string using case-insensitive
+/// attribute name matching. No allocation is performed for the search pattern.
 fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
-    let pattern = format!("{}=\"", attr_name);
-    let start = tag.find(&pattern)?;
-    let value_start = start + pattern.len();
+    let attr_bytes = attr_name.as_bytes();
+    debug_assert!(
+        attr_bytes.len() < 62,
+        "attribute name too long for stack buffer"
+    );
+    let mut pattern = [0u8; 64];
+    let pat_len = attr_bytes.len() + 2;
+    pattern[..attr_bytes.len()].copy_from_slice(attr_bytes);
+    pattern[attr_bytes.len()] = b'=';
+    pattern[attr_bytes.len() + 1] = b'"';
+
+    let start = text_utils::find_case_insensitive(tag.as_bytes(), &pattern[..pat_len])?;
+    let value_start = start + pat_len;
     let value_end = tag[value_start..].find('"')? + value_start;
     Some(tag[value_start..value_end].to_string())
-}
-
-/// Finds the attribute position in `tag_lower` (lowercased) but extracts the
-/// value from `tag_orig` (original case). Both strings must have identical
-/// byte length (true for ASCII HTML tags).
-fn extract_attribute_ci(tag_lower: &str, tag_orig: &str, attr_name: &str) -> Option<String> {
-    let pattern = format!("{}=\"", attr_name);
-    let start = tag_lower.find(&pattern)?;
-    let value_start = start + pattern.len();
-    let value_end = tag_orig[value_start..].find('"')? + value_start;
-    Some(tag_orig[value_start..value_end].to_string())
 }
 
 /// Strips HTML tags from a string.
@@ -257,7 +256,7 @@ fn strip_html_tags(html: &str) -> String {
 }
 
 /// Strips outer HTML structure tags (html, head, body) leaving content.
-fn strip_outer_tags(html: &str) -> String {
+fn strip_outer_tags(html: &str) -> &str {
     let bytes = html.as_bytes();
 
     // Find </head> case-insensitively — skip everything up to and including it.
@@ -282,10 +281,10 @@ fn strip_outer_tags(html: &str) -> String {
     if let Some(pos) = text_utils::find_case_insensitive(result.as_bytes(), b"<body")
         && let Some(gt) = result[pos..].find('>')
     {
-        return result[pos + gt + 1..].trim().to_string();
+        return result[pos + gt + 1..].trim();
     }
 
-    result.trim().to_string()
+    result.trim()
 }
 
 /// Escapes text for safe use in HTML attributes and content.

@@ -62,14 +62,14 @@ impl FormatReader for RtfReader {
         // Split content into chapters at page breaks, or use single chapter.
         let chapters = split_rtf_content(&state.html_content);
         if chapters.is_empty() {
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: book.metadata.title.clone(),
                 content: state.html_content,
                 id: Some("main".into()),
             });
         } else {
             for (i, (title, content)) in chapters.into_iter().enumerate() {
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title,
                     content,
                     id: Some(format!("chapter_{}", i)),
@@ -519,7 +519,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("RTF Test".into());
         book.metadata.authors.push("Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello world</p>".into(),
             id: Some("ch1".into()),

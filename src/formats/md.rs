@@ -45,7 +45,7 @@ impl FormatReader for MdReader {
             }
         }
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: book.metadata.title.clone(),
             content: html,
             id: Some("md_content".into()),
@@ -70,7 +70,7 @@ impl MdWriter {
 impl FormatWriter for MdWriter {
     fn write_book(&self, book: &Book, writer: &mut dyn Write) -> Result<()> {
         let mut md = String::new();
-        for (i, chapter) in book.chapters().iter().enumerate() {
+        for (i, chapter) in book.chapter_views().iter().enumerate() {
             if i > 0 {
                 md.push_str("\n---\n\n");
             }
@@ -100,7 +100,17 @@ fn html_to_markdown(html: &str, md: &mut String) {
                 None => break,
             };
             let raw_tag = &html[pos..tag_end];
-            let tag = raw_tag.to_ascii_lowercase();
+            // Stack-based lowercasing avoids heap allocation per tag.
+            // Tags longer than the buffer are truncated—this is safe because
+            // all equality/prefix comparisons are against short patterns.
+            let tag_bytes = raw_tag.as_bytes();
+            let mut lower_buf = [0u8; 128];
+            let lower_len = tag_bytes.len().min(128);
+            for i in 0..lower_len {
+                lower_buf[i] = tag_bytes[i].to_ascii_lowercase();
+            }
+            // SAFETY: ASCII lowercasing preserves UTF-8 validity.
+            let tag = unsafe { std::str::from_utf8_unchecked(&lower_buf[..lower_len]) };
 
             if tag == "<p>" || tag.starts_with("<p ") {
                 ensure_blank_line(md);
@@ -289,13 +299,19 @@ fn ensure_blank_line(md: &mut String) {
 
 /// Extracts an HTML attribute value from a tag string (case-insensitive name).
 fn extract_html_attr(tag: &str, attr_name: &str) -> Option<String> {
-    let lower = tag.to_ascii_lowercase();
-    for sep in ["=\"", "='"] {
-        let pattern = format!("{}{}", attr_name, sep);
-        if let Some(start) = lower.find(&pattern) {
-            let val_start = start + pattern.len();
-            let close_char = if sep == "=\"" { '"' } else { '\'' };
-            if let Some(end) = tag[val_start..].find(close_char) {
+    use crate::formats::common::text_utils;
+    for quote in [b'"', b'\''] {
+        let attr_bytes = attr_name.as_bytes();
+        let mut pattern = [0u8; 64];
+        let pat_len = attr_bytes.len() + 2;
+        pattern[..attr_bytes.len()].copy_from_slice(attr_bytes);
+        pattern[attr_bytes.len()] = b'=';
+        pattern[attr_bytes.len() + 1] = quote;
+
+        if let Some(start) = text_utils::find_case_insensitive(tag.as_bytes(), &pattern[..pat_len])
+        {
+            let val_start = start + pat_len;
+            if let Some(end) = tag[val_start..].find(quote as char) {
                 return Some(tag[val_start..val_start + end].to_string());
             }
         }
@@ -365,7 +381,7 @@ mod tests {
     #[test]
     fn md_writer_basic() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Test".into()),
             content: "<h1>Title</h1><p>Hello <strong>bold</strong> and <em>italic</em>.</p>".into(),
             id: Some("ch1".into()),
@@ -383,7 +399,7 @@ mod tests {
     #[test]
     fn md_writer_lists() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<ul><li>One</li><li>Two</li></ul>".into(),
             id: Some("ch1".into()),
@@ -400,7 +416,7 @@ mod tests {
     #[test]
     fn md_writer_links_and_images() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p><a href=\"https://example.com\">link</a> and <img src=\"img.png\" alt=\"photo\" /></p>".into(),
             id: Some("ch1".into()),

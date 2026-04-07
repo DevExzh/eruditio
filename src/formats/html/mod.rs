@@ -46,14 +46,14 @@ impl FormatReader for HtmlReader {
 
         if chapters.is_empty() {
             // Fallback: treat entire body as one chapter.
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some("Main Content".into()),
-                content: body,
+                content: body.to_string(),
                 id: Some("main".into()),
             });
         } else {
             for (i, (title, content)) in chapters.into_iter().enumerate() {
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title,
                     content,
                     id: Some(format!("chapter_{}", i)),
@@ -95,7 +95,7 @@ impl FormatWriter for HtmlWriter {
 /// Converts a `Book` to a standalone HTML5 document string.
 fn book_to_html(book: &Book) -> String {
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
-    let chapters = book.chapters();
+    let chapters = book.chapter_views();
 
     // Build body content.
     let mut body = String::with_capacity(4096);
@@ -195,7 +195,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("My Book".into());
         book.metadata.authors.push("Bob".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello world</p>".into(),
             id: Some("ch1".into()),
@@ -218,7 +218,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Round Trip".into());
         book.metadata.authors.push("Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p>Content here</p>".into(),
             id: Some("ch1".into()),
@@ -240,7 +240,7 @@ mod tests {
     fn html_writer_embeds_images() {
         let mut book = Book::new();
         book.metadata.title = Some("Image Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -258,7 +258,7 @@ mod tests {
     fn html_writer_no_duplicate_heading() {
         let mut book = Book::new();
         book.metadata.title = Some("Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<h1>Ch 1</h1><p>Body text</p>".into(),
             id: Some("ch1".into()),

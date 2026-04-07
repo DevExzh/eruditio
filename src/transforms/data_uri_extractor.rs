@@ -363,7 +363,7 @@ mod tests {
             r#"<html><body><p>Hello</p><img src="data:image/png;base64,{}" /></body></html>"#,
             TINY_PNG_B64
         );
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: chapter_html,
             id: Some("ch1".into()),
@@ -399,12 +399,12 @@ mod tests {
             r#"<p><img src="data:image/jpeg;base64,{}" /></p>"#,
             TINY_PNG_B64
         );
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: html1,
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 2".into()),
             content: html2,
             id: Some("ch2".into()),

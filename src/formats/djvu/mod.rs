@@ -179,7 +179,7 @@ impl FormatReader for DjvuReader {
                 .collect();
             let content = paragraphs.join("\n");
 
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some(format!("Page {}", i + 1)),
                 content,
                 id: Some(format!("page_{:04}", i)),

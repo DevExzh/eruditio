@@ -13,12 +13,12 @@ fn make_test_book() -> Book {
     book.metadata.language = Some("en".into());
     book.metadata.description = Some("Testing new format implementations.".into());
 
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Chapter One".into()),
         content: "<p>First chapter of the format gap test.</p>".into(),
         id: Some("ch1".into()),
     });
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Chapter Two".into()),
         content: "<p>Second chapter with more content.</p>".into(),
         id: Some("ch2".into()),

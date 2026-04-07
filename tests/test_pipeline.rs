@@ -13,17 +13,17 @@ fn make_test_book() -> Book {
     book.metadata.language = Some("en".into());
     book.metadata.description = Some("A book for pipeline integration tests.".into());
 
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Introduction".into()),
         content: "<p>Welcome to the pipeline test book.</p>".into(),
         id: Some("intro".into()),
     });
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Main Content".into()),
         content: "<p>This is the main body of the book.</p>".into(),
         id: Some("main".into()),
     });
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Conclusion".into()),
         content: "<p>Thank you for reading.</p>".into(),
         id: Some("conclusion".into()),
@@ -126,7 +126,7 @@ fn txt_to_epub_conversion() {
     let pipeline = Pipeline::new();
     let mut book = Book::new();
     book.metadata.title = Some("Text Origin".into());
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Ch 1".into()),
         content: "<p>Plain text content converted to EPUB.</p>".into(),
         id: Some("ch1".into()),
@@ -663,7 +663,7 @@ fn transforms_disabled_passes_through_unchanged() {
     let pipeline = Pipeline::new();
     let mut book = Book::new();
     book.metadata.title = Some("Pass Through".into());
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Only Chapter".into()),
         content: "<p>A & B<br>line two</p>".into(),
         id: Some("ch1".into()),

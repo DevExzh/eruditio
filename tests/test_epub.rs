@@ -15,12 +15,12 @@ fn epub_round_trip_preserves_metadata() {
     book.metadata.language = Some("en".into());
     book.metadata.description = Some("A test book for EPUB round-tripping.".into());
 
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Chapter 1".into()),
         content: "<p>First chapter content.</p>".into(),
         id: Some("ch1".into()),
     });
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Chapter 2".into()),
         content: "<p>Second chapter content.</p>".into(),
         id: Some("ch2".into()),
@@ -69,7 +69,7 @@ fn epub_round_trip_preserves_metadata() {
 fn epub_round_trip_single_chapter() {
     let mut book = Book::new();
     book.metadata.title = Some("Minimal".into());
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Only Chapter".into()),
         content: "<p>All content here.</p>".into(),
         id: Some("only".into()),

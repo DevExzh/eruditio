@@ -107,7 +107,7 @@ mod tests {
         book.metadata.title = Some("FBZ Test".into());
         book.metadata.authors.push("Test Author".into());
         book.metadata.language = Some("en".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Section 1".into()),
             content: "<p>Hello from FBZ</p>".into(),
             id: Some("s1".into()),

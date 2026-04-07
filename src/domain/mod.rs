@@ -7,7 +7,7 @@ pub mod spine;
 pub mod toc;
 pub mod traits;
 
-pub use book::{Book, Chapter, ResourceView};
+pub use book::{Book, Chapter, ChapterView, ResourceView};
 pub use format::Format;
 pub use guide::{Guide, GuideReference, GuideType};
 pub use manifest::{Manifest, ManifestData, ManifestItem};

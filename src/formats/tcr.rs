@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn tcr_round_trip() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Test".into()),
             content: "<p>Hello World, this is a test of TCR encoding.</p>".into(),
             id: Some("ch1".into()),

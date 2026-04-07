@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn detects_cover_by_id() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn no_cover_when_no_images() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text only</p>".into(),
             id: Some("ch1".into()),

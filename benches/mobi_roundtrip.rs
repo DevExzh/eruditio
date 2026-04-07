@@ -16,7 +16,7 @@ fn make_book(num_chapters: usize, chapter_size: usize) -> Book {
             content.push_str(paragraph);
         }
         content.truncate(chapter_size);
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some(format!("Chapter {}", i + 1)),
             content,
             id: Some(format!("ch{}", i)),

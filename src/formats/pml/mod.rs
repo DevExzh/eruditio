@@ -33,14 +33,14 @@ impl FormatReader for PmlReader {
         book.metadata.title = Some("Unknown PML Document".into());
 
         if chapters.is_empty() {
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: None,
                 content: html,
                 id: Some("main".into()),
             });
         } else {
             for (i, (title, content)) in chapters.into_iter().enumerate() {
-                book.add_chapter(&Chapter {
+                book.add_chapter(Chapter {
                     title,
                     content,
                     id: Some(format!("chapter_{}", i)),
@@ -100,7 +100,7 @@ mod tests {
     fn pml_round_trip() {
         let mut book = Book::new();
         book.metadata.title = Some("PML Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello world</p>".into(),
             id: Some("ch1".into()),
@@ -123,7 +123,7 @@ mod tests {
     fn pml_writer_produces_pml_markup() {
         let mut book = Book::new();
         book.metadata.title = Some("Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p><b>Bold</b> and <i>italic</i></p>".into(),
             id: Some("ch1".into()),

@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn transform_applies_to_book() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch".into()),
             content: "<p>A & B<br>C</p>".into(),
             id: Some("ch1".into()),

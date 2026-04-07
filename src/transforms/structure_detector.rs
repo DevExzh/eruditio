@@ -109,22 +109,12 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
 }
 
 /// Finds a substring in a case-insensitive manner, returning the byte offset.
-/// `needle` must be lowercase ASCII.
+/// Delegates to the SIMD-accelerated implementation in text_utils.
 fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
-    let h = haystack.as_bytes();
-    let n = needle.as_bytes();
-    if n.is_empty() || h.len() < n.len() {
-        return None;
-    }
-    'outer: for i in 0..=(h.len() - n.len()) {
-        for j in 0..n.len() {
-            if !h[i + j].eq_ignore_ascii_case(&n[j]) {
-                continue 'outer;
-            }
-        }
-        return Some(i);
-    }
-    None
+    crate::formats::common::text_utils::find_case_insensitive(
+        haystack.as_bytes(),
+        needle.as_bytes(),
+    )
 }
 
 /// Strips HTML tags from a string, returning only text content.
@@ -165,7 +155,7 @@ mod tests {
     #[test]
     fn detector_builds_toc_from_headings() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<h1>Introduction</h1><p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -183,7 +173,7 @@ mod tests {
     #[test]
     fn detector_preserves_existing_toc() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Existing".into()),
             content: "<h1>Detected</h1><p>Hello</p>".into(),
             id: Some("ch1".into()),

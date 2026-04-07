@@ -3,6 +3,7 @@
 //! Converts LIT binary token streams into HTML/OPF text. Ported from
 //! calibre's `ebooks/lit/reader.py` (`UnBinary` class).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::error::{EruditioError, Result};
@@ -454,59 +455,65 @@ pub(crate) fn unbinary_to_html(
 // Post-processing: escape reserved characters
 // ---------------------------------------------------------------------------
 
-/// Escape `<<`/`>>` (literal angle brackets in text) and bare `&`.
-/// Preserves HTML comment delimiters `<!--` and `-->`.
-fn escape_reserved(raw: &str) -> String {
-    let escaped = escape_ampersands(raw);
-    let bytes = escaped.as_bytes();
-    let len = bytes.len();
-    let mut result = String::with_capacity(len);
-    let mut i = 0;
-
-    while i < len {
-        if i + 1 < len && bytes[i] == b'<' && bytes[i + 1] == b'<' {
-            // Preserve comment start: <<followed by!--
-            if i + 4 < len && bytes[i + 2] == b'!' && bytes[i + 3] == b'-' && bytes[i + 4] == b'-' {
-                result.push('<');
-            } else {
-                result.push_str("&lt;");
-            }
-            i += 2;
-        } else if i + 1 < len && bytes[i] == b'>' && bytes[i + 1] == b'>' {
-            // Preserve comment end: --followed by>>
-            if result.ends_with("--") {
-                result.push('>');
-            } else {
-                result.push_str("&gt;");
-            }
-            i += 2;
-        } else {
-            result.push(char::from(bytes[i]));
-            i += 1;
-        }
-    }
-
-    result
-}
-
-fn escape_ampersands(raw: &str) -> String {
+/// Escape `<<`/`>>` (literal angle brackets in text) and bare `&` in a single pass.
+/// Preserves HTML comment delimiters `<!--` and `-->`, and valid entity references.
+fn escape_reserved(raw: &str) -> Cow<'_, str> {
     let bytes = raw.as_bytes();
     let len = bytes.len();
-    let mut result = String::with_capacity(len);
 
-    for i in 0..len {
-        if bytes[i] == b'&' {
-            if is_entity_ref(bytes, i) {
-                result.push('&');
-            } else {
-                result.push_str("&amp;");
-            }
-        } else {
-            result.push(char::from(bytes[i]));
+    // Fast scan: find first byte that might need escaping
+    let first = bytes
+        .iter()
+        .position(|&b| b == b'&' || b == b'<' || b == b'>');
+    let first = match first {
+        Some(i) => i,
+        None => return Cow::Borrowed(raw),
+    };
+
+    let mut result = String::with_capacity(len + 16);
+    result.push_str(&raw[..first]);
+    let mut i = first;
+
+    while i < len {
+        match bytes[i] {
+            b'&' => {
+                if is_entity_ref(bytes, i) {
+                    result.push('&');
+                } else {
+                    result.push_str("&amp;");
+                }
+                i += 1;
+            },
+            b'<' if i + 1 < len && bytes[i + 1] == b'<' => {
+                // Preserve comment start: <<! --
+                if i + 4 < len
+                    && bytes[i + 2] == b'!'
+                    && bytes[i + 3] == b'-'
+                    && bytes[i + 4] == b'-'
+                {
+                    result.push('<');
+                } else {
+                    result.push_str("&lt;");
+                }
+                i += 2;
+            },
+            b'>' if i + 1 < len && bytes[i + 1] == b'>' => {
+                // Preserve comment end: -->>
+                if result.ends_with("--") {
+                    result.push('>');
+                } else {
+                    result.push_str("&gt;");
+                }
+                i += 2;
+            },
+            _ => {
+                result.push(char::from(bytes[i]));
+                i += 1;
+            },
         }
     }
 
-    result
+    Cow::Owned(result)
 }
 
 /// Check if `&` at `pos` starts a valid entity reference (`&name;`, `&#N;`, `&#xH;`).

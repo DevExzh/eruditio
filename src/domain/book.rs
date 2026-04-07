@@ -15,6 +15,14 @@ pub struct Chapter {
     pub id: Option<String>,
 }
 
+/// A borrowed view of a chapter (avoids cloning content).
+#[derive(Debug, Clone)]
+pub struct ChapterView<'a> {
+    pub title: Option<String>,
+    pub content: &'a str,
+    pub id: &'a str,
+}
+
 /// A convenience view of a resource in the book.
 #[derive(Debug, Clone)]
 pub struct ResourceView<'a> {
@@ -48,21 +56,20 @@ impl Book {
     /// This is the primary way to add chapters: the content is stored as a
     /// `ManifestItem` with XHTML media type, and a corresponding `SpineItem`
     /// is appended to the reading order.
-    pub fn add_chapter(&mut self, chapter: &Chapter) {
+    pub fn add_chapter(&mut self, chapter: Chapter) {
         let id = chapter
             .id
-            .clone()
             .unwrap_or_else(|| format!("chapter_{}", self.spine.len()));
         let href = format!("{}.xhtml", &id);
 
         let item =
-            ManifestItem::new(&id, &href, "application/xhtml+xml").with_text(&chapter.content);
+            ManifestItem::new(&id, &href, "application/xhtml+xml").with_text(chapter.content);
         self.manifest.insert(item);
         self.spine.add(&id);
 
         // If the chapter has a title, add a TOC entry.
-        if let Some(ref title) = chapter.title {
-            self.toc.push(TocItem::new(title, &href));
+        if let Some(title) = chapter.title {
+            self.toc.push(TocItem::new(&title, &href));
         }
     }
 
@@ -140,9 +147,34 @@ impl Book {
         })
     }
 
-    /// Returns the number of content documents in the spine.
+    /// Returns borrowed views of chapters without cloning content.
+    pub fn chapter_views(&self) -> Vec<ChapterView<'_>> {
+        self.spine
+            .iter()
+            .filter_map(|spine_item| {
+                let manifest_item = self.manifest.get(&spine_item.manifest_id)?;
+                let content = manifest_item.data.as_text()?;
+                let title = self.find_toc_title(&manifest_item.href);
+                Some(ChapterView {
+                    title,
+                    content,
+                    id: &manifest_item.id,
+                })
+            })
+            .collect()
+    }
+
+    /// Returns the number of content chapters in reading order.
     pub fn chapter_count(&self) -> usize {
-        self.spine.len()
+        self.spine
+            .iter()
+            .filter(|spine_item| {
+                self.manifest
+                    .get(&spine_item.manifest_id)
+                    .and_then(|item| item.data.as_text())
+                    .is_some()
+            })
+            .count()
     }
 
     /// Searches the TOC tree for an entry whose href matches (prefix match).
@@ -169,7 +201,7 @@ mod tests {
     #[test]
     fn add_chapter_populates_manifest_and_spine() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Intro".into()),
             content: "<p>Hello world</p>".into(),
             id: Some("intro".into()),
@@ -183,12 +215,12 @@ mod tests {
     #[test]
     fn chapters_round_trip() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Content one</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content two</p>".into(),
             id: Some("ch2".into()),
@@ -214,7 +246,7 @@ mod tests {
     #[test]
     fn resources_excludes_content_documents() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch".into()),
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -232,7 +264,7 @@ mod tests {
         // resources() must return it so downstream writers (e.g. HTMLZ) can
         // access the CSS content.
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),

@@ -3,6 +3,8 @@
 //! Produces a valid MOBI 6 file with PalmDoc compression, EXTH metadata,
 //! and embedded images. The output is compatible with Kindle readers.
 
+use std::borrow::Cow;
+
 use crate::domain::Book;
 use crate::error::Result;
 use crate::formats::common::compression::palmdoc;
@@ -65,22 +67,32 @@ const INDX_HEADER_LEN: usize = 192;
 /// Encodes a value as a Variable Width Integer (VWI).
 ///
 /// Each byte uses 7 data bits with the MSB set on all bytes except the last.
-fn encode_vwi(value: u32) -> Vec<u8> {
+/// Returns a stack-allocated `([u8; 5], usize)` — a u32 needs at most 5 VWI
+/// bytes. Callers use `&buf[..len]` to get the encoded slice.
+fn encode_vwi(value: u32) -> ([u8; 5], usize) {
     if value == 0 {
-        return vec![0];
+        let mut buf = [0u8; 5];
+        buf[0] = 0;
+        return (buf, 1);
     }
-    let mut bytes = Vec::new();
+    // Encode in reverse (least significant 7-bit group first).
+    let mut tmp = [0u8; 5];
+    let mut len = 0usize;
     let mut v = value;
     while v > 0 {
-        bytes.push((v & 0x7F) as u8);
+        tmp[len] = (v & 0x7F) as u8;
         v >>= 7;
+        len += 1;
     }
-    bytes.reverse();
-    // Set MSB on all bytes except the last.
-    for i in 0..bytes.len() - 1 {
-        bytes[i] |= 0x80;
+    // Reverse into output buffer and set MSB on all but the last byte.
+    let mut buf = [0u8; 5];
+    for i in 0..len {
+        buf[i] = tmp[len - 1 - i];
+        if i < len - 1 {
+            buf[i] |= 0x80;
+        }
     }
-    bytes
+    (buf, len)
 }
 
 /// Builds the 3 NCX index records (INDX header, INDX data, CNCX) from chapter entries.
@@ -179,11 +191,14 @@ fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         entry_data.push(0x07);
 
         // Tag 1: byte offset of chapter start in HTML text.
-        entry_data.extend_from_slice(&encode_vwi(*byte_offset as u32));
+        let (vwi_buf, vwi_len) = encode_vwi(*byte_offset as u32);
+        entry_data.extend_from_slice(&vwi_buf[..vwi_len]);
         // Tag 2: length (0, not used).
-        entry_data.extend_from_slice(&encode_vwi(0));
+        let (vwi_buf, vwi_len) = encode_vwi(0);
+        entry_data.extend_from_slice(&vwi_buf[..vwi_len]);
         // Tag 3: label offset into CNCX record.
-        entry_data.extend_from_slice(&encode_vwi(cncx_offsets[i] as u32));
+        let (vwi_buf, vwi_len) = encode_vwi(cncx_offsets[i] as u32);
+        entry_data.extend_from_slice(&vwi_buf[..vwi_len]);
     }
 
     // IDXT section for data record.
@@ -324,9 +339,9 @@ fn derive_unique_id(title: &str, authors: &[String]) -> u32 {
 /// content; we return the position just after its closing `>`.
 /// If no page break is found (single-chapter books without TOC), returns 0.
 fn find_start_reading_offset(html: &str) -> u32 {
-    if let Some(pos) = html.find("<mbp:pagebreak") {
+    if let Some(pos) = memchr::memmem::find(html.as_bytes(), b"<mbp:pagebreak") {
         // Point to the character right after the closing '>'.
-        if let Some(gt) = html[pos..].find('>') {
+        if let Some(gt) = memchr::memchr(b'>', &html.as_bytes()[pos..]) {
             return (pos + gt + 1) as u32;
         }
     }
@@ -817,18 +832,19 @@ fn flatten_toc_tree(items: &[crate::domain::toc::TocItem]) -> Vec<(usize, String
 ///
 /// Returns a map from fragment identifier (the id value) to the byte offset
 /// of the start of the enclosing tag (the `<` character) within `content`.
-fn find_id_positions(content: &str) -> std::collections::HashMap<String, usize> {
+fn find_id_positions(content: &str) -> std::collections::HashMap<&str, usize> {
     let mut map = std::collections::HashMap::new();
     let bytes = content.as_bytes();
     let len = bytes.len();
     let mut i = 0;
+    let id_finder = memchr::memmem::Finder::new(b"id=\"");
 
     while i < len {
-        // Find next id=" or id='
-        if let Some(pos) = content[i..].find("id=\"") {
+        // Find next id="
+        if let Some(pos) = id_finder.find(&bytes[i..]) {
             let abs = i + pos;
             let value_start = abs + 4;
-            if let Some(end) = content[value_start..].find('"') {
+            if let Some(end) = memchr::memchr(b'"', &bytes[value_start..]) {
                 let id_value = &content[value_start..value_start + end];
                 if !id_value.is_empty() {
                     // Walk backwards from abs to find the '<' of the enclosing tag.
@@ -836,7 +852,7 @@ fn find_id_positions(content: &str) -> std::collections::HashMap<String, usize> 
                     while tag_start > 0 && bytes[tag_start] != b'<' {
                         tag_start -= 1;
                     }
-                    map.entry(id_value.to_string()).or_insert(tag_start);
+                    map.entry(id_value).or_insert(tag_start);
                 }
                 i = value_start + end + 1;
             } else {
@@ -928,6 +944,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     let mut chapter_info: Vec<(usize, Option<String>)> = Vec::new();
     let toc = &book.toc;
 
+    let toc_title_map = TocTitleMap::build(toc);
     for (i, spine_item) in book.spine.iter().enumerate() {
         let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) else {
             continue;
@@ -935,7 +952,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
         if manifest_item.data.as_text().is_none() {
             continue;
         }
-        let ch_title = find_toc_title(toc, &manifest_item.href);
+        let ch_title = toc_title_map.get(&manifest_item.href);
         chapter_info.push((i, ch_title));
     }
 
@@ -1208,35 +1225,68 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     (html, all_entries)
 }
 
-/// Searches the TOC for an entry whose href matches the manifest item href.
+/// Pre-built lookup table for resolving manifest hrefs to TOC titles.
 ///
-/// Matches if:
-/// - The TOC href equals the manifest href exactly, or
-/// - The manifest href starts with the TOC href (prefix match), or
-/// - The TOC href (with fragment stripped) equals the manifest href.
-fn find_toc_title(items: &[crate::domain::toc::TocItem], href: &str) -> Option<String> {
-    for item in items {
-        // Strip fragment from TOC href for comparison.
-        let toc_href_base = item.href.split('#').next().unwrap_or(&item.href);
-        if item.href == href
-            || href.starts_with(&item.href)
-            || (!toc_href_base.is_empty() && toc_href_base == href)
-        {
-            return Some(item.title.clone());
-        }
-        if let Some(title) = find_toc_title(&item.children, href) {
-            return Some(title);
+/// Replaces the recursive `find_toc_title` tree walk (called per spine item)
+/// with O(1) HashMap lookups.  The map is keyed by both the full TOC href and
+/// its fragment-stripped base, preserving first-match (DFS) semantics via
+/// `entry().or_insert_with()`.  A flat entry list handles the rare prefix-match
+/// fallback.
+struct TocTitleMap {
+    /// href (exact or base) → title
+    map: std::collections::HashMap<String, String>,
+    /// Flat DFS-order entries for prefix-match fallback: (href, title)
+    flat: Vec<(String, String)>,
+}
+
+impl TocTitleMap {
+    fn build(items: &[crate::domain::toc::TocItem]) -> Self {
+        let mut m = TocTitleMap {
+            map: std::collections::HashMap::new(),
+            flat: Vec::new(),
+        };
+        m.collect(items);
+        m
+    }
+
+    fn collect(&mut self, items: &[crate::domain::toc::TocItem]) {
+        for item in items {
+            // Exact href → title (first match wins)
+            self.map
+                .entry(item.href.clone())
+                .or_insert_with(|| item.title.clone());
+            // Base href (fragment stripped) → title
+            let base = item.href.split('#').next().unwrap_or(&item.href);
+            if !base.is_empty() && base != item.href {
+                self.map
+                    .entry(base.to_string())
+                    .or_insert_with(|| item.title.clone());
+            }
+            self.flat.push((item.href.clone(), item.title.clone()));
+            self.collect(&item.children);
         }
     }
-    None
+
+    /// Look up a title for the given manifest href.
+    fn get(&self, href: &str) -> Option<String> {
+        if let Some(title) = self.map.get(href) {
+            return Some(title.clone());
+        }
+        // Prefix-match fallback (rare): manifest href starts with a TOC href.
+        for (toc_href, title) in &self.flat {
+            if href.starts_with(toc_href.as_str()) {
+                return Some(title.clone());
+            }
+        }
+        None
+    }
 }
 
 /// Pushes HTML-escaped text directly into an existing String buffer,
 /// avoiding allocation when no escaping is needed (the common case).
 #[inline]
 fn push_html_escaped(buf: &mut String, text: &str) {
-    let escaped = crate::formats::common::text_utils::escape_html(text);
-    buf.push_str(&escaped);
+    crate::formats::common::text_utils::push_escape_html(buf, text);
 }
 
 /// Strips XHTML wrapper elements from chapter content so that only the inner
@@ -1246,26 +1296,25 @@ fn push_html_escaped(buf: &mut String, text: &str) {
 ///
 /// Uses a single-pass approach: find the `<body>` content region and extract
 /// it, rather than repeatedly calling `replace_range` which shifts bytes.
-fn strip_xhtml_wrapper(content: &str) -> String {
-    // Find the end of the <body ...> opening tag.
-    if let Some(body_start) = content.find("<body")
-        && let Some(gt) = content[body_start..].find('>')
+fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
+    let bytes = content.as_bytes();
+    // Fast path: extract <body> inner content as a borrowed slice — zero allocation.
+    if let Some(body_start) = memchr::memmem::find(bytes, b"<body")
+        && let Some(gt) = memchr::memchr(b'>', &bytes[body_start..])
     {
         let inner_start = body_start + gt + 1;
-        // Find the closing </body> tag.
-        let inner_end = content[inner_start..]
-            .find("</body>")
+        let inner_end = memchr::memmem::find(&bytes[inner_start..], b"</body>")
             .map(|pos| inner_start + pos)
             .unwrap_or(content.len());
-        return content[inner_start..inner_end].to_string();
+        return Cow::Borrowed(&content[inner_start..inner_end]);
     }
 
     // No <body> found — strip individual wrapper elements as fallback.
     let mut s = content.to_string();
 
     // Remove <?xml ...?> processing instructions.
-    while let Some(start) = s.find("<?xml") {
-        if let Some(end) = s[start..].find("?>") {
+    while let Some(start) = memchr::memmem::find(s.as_bytes(), b"<?xml") {
+        if let Some(end) = memchr::memmem::find(&s.as_bytes()[start..], b"?>") {
             s.replace_range(start..start + end + 2, "");
         } else {
             break;
@@ -1273,9 +1322,9 @@ fn strip_xhtml_wrapper(content: &str) -> String {
     }
 
     // Remove <!DOCTYPE ...> declarations.
-    for pat in &["<!DOCTYPE", "<!doctype"] {
-        while let Some(start) = s.find(pat) {
-            if let Some(end) = s[start..].find('>') {
+    for pat in &[b"<!DOCTYPE" as &[u8], b"<!doctype"] {
+        while let Some(start) = memchr::memmem::find(s.as_bytes(), pat) {
+            if let Some(end) = memchr::memchr(b'>', &s.as_bytes()[start..]) {
                 s.replace_range(start..start + end + 1, "");
             } else {
                 break;
@@ -1284,18 +1333,18 @@ fn strip_xhtml_wrapper(content: &str) -> String {
     }
 
     // Remove <html ...> and </html> tags.
-    while let Some(start) = s.find("<html") {
-        if let Some(end) = s[start..].find('>') {
+    while let Some(start) = memchr::memmem::find(s.as_bytes(), b"<html") {
+        if let Some(end) = memchr::memchr(b'>', &s.as_bytes()[start..]) {
             s.replace_range(start..start + end + 1, "");
         } else {
             break;
         }
     }
-    while let Some(start) = s.find("</html>") {
+    while let Some(start) = memchr::memmem::find(s.as_bytes(), b"</html>") {
         s.replace_range(start..start + 7, "");
     }
 
-    s
+    Cow::Owned(s)
 }
 
 /// Truncates a title to fit the 31-character PDB name field.
@@ -1335,7 +1384,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Writer Test".into());
         book.metadata.authors.push("Test Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello MOBI writer!</p>".into(),
             id: Some("ch1".into()),
@@ -1354,12 +1403,12 @@ mod tests {
         book.metadata.title = Some("Round Trip MOBI".into());
         book.metadata.authors.push("Alice".into());
         book.metadata.language = Some("en".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Intro".into()),
             content: "<p>First chapter content here.</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Two".into()),
             content: "<p>Second chapter with more text.</p>".into(),
             id: Some("ch2".into()),
@@ -1389,7 +1438,7 @@ mod tests {
         book.metadata.title = Some("Long Text".into());
 
         let long_content = "<p>".to_string() + &"Word ".repeat(2000) + "</p>";
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Big Chapter".into()),
             content: long_content,
             id: Some("ch1".into()),
@@ -1491,7 +1540,7 @@ mod tests {
         );
         book.metadata.rights = Some("CC BY 4.0".into());
         book.metadata.identifier = Some("B00TEST1234".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Content for extended metadata test.</p>".into(),
             id: Some("ch1".into()),
@@ -1531,7 +1580,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Cover Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1575,7 +1624,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Fallback Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1610,7 +1659,7 @@ mod tests {
     fn thumbnail_record_exists_and_is_smaller_than_cover() {
         let mut book = Book::new();
         book.metadata.title = Some("Thumb Size Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1699,7 +1748,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Multi-Image Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1757,7 +1806,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Small Cover Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1798,7 +1847,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("No Cover Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1833,7 +1882,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Derived ID Test".into());
         book.metadata.authors.push("Author A".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1857,7 +1906,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Deterministic".into());
         book.metadata.authors.push("Author X".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1891,12 +1940,12 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Content Indices".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch2".into()),
             content: "<p>World</p>".into(),
             id: Some("ch2".into()),
@@ -1929,7 +1978,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("FLIS FCIS Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -1974,7 +2023,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Extra Flags".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -2001,7 +2050,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Header Len".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -2028,7 +2077,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Creator SW".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello</p>".into(),
             id: Some("ch1".into()),
@@ -2067,12 +2116,12 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Start Reading".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Intro</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch2".into()),
             content: "<p>Main content</p>".into(),
             id: Some("ch2".into()),
@@ -2104,7 +2153,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Single Chapter".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Only chapter</p>".into(),
             id: Some("ch1".into()),
@@ -2166,12 +2215,12 @@ mod tests {
     fn html_contains_filepos_attributes() {
         let mut book = Book::new();
         book.metadata.title = Some("Filepos Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter One".into()),
             content: "<p>First content</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Two".into()),
             content: "<p>Second content</p>".into(),
             id: Some("ch2".into()),
@@ -2198,12 +2247,12 @@ mod tests {
     fn filepos_values_point_to_chapter_starts() {
         let mut book = Book::new();
         book.metadata.title = Some("Offset Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Alpha".into()),
             content: "<p>Alpha content</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Beta".into()),
             content: "<p>Beta content</p>".into(),
             id: Some("ch2".into()),
@@ -2246,12 +2295,12 @@ mod tests {
     fn guide_section_contains_toc_and_text_references() {
         let mut book = Book::new();
         book.metadata.title = Some("Guide Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Intro".into()),
             content: "<p>Intro text</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Main".into()),
             content: "<p>Main text</p>".into(),
             id: Some("ch2".into()),
@@ -2316,7 +2365,7 @@ mod tests {
     fn toc_section_appears_before_chapter_content() {
         let mut book = Book::new();
         book.metadata.title = Some("TOC Order".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("First".into()),
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -2371,17 +2420,17 @@ mod tests {
         // Verify no unfixed "0000000000" placeholders remain in the output.
         let mut book = Book::new();
         book.metadata.title = Some("Fixup Check".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Content 1</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch2".into()),
             content: "<p>Content 2</p>".into(),
             id: Some("ch2".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch3".into()),
             content: "<p>Content 3</p>".into(),
             id: Some("ch3".into()),
@@ -2402,17 +2451,17 @@ mod tests {
         // and decoded, contains filepos strings in the HTML text.
         let mut book = Book::new();
         book.metadata.title = Some("MOBI Filepos".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Prologue".into()),
             content: "<p>Opening text</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter I".into()),
             content: "<p>Main story</p>".into(),
             id: Some("ch2".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Epilogue".into()),
             content: "<p>Closing text</p>".into(),
             id: Some("ch3".into()),
@@ -2454,23 +2503,29 @@ mod tests {
 
     #[test]
     fn vwi_encoding_single_byte() {
-        assert_eq!(encode_vwi(0), vec![0]);
-        assert_eq!(encode_vwi(1), vec![1]);
-        assert_eq!(encode_vwi(127), vec![127]);
+        let (buf, len) = encode_vwi(0);
+        assert_eq!(&buf[..len], &[0]);
+        let (buf, len) = encode_vwi(1);
+        assert_eq!(&buf[..len], &[1]);
+        let (buf, len) = encode_vwi(127);
+        assert_eq!(&buf[..len], &[127]);
     }
 
     #[test]
     fn vwi_encoding_two_bytes() {
         // 128 = 0x80 → [0x81, 0x00]
-        assert_eq!(encode_vwi(128), vec![0x81, 0x00]);
+        let (buf, len) = encode_vwi(128);
+        assert_eq!(&buf[..len], &[0x81, 0x00]);
         // 16383 = 0x3FFF → [0xFF, 0x7F]
-        assert_eq!(encode_vwi(16383), vec![0xFF, 0x7F]);
+        let (buf, len) = encode_vwi(16383);
+        assert_eq!(&buf[..len], &[0xFF, 0x7F]);
     }
 
     #[test]
     fn vwi_encoding_three_bytes() {
         // 16384 = 0x4000 → [0x81, 0x80, 0x00]
-        assert_eq!(encode_vwi(16384), vec![0x81, 0x80, 0x00]);
+        let (buf, len) = encode_vwi(16384);
+        assert_eq!(&buf[..len], &[0x81, 0x80, 0x00]);
     }
 
     #[test]
@@ -2558,12 +2613,12 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("NCX Index Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Content 1</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 2".into()),
             content: "<p>Content 2</p>".into(),
             id: Some("ch2".into()),
@@ -2611,7 +2666,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Single Chapter INDX".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Only Chapter".into()),
             content: "<p>The only chapter content.</p>".into(),
             id: Some("ch1".into()),
@@ -2645,7 +2700,7 @@ mod tests {
         book.metadata.title = Some("INDX Round Trip".into());
         book.metadata.authors.push("Test Author".into());
         for i in 1..=5 {
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some(format!("Chapter {}", i)),
                 content: format!("<p>Content of chapter {}.</p>", i),
                 id: Some(format!("ch{}", i)),

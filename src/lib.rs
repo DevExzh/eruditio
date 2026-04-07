@@ -4,6 +4,10 @@
 //! and production-ready parsing and generation of ebook formats such as EPUB, MOBI,
 //! PDF, FB2, and others.
 
+#[cfg(not(feature = "dhat-heap"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
@@ -16,9 +20,9 @@ pub mod pipeline;
 pub mod transforms;
 
 pub use domain::{
-    Book, Chapter, Format, FormatReader, FormatWriter, Guide, GuideReference, GuideType, Manifest,
-    ManifestData, ManifestItem, Metadata, PageProgression, ResourceView, Spine, SpineItem, TocItem,
-    Transform,
+    Book, Chapter, ChapterView, Format, FormatReader, FormatWriter, Guide, GuideReference,
+    GuideType, Manifest, ManifestData, ManifestItem, Metadata, PageProgression, ResourceView,
+    Spine, SpineItem, TocItem, Transform,
 };
 pub use error::{EruditioError, Result};
 pub use parser::EruditioParser;

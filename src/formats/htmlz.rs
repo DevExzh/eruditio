@@ -185,7 +185,7 @@ impl FormatWriter for HtmlzWriter {
 /// Includes a `<link>` to `style.css` in the `<head>`.
 fn generate_htmlz_content(book: &Book) -> String {
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
-    let chapters = book.chapters();
+    let chapters = book.chapter_views();
 
     let mut body = String::with_capacity(4096);
     for (i, chapter) in chapters.iter().enumerate() {
@@ -805,7 +805,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("HTMLZ Test".into());
         book.metadata.authors.push("Test Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Section 1".into()),
             content: "<p>Hello from HTMLZ</p>".into(),
             id: Some("s1".into()),
@@ -830,7 +830,7 @@ mod tests {
         book.metadata.title = Some("Meta Test".into());
         book.metadata.authors.push("Alice".into());
         book.metadata.language = Some("en".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -852,7 +852,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("OPF Test".into());
         book.metadata.authors.push("Bob".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Hi</p>".into(),
             id: Some("ch1".into()),
@@ -878,7 +878,7 @@ mod tests {
     fn htmlz_writer_includes_images() {
         let mut book = Book::new();
         book.metadata.title = Some("Image Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -918,7 +918,7 @@ mod tests {
         book.metadata.rights = Some("CC BY 4.0".into());
         book.metadata.series = Some("Test Series".into());
         book.metadata.series_index = Some(3.0);
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -947,7 +947,7 @@ mod tests {
         book.metadata.language = Some("de".into());
         book.metadata.publisher = Some("Verlag".into());
         book.metadata.description = Some("Ein Buch".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Kapitel 1".into()),
             content: "<p>Inhalt</p>".into(),
             id: Some("ch1".into()),
@@ -972,7 +972,7 @@ mod tests {
     fn htmlz_round_trip_with_images() {
         let mut book = Book::new();
         book.metadata.title = Some("Image Round Trip".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text with image</p>".into(),
             id: Some("ch1".into()),
@@ -1042,7 +1042,7 @@ mod tests {
     fn htmlz_html_does_not_contain_data_uris() {
         let mut book = Book::new();
         book.metadata.title = Some("No Data URI".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -1142,7 +1142,7 @@ mod tests {
     fn htmlz_writer_includes_style_css_from_manifest() {
         let mut book = Book::new();
         book.metadata.title = Some("CSS Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Styled content</p>".into(),
             id: Some("ch1".into()),
@@ -1171,7 +1171,7 @@ mod tests {
     fn htmlz_writer_generates_default_stylesheet_when_no_css() {
         let mut book = Book::new();
         book.metadata.title = Some("No CSS".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Plain content</p>".into(),
             id: Some("ch1".into()),
@@ -1202,7 +1202,7 @@ mod tests {
     fn htmlz_index_html_contains_stylesheet_link() {
         let mut book = Book::new();
         book.metadata.title = Some("Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1227,7 +1227,7 @@ mod tests {
     fn htmlz_reader_loads_style_css() {
         let mut book = Book::new();
         book.metadata.title = Some("CSS Round Trip".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Styled</p>".into(),
             id: Some("ch1".into()),
@@ -1281,7 +1281,7 @@ mod tests {
                 },
             ],
         };
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1405,7 +1405,7 @@ mod tests {
                 href: "cover.xhtml".into(),
             }],
         };
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1446,7 +1446,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("CSS Passthrough".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Styled content</p>".into(),
             id: Some("ch1".into()),
@@ -1494,7 +1494,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Multi CSS".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1581,12 +1581,12 @@ mod tests {
     fn htmlz_content_uses_h2_for_chapter_titles() {
         let mut book = Book::new();
         book.metadata.title = Some("Heading Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter One".into()),
             content: "<p>First chapter content</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Two".into()),
             content: "<p>Second chapter content</p>".into(),
             id: Some("ch2".into()),
@@ -1616,7 +1616,7 @@ mod tests {
     fn htmlz_content_rewrites_image_src_paths() {
         let mut book = Book::new();
         book.metadata.title = Some("Image Path Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: r#"<p>Before</p><img src="cover.jpg"><p>After</p>"#.into(),
             id: Some("ch1".into()),
@@ -1651,7 +1651,7 @@ mod tests {
                 },
             ],
         };
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1684,7 +1684,7 @@ mod tests {
         book.metadata.title = Some("Role Test".into());
         book.metadata.authors.push("First Author".into());
         book.metadata.authors.push("Second Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1711,7 +1711,7 @@ mod tests {
         book.metadata.title = Some("Role+Sort Test".into());
         book.metadata.authors.push("Jane Doe".into());
         book.metadata.author_sort = Some("Doe, Jane".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),
@@ -1868,7 +1868,7 @@ mod tests {
         // Simulate EPUB chapters that contain full XHTML documents
         let mut book = Book::new();
         book.metadata.title = Some("Nested Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
@@ -1885,7 +1885,7 @@ mod tests {
                 .into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 2".into()),
             content: r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -1954,7 +1954,7 @@ mod tests {
         // Chapters with <link> tags to CSS files that don't exist in HTMLZ
         let mut book = Book::new();
         book.metadata.title = Some("Link Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -2001,7 +2001,7 @@ mod tests {
     fn htmlz_content_preserves_body_content_from_xhtml_chapters() {
         let mut book = Book::new();
         book.metadata.title = Some("Preserve Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -2033,7 +2033,7 @@ mod tests {
         // End-to-end test: write HTMLZ and verify the index.html in the ZIP
         let mut book = Book::new();
         book.metadata.title = Some("E2E Nested Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>

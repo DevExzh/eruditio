@@ -513,7 +513,7 @@ pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
 pub(crate) fn book_to_pml(book: &Book) -> String {
     let mut pml = String::with_capacity(4096);
 
-    for (i, chapter) in book.chapters().iter().enumerate() {
+    for (i, chapter) in book.chapter_views().iter().enumerate() {
         if i > 0 {
             pml.push_str("\\p\n");
         }

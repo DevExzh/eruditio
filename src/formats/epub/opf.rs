@@ -86,7 +86,8 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         parse_guide_ref(e, &mut data.guide);
                     },
                     _ if section == Section::Metadata => {
-                        current_dc_tag = tag.to_string();
+                        current_dc_tag.clear();
+                        current_dc_tag.push_str(tag);
                         current_text.clear();
                         // Track the opf:file-as attribute on <dc:creator>
                         if tag == "creator" {
@@ -358,8 +359,8 @@ fn apply_dc_metadata(tag: &str, text: &str, metadata: &mut Metadata) {
         "identifier" => {
             metadata.identifier = Some(text.to_string());
             // Check for ISBN pattern (10 or 13 digits, optional hyphens).
-            let stripped: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-            if stripped.len() == 10 || stripped.len() == 13 {
+            let digit_count = text.bytes().filter(|b| b.is_ascii_digit()).count();
+            if digit_count == 10 || digit_count == 13 {
                 metadata.isbn = Some(text.to_string());
             }
         },

@@ -94,15 +94,33 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
     let heading_text = strip_tags(heading_html);
 
     // Normalise whitespace for comparison: collapse runs of whitespace to a single space.
-    let normalise = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
+    fn normalise_whitespace(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut prev_space = true; // skip leading spaces
+        for c in s.chars() {
+            if c.is_whitespace() {
+                if !prev_space {
+                    out.push(' ');
+                    prev_space = true;
+                }
+            } else {
+                out.push(c);
+                prev_space = false;
+            }
+        }
+        if out.ends_with(' ') {
+            out.pop();
+        }
+        out
+    }
 
-    let normalised_heading = normalise(heading_text.as_ref());
-    let normalised_title = normalise(title);
+    let normalised_heading = normalise_whitespace(heading_text.as_ref());
+    let normalised_title = normalise_whitespace(title);
 
     if normalised_heading.eq_ignore_ascii_case(&normalised_title)
-        || normalised_heading
-            .to_ascii_lowercase()
-            .starts_with(&normalised_title.to_ascii_lowercase())
+        || (normalised_heading.len() >= normalised_title.len()
+            && normalised_heading.as_bytes()[..normalised_title.len()]
+                .eq_ignore_ascii_case(normalised_title.as_bytes()))
     {
         let after_close = search_start + close_pos + close_tag.len();
         let result = content[after_close..].trim_start();

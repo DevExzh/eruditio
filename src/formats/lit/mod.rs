@@ -375,7 +375,7 @@ impl LitContainer {
             if pos + root_len > raw.len() {
                 break;
             }
-            let _root = String::from_utf8_lossy(&raw[pos..pos + root_len]).into_owned();
+            // Skip root string — not used.
             pos += root_len;
 
             for state_name in &["spine", "not spine", "css", "images"] {
@@ -386,6 +386,9 @@ impl LitContainer {
                     EruditioError::Format("LIT: negative manifest file count".into())
                 })?;
                 pos += 4;
+                // Hoist to_string() out of inner loop — state_name is constant
+                // per iteration of the outer loop.
+                let state_owned = (*state_name).to_string();
                 for _ in 0..num_files {
                     if pos + 4 > raw.len() {
                         break;
@@ -404,7 +407,7 @@ impl LitContainer {
                         internal,
                         path,
                         mime_type: mime_type.to_ascii_lowercase(),
-                        state: state_name.to_string(),
+                        state: state_owned.clone(),
                     });
                 }
             }
@@ -686,18 +689,41 @@ fn parse_lit_reset_table(data: &[u8]) -> Result<itss::LzxResetTable> {
 // ---------------------------------------------------------------------------
 
 fn normalize_lit_path(original: &str) -> String {
-    let mut path = original.replace('\\', "/");
-    // Strip drive letter (e.g., "C:/")
-    if path.len() >= 3 && path.as_bytes()[1] == b':' && path.as_bytes()[2] == b'/' {
-        path = path[2..].to_string();
+    let bytes = original.as_bytes();
+    let mut start = 0;
+
+    // Strip drive letter (e.g., "C:/" or "C:\")
+    if bytes.len() >= 3 && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\') {
+        start = 2;
     }
-    // Strip leading "../"
-    while path.starts_with("../") {
-        path = path[3..].to_string();
+    // Strip leading "../" or "..\"
+    while start + 3 <= bytes.len()
+        && bytes[start] == b'.'
+        && bytes[start + 1] == b'.'
+        && (bytes[start + 2] == b'/' || bytes[start + 2] == b'\\')
+    {
+        start += 3;
     }
-    // Strip leading "/"
-    path = path.trim_start_matches('/').to_string();
-    path
+    // Strip leading "/" or "\"
+    while start < bytes.len() && (bytes[start] == b'/' || bytes[start] == b'\\') {
+        start += 1;
+    }
+
+    let remaining = &bytes[start..];
+    // Fast path: no backslashes to replace
+    if !remaining.contains(&b'\\') {
+        return original[start..].to_string();
+    }
+
+    let mut result = String::with_capacity(remaining.len());
+    for &b in remaining {
+        if b == b'\\' {
+            result.push('/');
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
 }
 
 fn strip_common_prefix(items: &mut [LitManifestItem]) {
@@ -746,7 +772,10 @@ fn parse_opf_metadata(opf_xml: &str, metadata: &mut Metadata) {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                current_tag = bytes_to_cow_str(e.name().as_ref()).to_ascii_lowercase();
+                current_tag.clear();
+                for &b in e.name().as_ref() {
+                    current_tag.push(b.to_ascii_lowercase() as char);
+                }
             },
             Ok(Event::Text(e)) => {
                 let text = bytes_to_cow_str(&e.into_inner()).trim().to_string();
@@ -853,7 +882,7 @@ impl FormatReader for LitReader {
             )?;
 
             let chapter_id = format!("lit_ch_{idx:04}");
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: None,
                 content: html,
                 id: Some(chapter_id),

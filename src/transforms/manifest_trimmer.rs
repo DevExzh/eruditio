@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn keeps_spine_items() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch".into()),
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn removes_unreferenced_resources() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch".into()),
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn keeps_cover_image() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn keeps_referenced_image() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p><img src=\"photo.jpg\" /></p>".into(),
             id: Some("ch1".into()),
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn does_not_mutate_original() {
         let mut book = Book::new();
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>text</p>".into(),
             id: Some("ch1".into()),

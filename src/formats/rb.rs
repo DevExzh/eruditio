@@ -105,7 +105,7 @@ impl FormatReader for RbReader {
             let content = decompress_entry(&data, entry)?;
             let html = crate::formats::common::text_utils::bytes_to_string(&content);
 
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: if entry.name == body_name {
                     book.metadata.title.clone()
                 } else {
@@ -116,7 +116,7 @@ impl FormatReader for RbReader {
             });
         }
 
-        if book.chapters().is_empty() {
+        if book.chapter_count() == 0 {
             return Err(EruditioError::Format(
                 "RB file contains no readable content".into(),
             ));
@@ -161,7 +161,7 @@ impl FormatWriter for RbWriter {
 
         // Build HTML content from chapters.
         let mut html = String::from("<html><body>\n");
-        for chapter in book.chapters() {
+        for chapter in book.chapter_views() {
             if let Some(title) = &chapter.title {
                 html.push_str(&format!("<h2>{}</h2>\n", title));
             }
@@ -732,7 +732,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("RB Write Test".into());
         book.metadata.authors = vec!["Test Author".into()];
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello RocketBook!</p>".into(),
             id: Some("ch1".into()),

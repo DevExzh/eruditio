@@ -11,12 +11,12 @@ fn mobi_round_trip_preserves_metadata() {
     book.metadata.authors.push("Test Author".into());
     book.metadata.language = Some("en".into());
 
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Chapter 1".into()),
         content: "<p>First chapter of the MOBI integration test.</p>".into(),
         id: Some("ch1".into()),
     });
-    book.add_chapter(&Chapter {
+    book.add_chapter(Chapter {
         title: Some("Chapter 2".into()),
         content: "<p>Second chapter with different content.</p>".into(),
         id: Some("ch2".into()),

@@ -1123,7 +1123,6 @@ impl FormatWriter for LitWriter {
 /// Produce a complete LIT file from a `Book`.
 fn write_lit(book: &Book) -> Result<Vec<u8>> {
     // Collect spine items and their data
-    let _chapters = book.chapters();
     let _resources = book.resources();
 
     // Build href-to-id mapping for href encoding in binary HTML
@@ -1406,7 +1405,7 @@ mod tests {
     fn lit_writer_produces_valid_header() {
         let mut book = Book::new();
         book.metadata.title = Some("Test Book".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<p>Hello, world!</p>".into(),
             id: Some("ch1".into()),
@@ -1476,13 +1475,13 @@ mod tests {
         book.metadata.authors.push("Test Author".into());
         book.metadata.language = Some("en".into());
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 1".into()),
             content: "<html><body><p>Hello from chapter one.</p></body></html>".into(),
             id: Some("ch1".into()),
         });
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter 2".into()),
             content: "<html><body><p>Goodbye from chapter two.</p></body></html>".into(),
             id: Some("ch2".into()),
@@ -1523,7 +1522,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Resource Test".into());
 
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<html><body><p>Text content</p></body></html>".into(),
             id: Some("ch1".into()),

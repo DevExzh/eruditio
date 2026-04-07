@@ -539,7 +539,7 @@ impl FormatReader for ChmReader {
                 .unwrap_or_else(|| format!("Section {}", index + 1));
 
             let chapter_id = format!("chm_chapter_{index:04}");
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some(title),
                 content: cleaned,
                 id: Some(chapter_id),

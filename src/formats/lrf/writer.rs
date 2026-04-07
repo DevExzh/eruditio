@@ -655,7 +655,7 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // ---------------------------------------------------------------
     // 4. Build text objects from chapters.
     // ---------------------------------------------------------------
-    let chapters = book.chapters();
+    let chapters = book.chapter_views();
     let mut text_block_pairs: Vec<(u32, u32)> = Vec::new(); // (block_id, text_id)
     let mut chapter_objects: Vec<LrfWriteObject> = Vec::new();
 
@@ -882,7 +882,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("Header Test".into());
         book.metadata.authors.push("Test Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch1".into()),
             content: "<p>Hello LRF</p>".into(),
             id: Some("ch1".into()),
@@ -908,12 +908,12 @@ mod tests {
         book.metadata.title = Some("Round Trip LRF".into());
         book.metadata.authors.push("Alice".into());
         book.metadata.language = Some("en".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Introduction".into()),
             content: "<p>First chapter content here.</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Chapter Two".into()),
             content: "<p>Second chapter with more text.</p>".into(),
             id: Some("ch2".into()),
@@ -952,7 +952,7 @@ mod tests {
     fn lrf_round_trip_formatting() {
         let mut book = Book::new();
         book.metadata.title = Some("Formatted LRF".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Formatting".into()),
             content: "<p>Normal <b>bold</b> <i>italic</i> text.</p>".into(),
             id: Some("ch1".into()),
@@ -992,7 +992,7 @@ mod tests {
     fn lrf_round_trip_with_heading() {
         let mut book = Book::new();
         book.metadata.title = Some("Heading Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Test".into()),
             content: "<h1>Big Title</h1><p>Body text.</p>".into(),
             id: Some("ch1".into()),
@@ -1017,7 +1017,7 @@ mod tests {
     fn lrf_round_trip_br_tag() {
         let mut book = Book::new();
         book.metadata.title = Some("BR Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Test".into()),
             content: "<p>Line one<br/>Line two</p>".into(),
             id: Some("ch1".into()),

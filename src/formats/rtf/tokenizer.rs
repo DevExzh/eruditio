@@ -179,11 +179,22 @@ pub fn tokenize(input: &[u8]) -> std::result::Result<Vec<RtfToken<'_>>, &'static
                 pos += end;
                 let slice = &input[start..pos];
                 if !slice.is_empty() {
-                    // Fast path: if the text is valid UTF-8, borrow directly (zero-copy).
-                    // RTF is predominantly ASCII, so this almost always succeeds.
-                    let text = match std::str::from_utf8(slice) {
-                        Ok(s) => Cow::Borrowed(s),
-                        Err(_) => Cow::Owned(String::from_utf8_lossy(slice).into_owned()),
+                    // Fast path: the SIMD byte-scan already confirmed these bytes
+                    // are NOT \, {, }, \n, or \r.  For ASCII-only spans (the
+                    // overwhelmingly common case in RTF), we can skip the full
+                    // UTF-8 state-machine validation — ASCII bytes are always
+                    // valid UTF-8.  Callgrind shows `from_utf8` accounts for
+                    // ~30% of the tokenizer's instruction count; this SIMD
+                    // `is_all_ascii` check is ~5× cheaper.
+                    let text = if crate::formats::common::intrinsics::is_ascii::is_all_ascii(slice)
+                    {
+                        // SAFETY: every byte is in 0x00-0x7F, which is valid UTF-8.
+                        Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(slice) })
+                    } else {
+                        match std::str::from_utf8(slice) {
+                            Ok(s) => Cow::Borrowed(s),
+                            Err(_) => Cow::Owned(String::from_utf8_lossy(slice).into_owned()),
+                        }
                     };
                     tokens.push(RtfToken::Text(text));
                 }

@@ -164,7 +164,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Pipeline Test".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Ch 1".into()),
             content: "<p>Hello from the pipeline</p>".into(),
             id: Some("ch1".into()),
@@ -190,7 +190,7 @@ mod tests {
         let mut book = Book::new();
         book.metadata.title = Some("FB2 to EPUB".into());
         book.metadata.authors.push("Author".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: Some("Section".into()),
             content: "<p>Cross-format content</p>".into(),
             id: Some("s1".into()),
@@ -229,7 +229,7 @@ mod tests {
 
         let mut book = Book::new();
         book.metadata.title = Some("Original".into());
-        book.add_chapter(&Chapter {
+        book.add_chapter(Chapter {
             title: None,
             content: "<p>Content</p>".into(),
             id: Some("ch1".into()),

@@ -51,7 +51,7 @@ impl FormatReader for CbrReader {
 
             book.add_resource(&resource_id, name, data.clone(), &media_type);
 
-            book.add_chapter(&Chapter {
+            book.add_chapter(Chapter {
                 title: Some(format!("Page {}", index + 1)),
                 content: format!("<img src=\"{}\" alt=\"Page {}\" />", resource_id, index + 1),
                 id: Some(chapter_id),
