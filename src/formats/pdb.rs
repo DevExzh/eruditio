@@ -12,6 +12,7 @@ use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{
     PdbFile, build_pdb_header, read_u16_be, write_u16_be, write_u32_be,
 };
+use crate::formats::common::text_utils::{decode_cp1252, strip_tags_and_unescape};
 use flate2::Compression;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -51,7 +52,7 @@ impl FormatWriter for PdbWriter {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
-            text.push_str(&strip_html(&chapter.content));
+            text.push_str(&strip_tags_and_unescape(&chapter.content));
         }
 
         let text_bytes = text.as_bytes();
@@ -124,7 +125,7 @@ impl FormatWriter for PdbZtxtWriter {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
-            text.push_str(&strip_html(&chapter.content));
+            text.push_str(&strip_tags_and_unescape(&chapter.content));
         }
 
         let text_bytes = text.as_bytes();
@@ -1172,11 +1173,6 @@ fn text_to_html(text: &str) -> String {
     html
 }
 
-/// Decodes CP-1252 bytes to UTF-8.
-fn decode_cp1252(data: &[u8]) -> String {
-    crate::formats::common::text_utils::decode_cp1252(data)
-}
-
 /// Detects image media type from magic bytes.
 fn detect_image_media_type(data: &[u8]) -> &'static str {
     if data.len() >= 3 && data[0..3] == [0xFF, 0xD8, 0xFF] {
@@ -1201,12 +1197,6 @@ fn media_type_to_ext(media_type: &str) -> &str {
         "image/bmp" => "bmp",
         _ => "bin",
     }
-}
-
-/// Strips HTML tags from a string, returning plain text.
-fn strip_html(html: &str) -> String {
-    let stripped = crate::formats::common::text_utils::strip_tags(html);
-    crate::formats::common::text_utils::unescape_basic_entities(&stripped).into_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -1609,10 +1599,13 @@ mod tests {
     }
 
     #[test]
-    fn strip_html_basic() {
-        assert_eq!(strip_html("<p>Hello <b>world</b></p>"), "Hello world");
-        assert_eq!(strip_html("No tags"), "No tags");
-        assert_eq!(strip_html("&amp; &lt; &gt;"), "& < >");
+    fn strip_tags_and_unescape_basic() {
+        assert_eq!(
+            strip_tags_and_unescape("<p>Hello <b>world</b></p>"),
+            "Hello world"
+        );
+        assert_eq!(strip_tags_and_unescape("No tags"), "No tags");
+        assert_eq!(strip_tags_and_unescape("&amp; &lt; &gt;"), "& < >");
     }
 
     #[test]

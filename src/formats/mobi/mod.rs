@@ -14,7 +14,7 @@ use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::compression::huffcdic::HuffCdicReader;
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{PdbFile, read_u32_be};
-use crate::formats::common::text_utils;
+use crate::formats::common::text_utils::{self, decode_cp1252, strip_tags};
 use std::io::{Read, Write};
 
 use self::exth::{
@@ -460,31 +460,36 @@ fn split_bytes_at_xml_boundaries(data: &[u8]) -> Vec<(usize, usize)> {
 /// 2. Adding the offset to get an absolute byte position in the raw text
 /// 3. Finding which chapter contains that position
 /// 4. Searching backwards for the nearest id/name anchor
-struct PosFidResolver {
+///
+/// Borrows the decompressed text data to avoid copying each chapter's bytes.
+struct PosFidResolver<'a> {
     /// Insert positions from the div table, indexed by div entry number.
     insert_positions: Vec<usize>,
-    /// Byte ranges (start, end) for each chapter in the raw text (absolute).
-    chapter_byte_ranges: Vec<(usize, usize)>,
-    /// Raw bytes of each chapter (for anchor searching).
-    chapter_bytes: Vec<Vec<u8>>,
+    /// Absolute byte offset of flow 0 within the full decompressed text.
+    flow0_start: usize,
+    /// Byte ranges (start, end) for each chapter, relative to `text_data`.
+    chapter_ranges: Vec<(usize, usize)>,
+    /// Borrowed reference to the main HTML bytes (flow 0 of the FDST).
+    text_data: &'a [u8],
 }
 
-impl PosFidResolver {
+impl PosFidResolver<'_> {
     fn resolve(&self, fid: usize, offset: usize) -> Option<(String, Option<String>)> {
         let insert_pos = *self.insert_positions.get(fid)?;
-        let pos = insert_pos.checked_add(offset)?;
+        let abs_pos = insert_pos.checked_add(offset)?;
+        let rel_pos = abs_pos.checked_sub(self.flow0_start)?;
 
-        // Find which chapter contains this absolute position.
+        // Find which chapter contains this relative position.
         let chapter_idx = self
-            .chapter_byte_ranges
+            .chapter_ranges
             .iter()
-            .position(|(start, end)| pos >= *start && pos < *end)?;
+            .position(|(start, end)| rel_pos >= *start && rel_pos < *end)?;
 
-        let (ch_start, _) = self.chapter_byte_ranges[chapter_idx];
-        let chapter_data = &self.chapter_bytes[chapter_idx];
+        let (ch_start, ch_end) = self.chapter_ranges[chapter_idx];
+        let chapter_data = self.text_data.get(ch_start..ch_end)?;
 
         // Compute position within the chapter's byte data.
-        let pos_in_chapter = pos.saturating_sub(ch_start).min(chapter_data.len());
+        let pos_in_chapter = rel_pos.saturating_sub(ch_start).min(chapter_data.len());
 
         // Search backwards for the nearest id= or name= anchor.
         let anchor = find_nearest_anchor(chapter_data, pos_in_chapter);
@@ -529,9 +534,10 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
             return Some(val);
         }
         // Only check name= on <a> tags to avoid matching <meta name="..."> etc.
-        let tag_lower_start: Vec<u8> = tag.iter().take(3).map(|b| b.to_ascii_lowercase()).collect();
-        if tag_lower_start.starts_with(b"<a")
-            && (tag.len() <= 2 || tag[2].is_ascii_whitespace())
+        if tag.len() >= 2
+            && tag[0] == b'<'
+            && tag[1].eq_ignore_ascii_case(&b'a')
+            && (tag.len() <= 2 || !tag[2].is_ascii_alphanumeric())
             && let Some(val) = extract_attr_value(tag, b"name")
             && !val.is_empty()
         {
@@ -546,20 +552,25 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
 
 /// Extracts the value of a named attribute from an HTML/XML tag byte slice.
 /// Case-insensitive attribute name matching, supports both single and double quotes.
+///
+/// Zero-allocation: uses inline case-insensitive comparison instead of
+/// lowercasing the entire tag into a temporary `Vec<u8>`.
 fn extract_attr_value(tag: &[u8], attr_name: &[u8]) -> Option<String> {
-    let tag_lower: Vec<u8> = tag.iter().map(|b| b.to_ascii_lowercase()).collect();
-    let attr_lower: Vec<u8> = attr_name.iter().map(|b| b.to_ascii_lowercase()).collect();
+    // Build the search pattern ` attr=` on the stack (attr names are short).
+    let pattern_len = 1 + attr_name.len() + 1; // space + name + '='
+    debug_assert!(
+        pattern_len <= 64,
+        "attribute name too long for stack buffer"
+    );
 
-    // Search for ` attr=` pattern (space + attr name + equals).
-    let mut pattern = Vec::with_capacity(attr_lower.len() + 2);
-    pattern.push(b' ');
-    pattern.extend_from_slice(&attr_lower);
-    pattern.push(b'=');
-
-    let attr_pos = tag_lower
-        .windows(pattern.len())
-        .position(|w| w == pattern.as_slice())?;
-    let value_start = attr_pos + pattern.len();
+    // Scan through the tag looking for ` attr=` case-insensitively.
+    // We need at least pattern_len bytes to match.
+    let attr_pos = tag.windows(pattern_len).position(|w| {
+        w[0] == b' '
+            && w[1..1 + attr_name.len()].eq_ignore_ascii_case(attr_name)
+            && w[1 + attr_name.len()] == b'='
+    })?;
+    let value_start = attr_pos + pattern_len;
 
     if value_start >= tag.len() {
         return None;
@@ -593,7 +604,7 @@ fn extract_attr_value(tag: &[u8], attr_name: &[u8]) -> Option<String> {
 /// the PosFidResolver. This is called as a second pass after the basic
 /// `resolve_kindle_references` to handle cross-file references that the
 /// simple fid-to-chapter mapping couldn't resolve.
-fn resolve_remaining_pos_fid(html: &str, resolver: &PosFidResolver) -> String {
+fn resolve_remaining_pos_fid(html: &str, resolver: &PosFidResolver<'_>) -> String {
     let mut result = String::with_capacity(html.len());
     let mut remaining = html;
 
@@ -667,7 +678,11 @@ impl MobiReader {
 
 impl FormatReader for MobiReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut buffer = Vec::new();
+        // Pre-allocate 4 MB to reduce Vec doubling during read_to_end.
+        // MOBI files are typically 1-50 MB; starting at 4 MB cuts geometric
+        // growth from ~14 doublings to ~3 for a 25 MB file, eliminating
+        // ~40 MB of transient allocations.
+        let mut buffer = Vec::with_capacity(4 << 20);
         (&mut *reader)
             .take(MAX_INPUT_SIZE)
             .read_to_end(&mut buffer)?;
@@ -801,20 +816,11 @@ impl FormatReader for MobiReader {
                 .and_then(|h| h.fragment_index)
                 .filter(|&idx| idx != NULL_INDEX)
                 .and_then(|frag_idx| parse_div_insert_positions(&pdb, frag_idx as usize))
-                .map(|insert_positions| {
-                    let abs_ranges: Vec<(usize, usize)> = chapter_byte_ranges
-                        .iter()
-                        .map(|(s, e)| (flow0_start + s, flow0_start + e))
-                        .collect();
-                    let ch_bytes: Vec<Vec<u8>> = chapter_byte_ranges
-                        .iter()
-                        .map(|(s, e)| main_html_bytes[*s..*e].to_vec())
-                        .collect();
-                    PosFidResolver {
-                        insert_positions,
-                        chapter_byte_ranges: abs_ranges,
-                        chapter_bytes: ch_bytes,
-                    }
+                .map(|insert_positions| PosFidResolver {
+                    insert_positions,
+                    flow0_start,
+                    chapter_ranges: chapter_byte_ranges.clone(),
+                    text_data: main_html_bytes,
                 });
 
             // Split KF8 content on XHTML document boundaries first,
@@ -1476,7 +1482,7 @@ fn extract_first_heading(html: &str) -> Option<String> {
                     + content_start;
 
             let heading_html = &html[content_start..content_end];
-            let text = strip_html_tags(heading_html).trim().to_string();
+            let text = strip_tags(heading_html).trim().to_string();
             if !text.is_empty() {
                 return Some(text);
             }
@@ -1536,7 +1542,7 @@ fn extract_title_tag(bytes: &[u8], html: &str) -> Option<String> {
     let content_end =
         text_utils::find_case_insensitive(&bytes[content_start..], b"</title")? + content_start;
     let raw = &html[content_start..content_end];
-    let text = strip_html_tags(raw).trim().to_string();
+    let text = strip_tags(raw).trim().to_string();
     if text.is_empty() { None } else { Some(text) }
 }
 
@@ -1570,7 +1576,7 @@ fn extract_body_text_snippet(html: &str) -> Option<String> {
         .unwrap_or(html.len());
 
     let body_html = &html[body_tag_end..body_close];
-    let text = strip_html_tags(body_html);
+    let text = strip_tags(body_html);
     let text = sanitize_toc_label(&text);
 
     if text.is_empty() {
@@ -1623,16 +1629,6 @@ fn sanitize_toc_label(label: &str) -> String {
     }
 
     result
-}
-
-/// Very simple HTML tag stripper for heading extraction.
-fn strip_html_tags(html: &str) -> String {
-    crate::formats::common::text_utils::strip_tags(html).into_owned()
-}
-
-/// Decodes CP-1252 bytes to a UTF-8 string.
-fn decode_cp1252(data: &[u8]) -> String {
-    crate::formats::common::text_utils::decode_cp1252(data)
 }
 
 #[cfg(test)]

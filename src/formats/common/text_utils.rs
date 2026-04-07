@@ -105,6 +105,75 @@ fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
+/// Escapes `&`, `<`, `>` and pushes the result directly into `buf`,
+/// avoiding the intermediate `Cow`/`String` allocation of [`escape_html`].
+///
+/// Equivalent to `buf.push_str(&escape_html(text))` but zero-alloc when the
+/// input contains no special characters and single-alloc-free when it does
+/// (all output goes straight into `buf`).
+pub fn push_escape_html(buf: &mut String, text: &str) {
+    push_escape_impl(buf, text, false);
+}
+
+/// Escapes `&`, `<`, `>`, `"`, `'` and pushes directly into `buf`.
+pub fn push_escape_xml(buf: &mut String, text: &str) {
+    push_escape_impl(buf, text, true);
+}
+
+fn push_escape_impl(buf: &mut String, text: &str, xml_mode: bool) {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+
+    let set: &[u8] = if xml_mode { b"&<>\"'" } else { b"&<>" };
+
+    // Fast path: no special characters — push the whole string and return.
+    let first_special = match super::intrinsics::byte_scan::find_first_in_set(bytes, set) {
+        Some(idx) => idx,
+        None => {
+            buf.push_str(text);
+            return;
+        },
+    };
+
+    buf.reserve(len + len / 8);
+
+    // Copy everything before the first special char in bulk.
+    if first_special > 0 {
+        buf.push_str(&text[..first_special]);
+    }
+
+    let mut pos = first_special;
+
+    loop {
+        while pos < len && is_html_special(bytes[pos], xml_mode) {
+            match bytes[pos] {
+                b'&' => buf.push_str("&amp;"),
+                b'<' => buf.push_str("&lt;"),
+                b'>' => buf.push_str("&gt;"),
+                b'"' => buf.push_str("&quot;"),
+                b'\'' => buf.push_str("&apos;"),
+                _ => {},
+            }
+            pos += 1;
+        }
+
+        if pos >= len {
+            break;
+        }
+
+        match super::intrinsics::byte_scan::find_first_in_set(&bytes[pos..], set) {
+            Some(offset) => {
+                buf.push_str(&text[pos..pos + offset]);
+                pos += offset;
+            },
+            None => {
+                buf.push_str(&text[pos..]);
+                break;
+            },
+        }
+    }
+}
+
 /// Returns `true` if the byte is an HTML/XML special character that needs escaping.
 #[inline(always)]
 fn is_html_special(b: u8, xml_mode: bool) -> bool {
@@ -358,6 +427,12 @@ fn is_block_level_tag(tag: &[u8]) -> bool {
         }
 }
 
+/// Strips HTML tags and unescapes basic HTML entities, returning plain text.
+pub fn strip_tags_and_unescape(html: &str) -> String {
+    let stripped = strip_tags(html);
+    unescape_basic_entities(&stripped).into_owned()
+}
+
 // ---------------------------------------------------------------------------
 // Case-insensitive ASCII helpers (zero allocation)
 // ---------------------------------------------------------------------------
@@ -374,17 +449,14 @@ pub fn ends_with_ascii_ci(s: &str, suffix: &str) -> bool {
 
 /// Case-insensitive ASCII substring check without heap allocation.
 ///
-/// Equivalent to `haystack.to_lowercase().contains(needle)` for ASCII needles,
-/// but avoids allocating a temporary `String`.
+/// Delegates to [`find_case_insensitive`] which uses memchr + SIMD case-fold,
+/// replacing the previous O(n*m) `.windows().any()` brute-force scan.
 #[inline]
 pub fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+    find_case_insensitive(haystack.as_bytes(), needle.as_bytes()).is_some()
 }
 
 // ---------------------------------------------------------------------------

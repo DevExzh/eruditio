@@ -5,7 +5,9 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::text_utils::ends_with_ascii_ci;
+use crate::formats::common::text_utils::{
+    ends_with_ascii_ci, escape_html, escape_xml, strip_tags_and_unescape,
+};
 use bzip2::Compression as BzCompression;
 use bzip2::read::BzDecoder;
 use bzip2::write::BzEncoder;
@@ -162,7 +164,7 @@ impl FormatReader for SnbReader {
                     Some(data) => {
                         snbc_to_html(&crate::formats::common::text_utils::bytes_to_cow_str(data))
                     },
-                    None => format!("<p>{}</p>", html_escape(&ch.title)),
+                    None => format!("<p>{}</p>", escape_html(&ch.title)),
                 };
 
                 book.add_chapter(&Chapter {
@@ -576,11 +578,11 @@ fn snbc_to_html(xml: &str) -> String {
                 match current_tag.as_str() {
                     "text" => {
                         html.push_str("<p>");
-                        html.push_str(&html_escape(text.trim()));
+                        html.push_str(&escape_html(text.trim()));
                         html.push_str("</p>\n");
                     },
                     "img" => {
-                        html.push_str(&format!("<img src=\"{}\" />\n", html_escape(text.trim())));
+                        html.push_str(&format!("<img src=\"{}\" />\n", escape_html(text.trim())));
                     },
                     _ => {},
                 }
@@ -641,10 +643,10 @@ impl FormatWriter for SnbWriter {
              \x20   <language>{}</language>\n\
              \x20   <publisher>{}</publisher>\n\
              \x20 </head>\n</book-snbf>",
-            xml_escape(title),
-            xml_escape(author),
-            xml_escape(language),
-            xml_escape(publisher)
+            escape_xml(title),
+            escape_xml(author),
+            escape_xml(language),
+            escape_xml(publisher)
         );
         plain_files.push(("snbf/book.snbf".into(), meta_xml.into_bytes()));
 
@@ -659,15 +661,15 @@ impl FormatWriter for SnbWriter {
 
             toc_xml.push_str(&format!(
                 "  <chapter src=\"{}\">{}</chapter>\n",
-                xml_escape(&ch_filename),
-                xml_escape(ch_title)
+                escape_xml(&ch_filename),
+                escape_xml(ch_title)
             ));
 
             // Build SNBC chapter XML.
             let snbc = format!(
                 "<snbc><head><title>{}</title></head><body><text>{}</text></body></snbc>",
-                xml_escape(ch_title),
-                xml_escape(&strip_html_simple(&chapter.content))
+                escape_xml(ch_title),
+                escape_xml(&strip_tags_and_unescape(&chapter.content))
             );
             plain_files.push((format!("snbc/{}", ch_filename), snbc.into_bytes()));
         }
@@ -886,17 +888,6 @@ fn snb_bz2_compress(data: &[u8]) -> Result<Vec<u8>> {
         .map_err(|e| EruditioError::Compression(format!("SNB bz2 compression finish error: {}", e)))
 }
 
-/// Simple HTML tag stripping for SNBC content.
-fn strip_html_simple(html: &str) -> String {
-    let stripped = crate::formats::common::text_utils::strip_tags(html);
-    crate::formats::common::text_utils::unescape_basic_entities(&stripped).into_owned()
-}
-
-/// Escapes special XML characters.
-fn xml_escape(text: &str) -> String {
-    crate::formats::common::text_utils::escape_xml(text).into_owned()
-}
-
 // -- Helpers --
 
 /// Maximum decompression output to prevent decompression bombs.
@@ -950,10 +941,6 @@ fn read_cstring(data: &[u8], offset: usize) -> String {
         .map(|p| offset + p)
         .unwrap_or(data.len());
     crate::formats::common::text_utils::bytes_to_string(&data[offset..end])
-}
-
-fn html_escape(text: &str) -> String {
-    crate::formats::common::text_utils::escape_html(text).into_owned()
 }
 
 #[cfg(test)]
