@@ -812,15 +812,15 @@ const FILEPOS_PLACEHOLDER: &str = "0000000000";
 /// This walks ALL levels of the TOC hierarchy so that sub-chapter entries
 /// are included in the generated navigation (filepos links, pagebreaks,
 /// and INDX entries).
-fn flatten_toc_tree(items: &[crate::domain::toc::TocItem]) -> Vec<(usize, String, String)> {
+fn flatten_toc_tree(items: &[crate::domain::toc::TocItem]) -> Vec<(usize, &str, &str)> {
     let mut result = Vec::new();
-    fn walk(
-        items: &[crate::domain::toc::TocItem],
+    fn walk<'a>(
+        items: &'a [crate::domain::toc::TocItem],
         depth: usize,
-        out: &mut Vec<(usize, String, String)>,
+        out: &mut Vec<(usize, &'a str, &'a str)>,
     ) {
         for item in items {
-            out.push((depth, item.title.clone(), item.href.clone()));
+            out.push((depth, &item.title, &item.href));
             walk(&item.children, depth + 1, out);
         }
     }
@@ -874,21 +874,21 @@ fn find_id_positions(content: &str) -> std::collections::HashMap<&str, usize> {
 ///
 /// Returns the modified content and a map from fragment_id to its byte offset
 /// (relative to the content string, AFTER pagebreak insertion).
-fn insert_pagebreaks_for_fragments(
-    content: &str,
-    fragment_ids: &std::collections::HashSet<String>,
-) -> (String, std::collections::HashMap<String, usize>) {
+fn insert_pagebreaks_for_fragments<'a>(
+    content: &'a str,
+    fragment_ids: &std::collections::HashSet<&str>,
+) -> (Cow<'a, str>, std::collections::HashMap<String, usize>) {
     if fragment_ids.is_empty() {
-        return (content.to_string(), std::collections::HashMap::new());
+        return (Cow::Borrowed(content), std::collections::HashMap::new());
     }
 
     let id_positions = find_id_positions(content);
 
     // Collect positions where we need to insert pagebreaks, sorted.
     let mut insertions: Vec<(usize, &str)> = Vec::new();
-    for frag_id in fragment_ids {
-        if let Some(&pos) = id_positions.get(frag_id.as_str()) {
-            insertions.push((pos, frag_id.as_str()));
+    for &frag_id in fragment_ids {
+        if let Some(&pos) = id_positions.get(frag_id) {
+            insertions.push((pos, frag_id));
         }
     }
     insertions.sort_by_key(|&(pos, _)| pos);
@@ -896,7 +896,7 @@ fn insert_pagebreaks_for_fragments(
     insertions.dedup_by_key(|item| item.0);
 
     if insertions.is_empty() {
-        return (content.to_string(), std::collections::HashMap::new());
+        return (Cow::Borrowed(content), std::collections::HashMap::new());
     }
 
     // Build the new content with pagebreaks inserted.
@@ -916,13 +916,13 @@ fn insert_pagebreaks_for_fragments(
     // Now compute fragment offsets in the NEW content.
     // Re-scan the result for id positions.
     let new_id_positions = find_id_positions(&result);
-    for frag_id in fragment_ids {
-        if let Some(&pos) = new_id_positions.get(frag_id.as_str()) {
-            offsets.insert(frag_id.clone(), pos);
+    for &frag_id in fragment_ids {
+        if let Some(&pos) = new_id_positions.get(frag_id) {
+            offsets.insert(frag_id.to_string(), pos);
         }
     }
 
-    (result, offsets)
+    (Cow::Owned(result), offsets)
 }
 
 /// Converts Book content to MOBI-compatible HTML with filepos-based TOC links.
@@ -963,20 +963,20 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 
     // Build a map: spine manifest href -> spine index in chapter_info.
     // This lets us resolve TOC entry hrefs to the correct spine item.
-    let mut href_to_chapter_info_idx: std::collections::HashMap<String, usize> =
+    let mut href_to_chapter_info_idx: std::collections::HashMap<&str, usize> =
         std::collections::HashMap::new();
     for (info_idx, (spine_idx, _)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
         if let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) {
-            href_to_chapter_info_idx.insert(manifest_item.href.clone(), info_idx);
+            href_to_chapter_info_idx.insert(&manifest_item.href, info_idx);
         }
     }
 
     // Group TOC entries by their base href (spine item) to identify which
     // fragment IDs need pagebreaks within each chapter.
     let mut fragments_by_chapter: std::collections::HashMap<
-        String,
-        std::collections::HashSet<String>,
+        &str,
+        std::collections::HashSet<&str>,
     > = std::collections::HashMap::new();
     for (_depth, _title, href) in &all_toc_entries {
         if let Some(hash_pos) = href.find('#') {
@@ -984,9 +984,9 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
             let frag = &href[hash_pos + 1..];
             if !frag.is_empty() {
                 fragments_by_chapter
-                    .entry(base.to_string())
+                    .entry(base)
                     .or_default()
-                    .insert(frag.to_string());
+                    .insert(frag);
             }
         }
     }
@@ -1078,7 +1078,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
         }
 
         // Chapter heading — only add if the content doesn't already start with one.
-        let cleaned_content = if content.contains('<') {
+        let cleaned_content = if memchr::memchr(b'<', content.as_bytes()).is_some() {
             Some(strip_xhtml_wrapper(content))
         } else {
             None
@@ -1086,13 +1086,12 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
         let content_has_heading = cleaned_content
             .as_deref()
             .map(|c| {
-                let trimmed = c.trim_start();
-                trimmed.starts_with("<h1")
-                    || trimmed.starts_with("<h2")
-                    || trimmed.starts_with("<h3")
-                    || trimmed.starts_with("<H1")
-                    || trimmed.starts_with("<H2")
-                    || trimmed.starts_with("<H3")
+                let tb = c.trim_start().as_bytes();
+                tb.len() >= 3
+                    && tb[0] == b'<'
+                    && (tb[1] == b'h' || tb[1] == b'H')
+                    && tb[2] >= b'1'
+                    && tb[2] <= b'3'
             })
             .unwrap_or(false);
 
@@ -1153,7 +1152,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     for (_depth, _title, href) in &all_toc_entries {
         if let Some(hash_pos) = href.find('#') {
             // Entry has a fragment — try fragment_offsets first.
-            if let Some(&offset) = fragment_offsets.get(href.as_str()) {
+            if let Some(&offset) = fragment_offsets.get(*href) {
                 toc_target_offsets.push(offset);
             } else {
                 // Fragment not found; fall back to the chapter start.
@@ -1167,7 +1166,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
         } else {
             // No fragment — map to the chapter start.
             let offset = href_to_chapter_info_idx
-                .get(href.as_str())
+                .get(*href)
                 .map(|&idx| chapter_start_offsets[idx])
                 .unwrap_or(0);
             toc_target_offsets.push(offset);
@@ -1179,24 +1178,33 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     // so in-place replacement preserves valid UTF-8 and doesn't shift offsets.
     let bytes = unsafe { html.as_bytes_mut() };
 
+    // Reusable buffer for formatting 10-digit offsets, avoiding per-fixup allocation.
+    let mut fmt_buf = String::with_capacity(10);
+
     // Fix guide "toc" reference -> point to the TOC div start.
     if let Some(pos) = guide_toc_placeholder {
-        let replacement = format!("{:010}", toc_start_offset);
-        bytes[pos..pos + 10].copy_from_slice(replacement.as_bytes());
+        fmt_buf.clear();
+        use std::fmt::Write;
+        write!(&mut fmt_buf, "{:010}", toc_start_offset).unwrap();
+        bytes[pos..pos + 10].copy_from_slice(fmt_buf.as_bytes());
     }
 
     // Fix guide "text" reference -> point to the first chapter start.
     if let Some(pos) = guide_text_placeholder {
         let target = first_chapter_offset.unwrap_or(toc_start_offset);
-        let replacement = format!("{:010}", target);
-        bytes[pos..pos + 10].copy_from_slice(replacement.as_bytes());
+        fmt_buf.clear();
+        use std::fmt::Write;
+        write!(&mut fmt_buf, "{:010}", target).unwrap();
+        bytes[pos..pos + 10].copy_from_slice(fmt_buf.as_bytes());
     }
 
     // Fix TOC entry links -> point to the resolved offsets for each entry.
     for (toc_idx, placeholder_pos) in toc_entry_placeholders.iter().enumerate() {
         let target_offset = toc_target_offsets[toc_idx];
-        let replacement = format!("{:010}", target_offset);
-        bytes[*placeholder_pos..*placeholder_pos + 10].copy_from_slice(replacement.as_bytes());
+        fmt_buf.clear();
+        use std::fmt::Write;
+        write!(&mut fmt_buf, "{:010}", target_offset).unwrap();
+        bytes[*placeholder_pos..*placeholder_pos + 10].copy_from_slice(fmt_buf.as_bytes());
     }
 
     // Build the navigation entries vector: (title, byte_offset) for ALL TOC entries.
@@ -1207,7 +1215,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     for (i, (_depth, entry_title, _href)) in all_toc_entries.iter().enumerate() {
         let offset = toc_target_offsets[i];
         if seen_offsets.insert(offset) {
-            all_entries.push((entry_title.clone(), offset));
+            all_entries.push((entry_title.to_string(), offset));
         }
     }
 
