@@ -9,7 +9,7 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
     let mut reader = XmlReader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(256);
     let mut in_nav_map = false;
 
     // Stack tracks the nesting of navPoint elements.

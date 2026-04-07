@@ -25,7 +25,8 @@ pub fn parse_opf<R: Read + Seek>(archive: &mut ZipArchive<R>, opf_path: &str) ->
         .by_name(opf_path)
         .map_err(|_| EruditioError::Format(format!("OPF file {} not found", opf_path)))?;
 
-    let mut contents = String::new();
+    let size_hint = opf_file.size() as usize;
+    let mut contents = String::with_capacity(size_hint.min(1 << 20));
     opf_file.read_to_string(&mut contents)?;
 
     parse_opf_xml(&contents)
@@ -44,7 +45,7 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
         ncx_id: None,
     };
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(256);
     let mut section = Section::None;
     let mut current_dc_tag = String::new();
     let mut current_text = String::new();

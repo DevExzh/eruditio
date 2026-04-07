@@ -10,13 +10,14 @@ pub(crate) fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Resu
         .by_name("META-INF/container.xml")
         .map_err(|_| EruditioError::Format("Missing META-INF/container.xml".to_string()))?;
 
-    let mut contents = String::new();
+    let size_hint = container_file.size() as usize;
+    let mut contents = String::with_capacity(size_hint.min(1 << 20));
     container_file.read_to_string(&mut contents)?;
 
     let mut xml_reader = XmlReader::from_str(&contents);
     xml_reader.config_mut().trim_text(true);
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(256);
     let mut opf_path = None;
 
     loop {

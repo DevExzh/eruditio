@@ -10,7 +10,7 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
     let mut reader = XmlReader::from_str(xhtml);
     reader.config_mut().trim_text(true);
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(256);
 
     let mut in_toc_nav = false;
 
