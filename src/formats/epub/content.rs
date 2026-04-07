@@ -78,7 +78,10 @@ pub(crate) fn resolve_href(opf_dir: &str, href: &str) -> String {
     if opf_dir.is_empty() || href.starts_with('/') {
         return href.to_string();
     }
-    format!("{}{}", opf_dir, href)
+    let mut result = String::with_capacity(opf_dir.len() + href.len());
+    result.push_str(opf_dir);
+    result.push_str(href);
+    result
 }
 
 /// Extracts the directory portion of the OPF path (including trailing slash).
