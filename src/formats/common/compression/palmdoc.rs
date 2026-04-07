@@ -129,6 +129,64 @@ impl HashChain {
         }
     }
 
+    /// Computes the match length between `data[a_pos..]` and `data[b_pos..]`,
+    /// up to `max_len` bytes.
+    ///
+    /// On little-endian targets, uses u64 XOR comparison to find the first
+    /// differing byte in a branchless manner, replacing up to 10 conditional
+    /// branches with 1-2 branches plus integer arithmetic.
+    #[inline]
+    fn match_length(data: &[u8], a_pos: usize, b_pos: usize, max_len: usize) -> usize {
+        debug_assert!(max_len <= MAX_MATCH); // At most 10
+
+        #[cfg(target_endian = "little")]
+        {
+            // Fast path: if both positions have at least 8 bytes remaining in
+            // the data buffer, we can do a single u64 comparison for the first
+            // 8 bytes, then scalar for the remaining 2 (MAX_MATCH=10).
+            if a_pos + 8 <= data.len() && b_pos + 8 <= data.len() {
+                // SAFETY: We just verified that `a_pos + 8 <= data.len()` and
+                // `b_pos + 8 <= data.len()`, so reading 8 bytes from each
+                // position is within bounds. We use `read_unaligned` because
+                // these positions are not guaranteed to be 8-byte aligned.
+                let a_word = unsafe {
+                    (data.as_ptr().add(a_pos) as *const u64).read_unaligned()
+                };
+                let b_word = unsafe {
+                    (data.as_ptr().add(b_pos) as *const u64).read_unaligned()
+                };
+
+                let xor = a_word ^ b_word;
+                if xor != 0 {
+                    // On little-endian, trailing zeros / 8 gives the index of
+                    // the first differing byte.
+                    let first_diff = (xor.trailing_zeros() / 8) as usize;
+                    return first_diff.min(max_len);
+                }
+
+                // First 8 bytes match. Check remaining bytes (up to 2 more
+                // since MAX_MATCH=10) with scalar comparison.
+                let mut length = 8.min(max_len);
+                while length < max_len
+                    && data[a_pos + length] == data[b_pos + length]
+                {
+                    length += 1;
+                }
+                return length;
+            }
+        }
+
+        // Scalar fallback: used near the end of the buffer (where we can't
+        // safely read 8 bytes) or on big-endian targets.
+        let mut length = 0;
+        while length < max_len
+            && data[a_pos + length] == data[b_pos + length]
+        {
+            length += 1;
+        }
+        length
+    }
+
     /// Walks the chain for the hash of `data[pos..pos+3]` and returns the best
     /// `(distance, length)` pair, or `None` if no match of at least `MIN_MATCH`
     /// is found.
@@ -160,14 +218,7 @@ impl HashChain {
                 continue;
             }
 
-            // Inline scalar match: MAX_MATCH=10 makes SIMD overhead
-            // (64-byte load + movemask) exceed a simple 10-iteration loop.
-            let a = &data[cand..];
-            let b = &data[pos..];
-            let mut length = 0;
-            while length < max_len && a[length] == b[length] {
-                length += 1;
-            }
+            let length = Self::match_length(data, cand, pos, max_len);
 
             if length >= MIN_MATCH && length > best_length {
                 best_distance = pos - cand;
@@ -418,10 +469,70 @@ impl PalmDocCompressor {
                 // Update hash chain at every other position + the last position.
                 // Halves insert overhead for MAX_MATCH=10 with minimal
                 // compression ratio impact.
-                for p in (i..i + length - 1).step_by(2) {
-                    self.chain.insert(input, p);
+                //
+                // Unrolled via match to replace the unpredictable `while p < end`
+                // loop (92M branch mispredictions per cachegrind) with a single
+                // computed jump. length is in [3, 10]; the number of stride-2
+                // inserts before the final one varies from 1 to 5.
+                match length {
+                    3 => {
+                        // stride: i; last: i+2
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                    }
+                    4 => {
+                        // stride: i, i+2; last: i+3
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 3);
+                    }
+                    5 => {
+                        // stride: i, i+2; last: i+4
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 4);
+                    }
+                    6 => {
+                        // stride: i, i+2, i+4; last: i+5
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 4);
+                        self.chain.insert(input, i + 5);
+                    }
+                    7 => {
+                        // stride: i, i+2, i+4; last: i+6
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 4);
+                        self.chain.insert(input, i + 6);
+                    }
+                    8 => {
+                        // stride: i, i+2, i+4, i+6; last: i+7
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 4);
+                        self.chain.insert(input, i + 6);
+                        self.chain.insert(input, i + 7);
+                    }
+                    9 => {
+                        // stride: i, i+2, i+4, i+6; last: i+8
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 4);
+                        self.chain.insert(input, i + 6);
+                        self.chain.insert(input, i + 8);
+                    }
+                    10 => {
+                        // stride: i, i+2, i+4, i+6, i+8; last: i+9
+                        self.chain.insert(input, i);
+                        self.chain.insert(input, i + 2);
+                        self.chain.insert(input, i + 4);
+                        self.chain.insert(input, i + 6);
+                        self.chain.insert(input, i + 8);
+                        self.chain.insert(input, i + 9);
+                    }
+                    _ => unreachable!(),
                 }
-                self.chain.insert(input, i + length - 1);
 
                 let compound = ((distance << 3) | (length - 3)) as u16;
                 output.push(0x80 | ((compound >> 8) as u8));
