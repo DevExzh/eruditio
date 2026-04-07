@@ -509,7 +509,7 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
 }
 
 /// Extracts the <body> content from an XHTML document.
-fn extract_body<'a>(html: &'a str) -> Option<&'a str> {
+fn extract_body(html: &str) -> Option<&str> {
     let bytes = html.as_bytes();
     let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
     let content_start = html[body_start..].find('>')? + body_start + 1;
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn extract_body_works() {
         let html = "<html><body><p>Hello</p></body></html>";
-        assert_eq!(extract_body(html), Some("<p>Hello</p>".into()));
+        assert_eq!(extract_body(html), Some("<p>Hello</p>"));
     }
 
     #[test]
@@ -738,12 +738,12 @@ mod tests {
     #[test]
     fn extract_body_case_insensitive() {
         let html = "<HTML><BODY><p>Content</p></BODY></HTML>";
-        assert_eq!(extract_body(html), Some("<p>Content</p>".into()));
+        assert_eq!(extract_body(html), Some("<p>Content</p>"));
     }
 
     #[test]
     fn extract_body_mixed_case() {
         let html = "<html><Body class=\"main\"><p>Hello</p></body></html>";
-        assert_eq!(extract_body(html), Some("<p>Hello</p>".into()));
+        assert_eq!(extract_body(html), Some("<p>Hello</p>"));
     }
 }
