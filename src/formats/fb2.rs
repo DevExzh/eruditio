@@ -1,3 +1,5 @@
+use std::fmt::Write as FmtWrite;
+
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
@@ -33,7 +35,7 @@ impl FormatReader for Fb2Reader {
         xml_reader.config_mut().trim_text(true);
 
         let mut book = Book::new();
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(256);
 
         // State tracking -- incremental path buffer avoids join("/") allocation per element.
         let mut path_buf = String::with_capacity(128);
@@ -42,6 +44,8 @@ impl FormatReader for Fb2Reader {
         let mut current_section_title = None;
         let mut current_section_content = String::new();
         let mut section_counter: u32 = 0;
+        // Reusable buffer for small format strings (section IDs, image hrefs).
+        let mut fmt_buf = String::with_capacity(32);
         // Track nested section depth within <body> so that content inside
         // `<section>` elements at any depth is captured, not just the first level.
         let mut section_depth: u32 = 0;
@@ -84,10 +88,12 @@ impl FormatReader for Fb2Reader {
                                 || !current_section_content.is_empty())
                         {
                             section_counter += 1;
+                            fmt_buf.clear();
+                            let _ = write!(fmt_buf, "section_{}", section_counter);
                             book.add_chapter(Chapter {
                                 title: current_section_title.take(),
                                 content: std::mem::take(&mut current_section_content),
-                                id: Some(format!("section_{}", section_counter)),
+                                id: Some(fmt_buf.clone()),
                             });
                         }
                         section_depth += 1;
@@ -125,8 +131,9 @@ impl FormatReader for Fb2Reader {
                                 .take()
                                 .unwrap_or_else(|| "application/octet-stream".into());
 
-                            let href = format!("images/{}", &id);
-                            book.add_resource(&id, &href, decoded, media_type);
+                            fmt_buf.clear();
+                            let _ = write!(fmt_buf, "images/{}", &id);
+                            book.add_resource(&id, &fmt_buf, decoded, media_type);
                         }
                     } else if !in_body {
                         // Parse metadata
@@ -140,7 +147,8 @@ impl FormatReader for Fb2Reader {
                                 book.metadata.authors.push(current_text.clone());
                             } else if tag == "last-name" || tag == "middle-name" {
                                 if let Some(last) = book.metadata.authors.last_mut() {
-                                    *last = format!("{} {}", last, current_text);
+                                    last.push(' ');
+                                    last.push_str(&current_text);
                                 } else {
                                     book.metadata.authors.push(current_text.clone());
                                 }
@@ -948,8 +956,7 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("\" content-type=\"");
         xml.push_str(&escape_html(resource.media_type));
         xml.push_str("\">");
-        let b64 = base64::engine::general_purpose::STANDARD.encode(resource.data);
-        xml.push_str(&b64);
+        base64::engine::general_purpose::STANDARD.encode_string(resource.data, &mut xml);
         xml.push_str("</binary>\n");
     }
 
