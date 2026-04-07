@@ -1,5 +1,7 @@
 //! HTML parsing utilities for extracting metadata and content.
 
+use std::borrow::Cow;
+
 use crate::domain::metadata::Metadata;
 use crate::formats::common::text_utils;
 use crate::formats::common::text_utils::escape_xml as escape_html;
@@ -41,11 +43,11 @@ pub(crate) fn extract_body(html: &str) -> &str {
 ///
 /// Splits on `<h1>` and `<h2>` tags. Each chunk becomes a chapter.
 /// If no headings are found, returns the entire content as one chapter.
-pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
+pub(crate) fn split_into_chapters<'a>(body: &'a str) -> Vec<(Option<Cow<'a, str>>, &'a str)> {
     let mut chapters = Vec::new();
 
     // Find all h1/h2 positions.
-    let mut split_points: Vec<(usize, String)> = Vec::new();
+    let mut split_points: Vec<(usize, Cow<'a, str>)> = Vec::new();
 
     // Pre-computed tag strings — avoids `format!()` allocation in the loop.
     const HEADING_TAGS: [(&[u8], &[u8]); 2] = [(b"<h1", b"</h1>"), (b"<h2", b"</h2>")];
@@ -64,12 +66,19 @@ pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
                 if let Some(close_pos) =
                     text_utils::find_case_insensitive(&body.as_bytes()[content_start..], close_tag)
                 {
-                    let heading_text =
-                        strip_html_tags(&body[content_start..content_start + close_pos])
-                            .trim()
-                            .to_string();
-                    if !heading_text.is_empty() {
-                        split_points.push((abs_pos, heading_text));
+                    let heading_cow =
+                        text_utils::strip_tags(&body[content_start..content_start + close_pos]);
+                    let trimmed = heading_cow.trim();
+                    if !trimmed.is_empty() {
+                        // Re-borrow or own depending on whether strip_tags modified the input.
+                        let title: Cow<'a, str> = match heading_cow {
+                            Cow::Borrowed(s) => {
+                                // strip_tags returned a borrow into body; trim is also a sub-slice.
+                                Cow::Borrowed(s.trim())
+                            }
+                            Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
+                        };
+                        split_points.push((abs_pos, title));
                     }
                 }
             }
@@ -85,7 +94,7 @@ pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
         // No headings — single chapter.
         let trimmed = body.trim();
         if !trimmed.is_empty() {
-            chapters.push((None, trimmed.to_string()));
+            chapters.push((None, trimmed));
         }
         return chapters;
     }
@@ -93,21 +102,21 @@ pub(crate) fn split_into_chapters(body: &str) -> Vec<(Option<String>, String)> {
     // Content before the first heading.
     let before = body[..split_points[0].0].trim();
     if !before.is_empty() {
-        chapters.push((None, before.to_string()));
+        chapters.push((None, before));
     }
 
     // Each heading starts a new chapter.
     for i in 0..split_points.len() {
-        let (start, ref title) = split_points[i];
+        let start = split_points[i].0;
         let end = if i + 1 < split_points.len() {
             split_points[i + 1].0
         } else {
             body.len()
         };
 
-        let content = body[start..end].trim().to_string();
+        let content = body[start..end].trim();
         if !content.is_empty() {
-            chapters.push((Some(title.clone()), content));
+            chapters.push((Some(split_points[i].1.clone()), content));
         }
     }
 
@@ -193,24 +202,24 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
         if let Some(name) = extract_attribute(tag, "name")
             && let Some(content) = extract_attribute(tag, "content")
         {
-            match name.as_str() {
+            match name {
                 "author" | "dc.creator" => {
-                    meta.authors.push(content);
+                    meta.authors.push(content.to_string());
                 },
                 "description" | "dc.description" => {
-                    meta.description = Some(content);
+                    meta.description = Some(content.to_string());
                 },
                 "language" | "dc.language" => {
-                    meta.language = Some(content);
+                    meta.language = Some(content.to_string());
                 },
                 "publisher" | "dc.publisher" => {
-                    meta.publisher = Some(content);
+                    meta.publisher = Some(content.to_string());
                 },
                 "keywords" | "dc.subject" => {
                     for kw in content.split(',') {
-                        let trimmed = kw.trim().to_string();
+                        let trimmed = kw.trim();
                         if !trimmed.is_empty() {
-                            meta.subjects.push(trimmed);
+                            meta.subjects.push(trimmed.to_string());
                         }
                     }
                 },
@@ -223,7 +232,7 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
             && text_utils::contains_ascii_ci(tag, "content-language")
             && let Some(content) = extract_attribute(tag, "content")
         {
-            meta.language = Some(content);
+            meta.language = Some(content.to_string());
         }
 
         search_from = tag_end + 1;
@@ -232,7 +241,7 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
 
 /// Extracts an attribute value from an HTML tag string using case-insensitive
 /// attribute name matching. No allocation is performed for the search pattern.
-fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
+fn extract_attribute<'t>(tag: &'t str, attr_name: &str) -> Option<&'t str> {
     let attr_bytes = attr_name.as_bytes();
     debug_assert!(
         attr_bytes.len() < 62,
@@ -247,12 +256,7 @@ fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
     let start = text_utils::find_case_insensitive(tag.as_bytes(), &pattern[..pat_len])?;
     let value_start = start + pat_len;
     let value_end = tag[value_start..].find('"')? + value_start;
-    Some(tag[value_start..value_end].to_string())
-}
-
-/// Strips HTML tags from a string.
-fn strip_html_tags(html: &str) -> String {
-    crate::formats::common::text_utils::strip_tags(html).into_owned()
+    Some(&tag[value_start..value_end])
 }
 
 /// Strips outer HTML structure tags (html, head, body) leaving content.

@@ -54,8 +54,8 @@ impl FormatReader for HtmlReader {
         } else {
             for (i, (title, content)) in chapters.into_iter().enumerate() {
                 book.add_chapter(Chapter {
-                    title,
-                    content,
+                    title: title.map(|t| t.into_owned()),
+                    content: content.to_string(),
                     id: Some(format!("chapter_{}", i)),
                 });
             }
