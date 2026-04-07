@@ -185,6 +185,14 @@ impl HuffCdicReader {
         self.unpack_inner(data, 0)
     }
 
+    /// Decompresses a single text record directly into the provided output buffer,
+    /// avoiding an intermediate allocation.
+    pub fn unpack_into(&mut self, data: &[u8], output: &mut Vec<u8>) -> Result<()> {
+        let decompressed = self.unpack_inner(data, 0)?;
+        output.extend_from_slice(&decompressed);
+        Ok(())
+    }
+
     /// Inner decompression with depth tracking to prevent infinite recursion.
     fn unpack_inner(&mut self, data: &[u8], depth: usize) -> Result<Vec<u8>> {
         if depth > MAX_DEPTH {

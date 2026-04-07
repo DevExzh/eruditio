@@ -15,6 +15,7 @@ use crate::formats::common::compression::huffcdic::HuffCdicReader;
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{PdbFile, read_u32_be};
 use crate::formats::common::text_utils::{self, decode_cp1252, strip_tags};
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 use self::exth::{
@@ -105,12 +106,16 @@ fn decode_kindle_base32(s: &str) -> Option<usize> {
 /// - `image_paths`: indexed by 0-based image record number
 /// - `flow_paths`: indexed by flow number (flow 0 = None since it's the main content)
 /// - `chapter_count`: total number of content parts (for kindle:pos:fid resolution)
-fn resolve_kindle_references(
-    html: &str,
+fn resolve_kindle_references<'a>(
+    html: &'a str,
     image_paths: &[String],
     flow_paths: &[Option<String>],
     chapter_count: usize,
-) -> String {
+) -> Cow<'a, str> {
+    if !html.contains("kindle:") {
+        return Cow::Borrowed(html);
+    }
+
     let mut result = String::with_capacity(html.len());
     let mut remaining = html;
 
@@ -135,7 +140,7 @@ fn resolve_kindle_references(
     }
 
     result.push_str(remaining);
-    result
+    Cow::Owned(result)
 }
 
 /// Tries to resolve a kindle:embed:XXXX reference.
@@ -531,7 +536,7 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
         if let Some(val) = extract_attr_value(tag, b"id")
             && !val.is_empty()
         {
-            return Some(val);
+            return Some(val.to_string());
         }
         // Only check name= on <a> tags to avoid matching <meta name="..."> etc.
         if tag.len() >= 2
@@ -541,7 +546,7 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
             && let Some(val) = extract_attr_value(tag, b"name")
             && !val.is_empty()
         {
-            return Some(val);
+            return Some(val.to_string());
         }
 
         end = plt;
@@ -555,7 +560,7 @@ fn find_nearest_anchor(data: &[u8], pos: usize) -> Option<String> {
 ///
 /// Zero-allocation: uses inline case-insensitive comparison instead of
 /// lowercasing the entire tag into a temporary `Vec<u8>`.
-fn extract_attr_value(tag: &[u8], attr_name: &[u8]) -> Option<String> {
+fn extract_attr_value<'t>(tag: &'t [u8], attr_name: &[u8]) -> Option<&'t str> {
     // Build the search pattern ` attr=` on the stack (attr names are short).
     let pattern_len = 1 + attr_name.len() + 1; // space + name + '='
     debug_assert!(
@@ -595,16 +600,18 @@ fn extract_attr_value(tag: &[u8], attr_name: &[u8]) -> Option<String> {
 
     let value_bytes = &trimmed[1..];
     let end = value_bytes.iter().position(|&b| b == quote)?;
-    std::str::from_utf8(&value_bytes[..end])
-        .ok()
-        .map(|s| s.to_string())
+    std::str::from_utf8(&value_bytes[..end]).ok()
 }
 
 /// Resolves remaining `kindle:pos:fid` references in HTML content using
 /// the PosFidResolver. This is called as a second pass after the basic
 /// `resolve_kindle_references` to handle cross-file references that the
 /// simple fid-to-chapter mapping couldn't resolve.
-fn resolve_remaining_pos_fid(html: &str, resolver: &PosFidResolver<'_>) -> String {
+fn resolve_remaining_pos_fid<'a>(html: &'a str, resolver: &PosFidResolver<'_>) -> Cow<'a, str> {
+    if !html.contains("kindle:pos:fid:") {
+        return Cow::Borrowed(html);
+    }
+
     let mut result = String::with_capacity(html.len());
     let mut remaining = html;
 
@@ -636,7 +643,7 @@ fn resolve_remaining_pos_fid(html: &str, resolver: &PosFidResolver<'_>) -> Strin
     }
 
     result.push_str(remaining);
-    result
+    Cow::Owned(result)
 }
 
 /// Detects the content type and file extension of a KF8 flow resource.
@@ -837,8 +844,8 @@ impl FormatReader for MobiReader {
             } else {
                 chapter_count
             };
-            for (i, ch) in raw_chapters.iter().enumerate() {
-                let mut resolved = resolve_kindle_references(
+            for (i, ch) in raw_chapters.into_iter().enumerate() {
+                let resolved = resolve_kindle_references(
                     &ch.content,
                     &image_paths,
                     &flow_paths,
@@ -847,15 +854,17 @@ impl FormatReader for MobiReader {
 
                 // Second pass: use the full PosFidResolver for any remaining
                 // kindle:pos:fid references (cross-file TOC links, etc.).
-                if let Some(ref resolver) = pos_fid_resolver
+                let final_content = if let Some(ref resolver) = pos_fid_resolver
                     && resolved.contains("kindle:pos:fid:")
                 {
-                    resolved = resolve_remaining_pos_fid(&resolved, resolver);
-                }
+                    resolve_remaining_pos_fid(&resolved, resolver).into_owned()
+                } else {
+                    resolved.into_owned()
+                };
 
                 book.add_chapter(Chapter {
-                    title: ch.title.clone(),
-                    content: resolved,
+                    title: ch.title,
+                    content: final_content,
                     id: Some(format!("mobi_ch_{}", i)),
                 });
             }
@@ -869,10 +878,10 @@ impl FormatReader for MobiReader {
 
             // Split into chapters by pagebreaks or treat as single chapter.
             let chapters = split_mobi_content(&content);
-            for (i, ch) in chapters.iter().enumerate() {
+            for (i, ch) in chapters.into_iter().enumerate() {
                 book.add_chapter(Chapter {
-                    title: ch.title.clone(),
-                    content: ch.content.clone(),
+                    title: ch.title,
+                    content: ch.content.into_owned(),
                     id: Some(format!("mobi_ch_{}", i)),
                 });
             }
@@ -955,10 +964,9 @@ fn decompress_text(
                 let reader = huff_reader.as_mut().ok_or_else(|| {
                     EruditioError::Compression("HUFF/CDIC reader not initialized".into())
                 })?;
-                let decompressed = reader.unpack(record_data).map_err(|e| {
+                reader.unpack_into(record_data, &mut text).map_err(|e| {
                     EruditioError::Compression(format!("HUFF/CDIC decompression failed: {}", e))
                 })?;
-                text.extend_from_slice(&decompressed);
                 if text.len() > MAX_TEXT_OUTPUT {
                     return Err(EruditioError::Format(
                         "Decompressed text exceeds maximum allowed size".into(),
@@ -1183,7 +1191,7 @@ fn detect_image_type(data: &[u8]) -> (&'static str, &'static str) {
 ///
 /// If no multiple documents are detected, it falls back to `split_mobi_content()`
 /// (pagebreak-based splitting).
-fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
+fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
     let parts = split_on_xhtml_boundaries(html);
 
     if parts.len() <= 1 {
@@ -1221,7 +1229,7 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
     if chapters.is_empty() {
         chapters.push(SimpleChapter {
             title: None,
-            content: html.to_string(),
+            content: Cow::Borrowed(html),
         });
     }
 
@@ -1242,26 +1250,26 @@ fn split_kf8_content(html: &str) -> Vec<SimpleChapter> {
 ///
 /// If there is no content after `</html>`, or if the structure doesn't match
 /// the expected KF8 skeleton pattern, the input is returned unchanged.
-fn reassemble_kf8_xhtml(part: &str) -> String {
+fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
     let bytes = part.as_bytes();
 
     // Find the closing </html> tag (case-insensitive).
     let html_close_pos = match text_utils::find_case_insensitive(bytes, b"</html") {
         Some(pos) => pos,
-        None => return part.to_string(),
+        None => return Cow::Borrowed(part),
     };
 
     // Find the end of the </html...> tag.
     let html_tag_end = match part[html_close_pos..].find('>') {
         Some(offset) => html_close_pos + offset + 1,
-        None => return part.to_string(),
+        None => return Cow::Borrowed(part),
     };
 
     // Extract trailing content after </html>.
     let trailing = part[html_tag_end..].trim();
     if trailing.is_empty() {
         // No misplaced content; the document is already well-formed.
-        return part.to_string();
+        return Cow::Borrowed(part);
     }
 
     // We have content after </html> that needs to be moved inside <body>.
@@ -1278,7 +1286,7 @@ fn reassemble_kf8_xhtml(part: &str) -> String {
             result.push_str(trailing);
             result.push('\n');
             result.push_str(&part[html_close_pos..html_tag_end]);
-            return result;
+            return Cow::Owned(result);
         },
     };
 
@@ -1290,7 +1298,7 @@ fn reassemble_kf8_xhtml(part: &str) -> String {
     result.push_str(trailing);
     result.push('\n');
     result.push_str(&skeleton[body_close_pos..]);
-    result
+    Cow::Owned(result)
 }
 
 /// Splits HTML content at XHTML document boundaries (`<?xml` declarations).
@@ -1378,7 +1386,7 @@ fn split_at_positions<'a>(html: &'a str, positions: &[usize]) -> Vec<&'a str> {
 ///
 /// MOBI files use `<mbp:pagebreak />` or `<a filepos=...>` for chapter breaks.
 /// This is a simplified splitter that looks for common patterns.
-fn split_mobi_content(html: &str) -> Vec<SimpleChapter> {
+fn split_mobi_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
     let mut chapters = Vec::new();
 
     // Split on <mbp:pagebreak /> or <mbp:pagebreak/>.
@@ -1388,7 +1396,7 @@ fn split_mobi_content(html: &str) -> Vec<SimpleChapter> {
         // No page breaks — single chapter.
         chapters.push(SimpleChapter {
             title: None,
-            content: html.to_string(),
+            content: Cow::Borrowed(html),
         });
         return chapters;
     }
@@ -1411,14 +1419,14 @@ fn split_mobi_content(html: &str) -> Vec<SimpleChapter> {
 
         chapters.push(SimpleChapter {
             title,
-            content: trimmed.to_string(),
+            content: Cow::Borrowed(trimmed),
         });
     }
 
     if chapters.is_empty() {
         chapters.push(SimpleChapter {
             title: None,
-            content: html.to_string(),
+            content: Cow::Borrowed(html),
         });
     }
 
@@ -1426,9 +1434,9 @@ fn split_mobi_content(html: &str) -> Vec<SimpleChapter> {
 }
 
 /// A simple chapter extracted from MOBI content.
-struct SimpleChapter {
+struct SimpleChapter<'a> {
     title: Option<String>,
-    content: String,
+    content: Cow<'a, str>,
 }
 
 /// Splits HTML on `<mbp:pagebreak` tags.
