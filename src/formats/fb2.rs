@@ -279,20 +279,19 @@ fn write_fb2_author_elements(xml: &mut String, authors: &[String], indent: &str)
     for author in authors {
         xml.push_str(indent);
         xml.push_str("<author>\n");
-        let parts: Vec<&str> = author.splitn(2, ' ').collect();
-        if parts.len() == 2 {
+        if let Some((first, last)) = author.split_once(' ') {
             xml.push_str(indent);
             xml.push_str("  <first-name>");
-            xml.push_str(&escape_html(parts[0]));
+            push_escape_html(xml, first);
             xml.push_str("</first-name>\n");
             xml.push_str(indent);
             xml.push_str("  <last-name>");
-            xml.push_str(&escape_html(parts[1]));
+            push_escape_html(xml, last);
             xml.push_str("</last-name>\n");
         } else {
             xml.push_str(indent);
             xml.push_str("  <first-name>");
-            xml.push_str(&escape_html(author));
+            push_escape_html(xml, author);
             xml.push_str("</first-name>\n");
         }
         xml.push_str(indent);
