@@ -502,17 +502,56 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                 let rest = &text[entity_start..];
                 if let Some(semi) = rest.find(';') {
                     let entity = &rest[..semi + 1];
-                    match entity {
-                        "&amp;" => result.push('&'),
-                        "&lt;" => result.push('<'),
-                        "&gt;" => result.push('>'),
-                        "&quot;" => result.push('"'),
-                        "&apos;" => result.push('\''),
-                        "&nbsp;" => result.push('\u{00A0}'),
-                        _ => {
-                            // Try numeric entity: &#NNN; or &#xHHH;
-                            if entity.starts_with("&#") {
-                                let num_part = &entity[2..entity.len() - 1]; // strip "&#" and ";"
+                    // First-byte dispatch: branch on the character after '&'
+                    // to avoid a chain of 6 full-string comparisons.
+                    let entity_bytes = entity.as_bytes();
+                    let replaced = if entity_bytes.len() >= 4 {
+                        match entity_bytes[1] {
+                            b'a' => {
+                                if entity_bytes.len() == 5
+                                    && entity_bytes[2] == b'm'
+                                    && entity_bytes[3] == b'p'
+                                {
+                                    // &amp;
+                                    Some('&')
+                                } else if entity_bytes.len() == 6
+                                    && entity_bytes[2] == b'p'
+                                    && entity_bytes[3] == b'o'
+                                    && entity_bytes[4] == b's'
+                                {
+                                    // &apos;
+                                    Some('\'')
+                                } else {
+                                    None
+                                }
+                            }
+                            b'l' if entity_bytes.len() == 4 && entity_bytes[2] == b't' => {
+                                // &lt;
+                                Some('<')
+                            }
+                            b'g' if entity_bytes.len() == 4 && entity_bytes[2] == b't' => {
+                                // &gt;
+                                Some('>')
+                            }
+                            b'q' if entity_bytes.len() == 6
+                                && entity_bytes[2] == b'u'
+                                && entity_bytes[3] == b'o'
+                                && entity_bytes[4] == b't' =>
+                            {
+                                // &quot;
+                                Some('"')
+                            }
+                            b'n' if entity_bytes.len() == 6
+                                && entity_bytes[2] == b'b'
+                                && entity_bytes[3] == b's'
+                                && entity_bytes[4] == b'p' =>
+                            {
+                                // &nbsp;
+                                Some('\u{00A0}')
+                            }
+                            b'#' => {
+                                // Numeric entity: &#NNN; or &#xHHH;
+                                let num_part = &entity[2..entity.len() - 1];
                                 let code_point = if let Some(hex) = num_part
                                     .strip_prefix('x')
                                     .or_else(|| num_part.strip_prefix('X'))
@@ -528,10 +567,19 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                                     pos = entity_start + semi + 1;
                                     continue;
                                 }
+                                None
                             }
-                            // Still unknown -- keep as-is
-                            result.push_str(entity);
-                        },
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(ch) = replaced {
+                        result.push(ch);
+                    } else {
+                        // Unknown entity -- keep as-is
+                        result.push_str(entity);
                     }
                     pos = entity_start + semi + 1;
                 } else {
