@@ -3,7 +3,6 @@ use std::fmt::Write as FmtWrite;
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
-use crate::formats::common::html_utils::escape_html;
 use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive, push_escape_html};
 use base64::Engine;
 use quick_xml::Reader as XmlReader;
@@ -594,7 +593,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 }
             } else {
                 // Unclosed '<' – treat as text
-                inline_buf.push_str(&escape_html(&html[pos..pos + 1]));
+                push_escape_html(&mut inline_buf, &html[pos..pos + 1]);
                 pos += 1;
             }
         } else {
@@ -610,7 +609,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
             if in_p {
                 // Inside a <p>: accumulate text as-is (preserving whitespace
                 // that is meaningful for inline formatting boundaries).
-                inline_buf.push_str(&escape_html(text));
+                push_escape_html(&mut inline_buf, text);
             } else if block_depth > 0 {
                 // Inside a block element (<div>): accumulate text, joining
                 // newlines with spaces to avoid paragraph splits.
@@ -623,7 +622,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     }
                     let trimmed = segment.trim();
                     if !trimmed.is_empty() {
-                        inline_buf.push_str(&escape_html(trimmed));
+                        push_escape_html(&mut inline_buf, trimmed);
                     }
                 }
             } else {
@@ -639,7 +638,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                 inline_buf.push(' ');
                             }
                         }
-                        inline_buf.push_str(&escape_html(trimmed));
+                        push_escape_html(&mut inline_buf, trimmed);
                     }
                 }
             }
