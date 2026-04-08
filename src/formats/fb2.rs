@@ -848,7 +848,7 @@ fn generate_fb2(book: &Book) -> String {
             book.manifest
                 .get(cid)
                 .filter(|item| item.media_type.starts_with("image/"))
-                .map(|item| item.id.clone())
+                .map(|item| item.id.as_str())
         })
         .or_else(|| {
             book.manifest
@@ -856,9 +856,9 @@ fn generate_fb2(book: &Book) -> String {
                 .find(|item| {
                     contains_ascii_ci(&item.id, "cover") && item.media_type.starts_with("image/")
                 })
-                .map(|item| item.id.clone())
+                .map(|item| item.id.as_str())
         });
-    if let Some(ref cid) = cover_id {
+    if let Some(cid) = cover_id {
         xml.push_str("      <coverpage><image l:href=\"#");
         xml.push_str(&escape_html(cid));
         xml.push_str("\"/></coverpage>\n");
