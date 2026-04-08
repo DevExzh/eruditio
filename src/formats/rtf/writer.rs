@@ -287,29 +287,28 @@ fn build_class_alignment_map(book: &Book) -> HashMap<String, String> {
 /// Handles selectors like `p.right`, `.center`, `div.myclass` where the
 /// declaration block contains `text-align: left|center|right`.
 fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
-    let css_lower = css.to_ascii_lowercase();
-    let len = css_lower.len();
+    let len = css.len();
     let mut pos = 0;
 
     while pos < len {
         // Find the next '{'.
-        let brace_start = match css_lower[pos..].find('{') {
+        let brace_start = match css[pos..].find('{') {
             Some(offset) => pos + offset,
             None => break,
         };
 
         // Find the matching '}'.
-        let brace_end = match css_lower[brace_start..].find('}') {
+        let brace_end = match css[brace_start..].find('}') {
             Some(offset) => brace_start + offset,
             None => break,
         };
 
-        // Extract selector and declaration block.
-        let selector = css_lower[pos..brace_start].trim();
-        let declarations = &css_lower[brace_start + 1..brace_end];
+        // Extract selector and declaration block (from the original, un-lowered CSS).
+        let selector = css[pos..brace_start].trim();
+        let declarations = &css[brace_start + 1..brace_end];
 
-        // Check if declarations contain text-align.
-        if let Some(ta_pos) = declarations.find("text-align") {
+        // Check if declarations contain text-align (case-insensitive).
+        if let Some(ta_pos) = find_ascii_case_insensitive(declarations, "text-align") {
             let after_ta = &declarations[ta_pos + 10..];
             let after_colon = after_ta
                 .trim_start()
@@ -317,15 +316,20 @@ fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
                 .unwrap_or(after_ta)
                 .trim_start();
 
-            let align_value = if after_colon.starts_with("right") {
-                Some("right")
-            } else if after_colon.starts_with("center") {
-                Some("center")
-            } else if after_colon.starts_with("left") {
-                Some("left")
-            } else {
-                None
-            };
+            let align_value =
+                if after_colon.len() >= 5 && after_colon[..5].eq_ignore_ascii_case("right") {
+                    Some("right")
+                } else if after_colon.len() >= 6
+                    && after_colon[..6].eq_ignore_ascii_case("center")
+                {
+                    Some("center")
+                } else if after_colon.len() >= 4
+                    && after_colon[..4].eq_ignore_ascii_case("left")
+                {
+                    Some("left")
+                } else {
+                    None
+                };
 
             if let Some(align) = align_value {
                 // Extract class name from selector. Support:
@@ -341,6 +345,7 @@ fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
                         let class_name: String = class_part
                             .chars()
                             .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                            .map(|c| c.to_ascii_lowercase())
                             .collect();
                         if !class_name.is_empty() {
                             map.insert(class_name, align.to_string());
@@ -352,6 +357,24 @@ fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
 
         pos = brace_end + 1;
     }
+}
+
+/// Finds a needle (assumed all-ASCII-lowercase) in a haystack using
+/// case-insensitive ASCII comparison, returning the byte offset of the first
+/// match.  Avoids allocating a lowered copy of the haystack.
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.len() > h.len() {
+        return None;
+    }
+    let limit = h.len() - n.len();
+    for i in 0..=limit {
+        if h[i..i + n.len()].eq_ignore_ascii_case(n) {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Converts simple HTML content to RTF control words.
@@ -626,12 +649,40 @@ fn write_rtf_char(rtf: &mut String, ch: char) {
         '\n' => rtf.push_str("\\par\n"),
         c if c as u32 > 127 => {
             // Unicode character: \uN followed by ? as replacement.
-            // Write directly to avoid format!() allocation per character.
-            use std::fmt::Write;
-            let _ = write!(rtf, "\\u{}?", c as i32);
+            // Use a stack buffer to avoid format!() machinery overhead.
+            rtf.push_str("\\u");
+            push_i32(rtf, c as i32);
+            rtf.push('?');
         },
         c => rtf.push(c),
     }
+}
+
+/// Pushes the decimal representation of an `i32` into a string using a stack
+/// buffer, avoiding the overhead of `write!`/`format!` machinery.
+fn push_i32(s: &mut String, value: i32) {
+    if value == 0 {
+        s.push('0');
+        return;
+    }
+    // An i32 has at most 10 digits + optional '-' sign = 11 bytes.
+    let mut buf = [0u8; 11];
+    let mut pos = buf.len();
+    let negative = value < 0;
+    // Work with the absolute value as u32 to avoid overflow on i32::MIN.
+    let mut n = (value as i64).unsigned_abs() as u32;
+    while n > 0 {
+        pos -= 1;
+        buf[pos] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    if negative {
+        pos -= 1;
+        buf[pos] = b'-';
+    }
+    // SAFETY: buf[pos..] contains only ASCII digits and possibly '-'.
+    let digits = unsafe { std::str::from_utf8_unchecked(&buf[pos..]) };
+    s.push_str(digits);
 }
 
 /// Writes a string to RTF, escaping special characters.
