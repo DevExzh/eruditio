@@ -153,9 +153,9 @@ fn insert_kobo_spans(html: &str) -> String {
                         if !text.trim().is_empty() {
                             seg_idx += 1;
                             out.push_str("<span class=\"koboSpan\" id=\"kobo.");
-                            out.push_str(&para_idx.to_string());
+                            push_u32(&mut out, para_idx);
                             out.push('.');
-                            out.push_str(&seg_idx.to_string());
+                            push_u32(&mut out, seg_idx);
                             out.push_str("\">");
                             out.push_str(text);
                             out.push_str("</span>");
@@ -210,6 +210,24 @@ fn is_block_open_tag(tag: &str) -> bool {
         || ci(b"<h6")
         || ci(b"<li")
         || ci(b"<blockquote")
+}
+
+/// Appends the decimal representation of a `u32` directly to a `String`
+/// without allocating a temporary `String` (replaces `u32::to_string()`).
+fn push_u32(s: &mut String, mut n: u32) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+    let mut buf = [0u8; 10]; // max digits for u32
+    let mut i = buf.len();
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    // SAFETY: buf[i..] contains only ASCII digits, which is valid UTF-8.
+    s.push_str(unsafe { std::str::from_utf8_unchecked(&buf[i..]) });
 }
 
 /// Returns the lowercase closing tag prefix for a given opening tag.
