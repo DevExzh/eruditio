@@ -378,9 +378,9 @@ impl BinaryEncoder {
                     // Custom attribute: emit 0x8000 prefix, then attr name as
                     // length-prefixed string, then value
                     output.extend_from_slice(&encode_utf8_ordinal(0x8000));
-                    let name_chars: Vec<char> = attr_name.chars().collect();
-                    output.extend_from_slice(&encode_utf8_ordinal(name_chars.len() as u32 + 1));
-                    for &c in &name_chars {
+                    let name_len = attr_name.chars().count();
+                    output.extend_from_slice(&encode_utf8_ordinal(name_len as u32 + 1));
+                    for c in attr_name.chars() {
                         let mut tmp = [0u8; 4];
                         let s = c.encode_utf8(&mut tmp);
                         output.extend_from_slice(s.as_bytes());
@@ -395,9 +395,9 @@ impl BinaryEncoder {
         } else {
             // Custom tag: emit 0x8000, then tag name as length-prefixed string
             output.extend_from_slice(&encode_utf8_ordinal(0x8000));
-            let name_chars: Vec<char> = tag_name.chars().collect();
-            output.extend_from_slice(&encode_utf8_ordinal(name_chars.len() as u32 + 1));
-            for &c in &name_chars {
+            let name_len = tag_name.chars().count();
+            output.extend_from_slice(&encode_utf8_ordinal(name_len as u32 + 1));
+            for c in tag_name.chars() {
                 let mut tmp = [0u8; 4];
                 let s = c.encode_utf8(&mut tmp);
                 output.extend_from_slice(s.as_bytes());
@@ -416,9 +416,9 @@ impl BinaryEncoder {
                 } else {
                     // Custom attribute
                     output.extend_from_slice(&encode_utf8_ordinal(0x8000));
-                    let name_chars: Vec<char> = attr_name.chars().collect();
-                    output.extend_from_slice(&encode_utf8_ordinal(name_chars.len() as u32 + 1));
-                    for &c in &name_chars {
+                    let name_len = attr_name.chars().count();
+                    output.extend_from_slice(&encode_utf8_ordinal(name_len as u32 + 1));
+                    for c in attr_name.chars() {
                         let mut tmp = [0u8; 4];
                         let s = c.encode_utf8(&mut tmp);
                         output.extend_from_slice(s.as_bytes());
@@ -445,14 +445,13 @@ impl BinaryEncoder {
 
     /// Encode a regular string attribute value.
     fn encode_string_value(&self, value: &str, output: &mut Vec<u8>) {
-        let chars: Vec<char> = value.chars().collect();
-        let len = chars.len();
+        let len = value.chars().count();
         if len == 0 {
             // Length of 1 means 0 chars (length = count + 1)
             output.extend_from_slice(&encode_utf8_ordinal(1));
         } else {
             output.extend_from_slice(&encode_utf8_ordinal(len as u32 + 1));
-            for &c in &chars {
+            for c in value.chars() {
                 let mut tmp = [0u8; 4];
                 let s = c.encode_utf8(&mut tmp);
                 output.extend_from_slice(s.as_bytes());
@@ -487,10 +486,9 @@ impl BinaryEncoder {
             href_body.push_str(frag);
         }
 
-        let chars: Vec<char> = href_body.chars().collect();
-        let len = chars.len();
+        let len = href_body.chars().count();
         output.extend_from_slice(&encode_utf8_ordinal(len as u32 + 1));
-        for &c in &chars {
+        for c in href_body.chars() {
             let mut tmp = [0u8; 4];
             let s = c.encode_utf8(&mut tmp);
             output.extend_from_slice(s.as_bytes());
@@ -581,11 +579,10 @@ fn build_manifest(
 /// Write a sized UTF-8 string: first char's ordinal = length, then that many chars.
 /// If `zpad`, append a zero byte after the string.
 fn write_sized_utf8_string(out: &mut Vec<u8>, s: &str, zpad: bool) {
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
+    let len = s.chars().count();
     // Length as a UTF-8 encoded ordinal
     out.extend_from_slice(&encode_utf8_ordinal(len as u32));
-    for &c in &chars {
+    for c in s.chars() {
         let mut tmp = [0u8; 4];
         let cs = c.encode_utf8(&mut tmp);
         out.extend_from_slice(cs.as_bytes());
@@ -611,9 +608,9 @@ fn build_namelist(section_names: &[&str]) -> Vec<u8> {
     out.extend_from_slice(&(section_names.len() as u16).to_le_bytes());
 
     for name in section_names {
-        let chars: Vec<u16> = name.encode_utf16().collect();
-        out.extend_from_slice(&(chars.len() as u16).to_le_bytes());
-        for &c in &chars {
+        let char_count = name.encode_utf16().count();
+        out.extend_from_slice(&(char_count as u16).to_le_bytes());
+        for c in name.encode_utf16() {
             out.extend_from_slice(&c.to_le_bytes());
         }
         // Null terminator (UTF-16LE)
