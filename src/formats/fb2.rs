@@ -768,14 +768,17 @@ fn generate_document_id(book: &Book) -> String {
     h2 = h2.wrapping_mul(FNV_PRIME);
 
     // Format as UUID-like: 8-4-4-4-12
-    format!(
+    let mut id = String::with_capacity(36);
+    let _ = write!(
+        id,
         "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
         (h >> 32) as u32,
         (h >> 16) as u16,
         (h & 0xFFFF) as u16,
         (h2 >> 48) as u16,
         h2 & 0xFFFF_FFFF_FFFF
-    )
+    );
+    id
 }
 
 /// Generates a complete FictionBook 2.0 XML document from a `Book`.
