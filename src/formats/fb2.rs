@@ -827,13 +827,12 @@ fn generate_fb2(book: &Book) -> String {
     // Keywords from subjects (comma-separated, matching Calibre behavior)
     if !book.metadata.subjects.is_empty() {
         xml.push_str("      <keywords>");
-        let kw: Vec<_> = book
-            .metadata
-            .subjects
-            .iter()
-            .map(|s| escape_html(s))
-            .collect();
-        xml.push_str(&kw.join(", "));
+        for (i, s) in book.metadata.subjects.iter().enumerate() {
+            if i > 0 {
+                xml.push_str(", ");
+            }
+            xml.push_str(&escape_html(s));
+        }
         xml.push_str("</keywords>\n");
     }
 
