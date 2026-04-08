@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::Arc;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -244,17 +245,17 @@ fn encode_utf8_ordinal(value: u32) -> (usize, [u8; 4]) {
 // ---------------------------------------------------------------------------
 
 /// Context for binary encoding, holding reverse maps.
-struct BinaryEncoder {
+struct BinaryEncoder<'a> {
     tag_reverse: HashMap<&'static str, usize>,
     global_attr_reverse: HashMap<&'static str, u16>,
     per_tag_attr_reverse: HashMap<(usize, &'static str), u16>,
     /// Maps href paths to manifest internal IDs (for href/src encoding).
-    href_to_id: HashMap<String, String>,
+    href_to_id: HashMap<&'a str, &'a str>,
     is_html: bool,
 }
 
-impl BinaryEncoder {
-    fn new_html(href_to_id: HashMap<String, String>) -> Self {
+impl<'a> BinaryEncoder<'a> {
+    fn new_html(href_to_id: HashMap<&'a str, &'a str>) -> Self {
         Self {
             tag_reverse: build_html_tag_reverse(),
             global_attr_reverse: build_html_global_attr_reverse(),
@@ -498,7 +499,7 @@ impl BinaryEncoder {
         let target_id = self
             .href_to_id
             .get(path_part)
-            .map(|s| s.as_str())
+            .copied()
             .unwrap_or(path_part);
 
         let mut href_body = String::from('\x01');
@@ -545,11 +546,30 @@ impl BinaryEncoder {
 // Virtual filesystem entry
 // ---------------------------------------------------------------------------
 
+/// Data payload for a virtual filesystem entry.
+///
+/// `Owned` holds freshly-built buffers; `Shared` holds an `Arc` reference to
+/// manifest binary data, avoiding a full copy.
+enum VfsData {
+    Owned(Vec<u8>),
+    Shared(Arc<Vec<u8>>),
+}
+
+impl std::ops::Deref for VfsData {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            VfsData::Owned(v) => v,
+            VfsData::Shared(a) => a,
+        }
+    }
+}
+
 /// A virtual file in the LIT container, to be placed in section 0 (Uncompressed).
 struct VfsEntry {
     name: String,
     section: u32,
-    data: Vec<u8>,
+    data: VfsData,
 }
 
 // ---------------------------------------------------------------------------
@@ -568,8 +588,8 @@ struct VfsEntry {
 ///       sized_utf8_string(original_path) +
 ///       sized_utf8_string_zpad(mime_type)
 fn build_manifest(
-    spine_items: &[(String, String, String)], // (internal_id, path, mime_type)
-    non_spine_items: &[(String, String, String)], // (internal_id, path, mime_type)
+    spine_items: &[(&str, &str, &str)], // (internal_id, path, mime_type)
+    non_spine_items: &[(&str, &str, &str)], // (internal_id, path, mime_type)
 ) -> Vec<u8> {
     let mut out = Vec::new();
 
@@ -580,7 +600,7 @@ fn build_manifest(
 
     // 4 states: spine, not spine, css, images
     // For simplicity, put all spine items in "spine" and everything else in "not spine"
-    let states: [&[(String, String, String)]; 4] = [spine_items, non_spine_items, &[], &[]];
+    let states: [&[(&str, &str, &str)]; 4] = [spine_items, non_spine_items, &[], &[]];
 
     let mut offset_counter: u32 = 0;
     for items in &states {
@@ -1044,8 +1064,8 @@ fn build_secondary_header(chunk_size: u32, _unknown: u32, content_offset: u64) -
 /// Generate OPF XML from book metadata and manifest info.
 fn generate_opf(
     book: &Book,
-    spine_ids: &[String],
-    manifest_entries: &[(String, String, String)], // (id, href, media_type)
+    spine_ids: &[&str],
+    manifest_entries: &[(&str, &str, &str)], // (id, href, media_type)
 ) -> String {
     let mut opf = String::new();
     opf.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
@@ -1159,25 +1179,25 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     let _resources = book.resources();
 
     // Build href-to-id mapping for href encoding in binary HTML
-    let mut href_to_id: HashMap<String, String> = HashMap::new();
+    let mut href_to_id: HashMap<&str, &str> = HashMap::new();
     for item in book.manifest.iter() {
-        href_to_id.insert(item.href.clone(), item.id.clone());
+        href_to_id.insert(&item.href, &item.id);
     }
 
     // Binary HTML encoder
     let html_encoder = BinaryEncoder::new_html(href_to_id);
     let opf_encoder = BinaryEncoder::new_opf();
 
-    // Build spine items list for manifest
-    let mut spine_manifest: Vec<(String, String, String)> = Vec::new();
-    let mut non_spine_manifest: Vec<(String, String, String)> = Vec::new();
-    let mut all_manifest: Vec<(String, String, String)> = Vec::new();
+    // Build spine items list for manifest (borrow from manifest items)
+    let mut spine_manifest: Vec<(&str, &str, &str)> = Vec::new();
+    let mut non_spine_manifest: Vec<(&str, &str, &str)> = Vec::new();
+    let mut all_manifest: Vec<(&str, &str, &str)> = Vec::new();
 
     // Virtual filesystem entries
     let mut vfs_entries: Vec<VfsEntry> = Vec::new();
 
     // Process spine items (chapters)
-    let mut spine_ids: Vec<String> = Vec::new();
+    let mut spine_ids: Vec<&str> = Vec::new();
     for (idx, spine_item) in book.spine.iter().enumerate() {
         let manifest_item = book.manifest.get(&spine_item.manifest_id);
         let item = match manifest_item {
@@ -1185,7 +1205,7 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
             None => continue,
         };
 
-        let internal_id = item.id.to_string();
+        let internal_id: &str = &item.id;
         let content = match item.data.as_text() {
             Some(t) => t.to_string(),
             None => continue,
@@ -1201,28 +1221,28 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
         vfs_entries.push(VfsEntry {
             name: format!("/data/{internal_id}/content"),
             section: 0,
-            data: binary_content,
+            data: VfsData::Owned(binary_content),
         });
 
         // /data/{id}/ahc — anchor hash chunk (4 zero bytes)
         vfs_entries.push(VfsEntry {
             name: format!("/data/{internal_id}/ahc"),
             section: 0,
-            data: vec![0u8; 4],
+            data: VfsData::Owned(vec![0u8; 4]),
         });
 
         // /data/{id}/aht — anchor hash table (4 zero bytes)
         vfs_entries.push(VfsEntry {
             name: format!("/data/{internal_id}/aht"),
             section: 0,
-            data: vec![0u8; 4],
+            data: VfsData::Owned(vec![0u8; 4]),
         });
 
-        let href = item.href.clone();
-        let media = item.media_type.clone();
+        let href: &str = &item.href;
+        let media: &str = &item.media_type;
 
-        spine_manifest.push((internal_id.clone(), href.clone(), media.clone()));
-        all_manifest.push((internal_id.clone(), href, media));
+        spine_manifest.push((internal_id, href, media));
+        all_manifest.push((internal_id, href, media));
         spine_ids.push(internal_id);
 
         let _ = idx; // used only for iteration
@@ -1231,33 +1251,33 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     // Process non-spine resources
     for item in book.manifest.iter() {
         // Skip items already processed as spine items
-        if spine_ids.contains(&item.id) {
+        if spine_ids.iter().any(|&s| s == item.id) {
             continue;
         }
 
-        let internal_id = item.id.clone();
+        let internal_id: &str = &item.id;
 
         // Store resource data
-        if let Some(data) = item.data.as_bytes() {
+        if let Some(arc) = item.data.as_inline_arc() {
             vfs_entries.push(VfsEntry {
                 name: format!("/data/{internal_id}"),
                 section: 0,
-                data: data.to_vec(),
+                data: VfsData::Shared(Arc::clone(arc)),
             });
         } else if let Some(text) = item.data.as_text() {
             vfs_entries.push(VfsEntry {
                 name: format!("/data/{internal_id}"),
                 section: 0,
-                data: text.as_bytes().to_vec(),
+                data: VfsData::Owned(text.as_bytes().to_vec()),
             });
         } else {
             continue;
         }
 
-        let href = item.href.clone();
-        let media = item.media_type.clone();
+        let href: &str = &item.href;
+        let media: &str = &item.media_type;
 
-        non_spine_manifest.push((internal_id.clone(), href.clone(), media.clone()));
+        non_spine_manifest.push((internal_id, href, media));
         all_manifest.push((internal_id, href, media));
     }
 
@@ -1266,7 +1286,7 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     vfs_entries.push(VfsEntry {
         name: "/manifest".to_string(),
         section: 0,
-        data: manifest_data,
+        data: VfsData::Owned(manifest_data),
     });
 
     // Build OPF and binary-encode it as /meta
@@ -1275,7 +1295,7 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     vfs_entries.push(VfsEntry {
         name: "/meta".to_string(),
         section: 0,
-        data: meta_binary.clone(),
+        data: VfsData::Owned(meta_binary.clone()),
     });
 
     // /Version: 4 bytes = pack('<HH', 8, 1) = version 8.1
@@ -1285,7 +1305,7 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     vfs_entries.push(VfsEntry {
         name: "/Version".to_string(),
         section: 0,
-        data: version_data,
+        data: VfsData::Owned(version_data),
     });
 
     // ::DataSpace/NameList — section name list with only "Uncompressed"
@@ -1293,7 +1313,7 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     vfs_entries.push(VfsEntry {
         name: "::DataSpace/NameList".to_string(),
         section: 0,
-        data: namelist,
+        data: VfsData::Owned(namelist),
     });
 
     // DRM storage entries (free book)
@@ -1301,17 +1321,17 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
     vfs_entries.push(VfsEntry {
         name: "/DRMStorage/DRMSource".to_string(),
         section: 0,
-        data: drm_source,
+        data: VfsData::Owned(drm_source),
     });
     vfs_entries.push(VfsEntry {
         name: "/DRMStorage/DRMSealed".to_string(),
         section: 0,
-        data: drm_sealed,
+        data: VfsData::Owned(drm_sealed),
     });
     vfs_entries.push(VfsEntry {
         name: "/DRMStorage/ValidationStream".to_string(),
         section: 0,
-        data: validation,
+        data: VfsData::Owned(validation),
     });
 
     // Build the complete container

@@ -32,6 +32,17 @@ impl ManifestData {
         }
     }
 
+    /// Returns a reference to the inner `Arc` if this is an `Inline` variant.
+    ///
+    /// This allows callers to `Arc::clone` instead of copying the entire buffer
+    /// when shared ownership is sufficient.
+    pub(crate) fn as_inline_arc(&self) -> Option<&Arc<Vec<u8>>> {
+        match self {
+            ManifestData::Inline(a) => Some(a),
+            _ => None,
+        }
+    }
+
     /// Returns `true` if the data has not been loaded.
     pub fn is_empty(&self) -> bool {
         matches!(self, ManifestData::Empty)
