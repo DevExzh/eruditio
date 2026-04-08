@@ -57,10 +57,10 @@ impl FormatReader for Fb2Reader {
             match xml_reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     let name_raw = e.name();
-                    let tag = std::str::from_utf8(name_raw.as_ref()).unwrap_or("");
-                    if tag == "body" {
+                    let tag_bytes = name_raw.as_ref();
+                    if tag_bytes == b"body" {
                         in_body = true;
-                    } else if tag == "binary" {
+                    } else if tag_bytes == b"binary" {
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"id" => {
@@ -78,7 +78,7 @@ impl FormatReader for Fb2Reader {
                                 _ => {},
                             }
                         }
-                    } else if tag == "section" && in_body {
+                    } else if tag_bytes == b"section" && in_body {
                         // Entering a (possibly nested) section. If there is
                         // already accumulated content from the parent section,
                         // flush it as its own chapter before starting the child.
@@ -96,13 +96,15 @@ impl FormatReader for Fb2Reader {
                             });
                         }
                         section_depth += 1;
-                    } else if tag == "title" && section_depth > 0 {
+                    } else if tag_bytes == b"title" && section_depth > 0 {
                         in_section_title = true;
                     }
                     if !path_buf.is_empty() {
                         path_buf.push('/');
                     }
-                    path_buf.push_str(tag);
+                    // Convert to str lazily — only needed for path_buf
+                    let tag_str = std::str::from_utf8(tag_bytes).unwrap_or("");
+                    path_buf.push_str(tag_str);
                     current_text.clear();
                 },
                 Ok(Event::Text(ref e)) => {
@@ -115,9 +117,9 @@ impl FormatReader for Fb2Reader {
                 },
                 Ok(Event::End(ref e)) => {
                     let name_raw = e.name();
-                    let tag = std::str::from_utf8(name_raw.as_ref()).unwrap_or("");
+                    let tag_bytes = name_raw.as_ref();
 
-                    if tag == "binary" {
+                    if tag_bytes == b"binary" {
                         if let Some(id) = current_binary_id.take() {
                             // Strip newlines in-place to avoid allocating a copy
                             // of potentially large (100KB+) base64 blocks.
@@ -142,9 +144,9 @@ impl FormatReader for Fb2Reader {
                             || path_buf == "FictionBook/description/title-info/author/last-name"
                             || path_buf == "FictionBook/description/title-info/author/middle-name"
                         {
-                            if tag == "first-name" {
+                            if tag_bytes == b"first-name" {
                                 book.metadata.authors.push(std::mem::take(&mut current_text));
-                            } else if tag == "last-name" || tag == "middle-name" {
+                            } else if tag_bytes == b"last-name" || tag_bytes == b"middle-name" {
                                 if let Some(last) = book.metadata.authors.last_mut() {
                                     last.push(' ');
                                     last.push_str(&current_text);
@@ -175,15 +177,15 @@ impl FormatReader for Fb2Reader {
                         }
                     } else {
                         // Parse content
-                        if tag == "p" && in_section_title {
+                        if tag_bytes == b"p" && in_section_title {
                             current_section_title = Some(std::mem::take(&mut current_text));
-                        } else if tag == "title" && section_depth > 0 {
+                        } else if tag_bytes == b"title" && section_depth > 0 {
                             in_section_title = false;
-                        } else if section_depth > 0 && tag == "p" {
+                        } else if section_depth > 0 && tag_bytes == b"p" {
                             current_section_content.push_str("<p>");
                             current_section_content.push_str(&current_text);
                             current_section_content.push_str("</p>\n");
-                        } else if tag == "section" && section_depth > 0 {
+                        } else if tag_bytes == b"section" && section_depth > 0 {
                             section_depth -= 1;
                             // Only emit a chapter when there is a title or
                             // content. This avoids empty chapters for wrapper
@@ -201,7 +203,7 @@ impl FormatReader for Fb2Reader {
                                     id: Some(fmt_buf.clone()),
                                 });
                             }
-                        } else if tag == "body" {
+                        } else if tag_bytes == b"body" {
                             in_body = false;
                         }
                     }
