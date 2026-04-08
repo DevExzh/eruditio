@@ -4,7 +4,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::escape_html;
-use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive};
+use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive, push_escape_html};
 use base64::Engine;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -484,7 +484,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         // are meaningless in FB2 context
                         if is_external_url(&href) {
                             inline_buf.push_str("<a l:href=\"");
-                            inline_buf.push_str(&escape_html(&href));
+                            push_escape_html(&mut inline_buf, &href);
                             inline_buf.push_str("\">");
                             in_anchor = true;
                         }
@@ -793,7 +793,7 @@ fn generate_fb2(book: &Book) -> String {
     // Genre (FB2 requires at least one)
     if let Some(subject) = book.metadata.subjects.first() {
         xml.push_str("      <genre>");
-        xml.push_str(&escape_html(subject));
+        push_escape_html(&mut xml, subject);
         xml.push_str("</genre>\n");
     } else {
         xml.push_str("      <genre>other</genre>\n");
@@ -805,13 +805,13 @@ fn generate_fb2(book: &Book) -> String {
     // Title
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     xml.push_str("      <book-title>");
-    xml.push_str(&escape_html(title));
+    push_escape_html(&mut xml, title);
     xml.push_str("</book-title>\n");
 
     // Language
     if let Some(ref lang) = book.metadata.language {
         xml.push_str("      <lang>");
-        xml.push_str(&escape_html(lang));
+        push_escape_html(&mut xml, lang);
         xml.push_str("</lang>\n");
     }
 
@@ -820,7 +820,7 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("      <annotation>\n");
         for line in desc.lines() {
             xml.push_str("        <p>");
-            xml.push_str(&escape_html(line));
+            push_escape_html(&mut xml, line);
             xml.push_str("</p>\n");
         }
         xml.push_str("      </annotation>\n");
@@ -833,7 +833,7 @@ fn generate_fb2(book: &Book) -> String {
             if i > 0 {
                 xml.push_str(", ");
             }
-            xml.push_str(&escape_html(s));
+            push_escape_html(&mut xml, s);
         }
         xml.push_str("</keywords>\n");
     }
@@ -860,7 +860,7 @@ fn generate_fb2(book: &Book) -> String {
         });
     if let Some(cid) = cover_id {
         xml.push_str("      <coverpage><image l:href=\"#");
-        xml.push_str(&escape_html(cid));
+        push_escape_html(&mut xml, cid);
         xml.push_str("\"/></coverpage>\n");
     }
 
@@ -888,12 +888,12 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("    <publish-info>\n");
         if let Some(ref publisher) = book.metadata.publisher {
             xml.push_str("      <publisher>");
-            xml.push_str(&escape_html(publisher));
+            push_escape_html(&mut xml, publisher);
             xml.push_str("</publisher>\n");
         }
         if let Some(ref isbn) = book.metadata.isbn {
             xml.push_str("      <isbn>");
-            xml.push_str(&escape_html(isbn));
+            push_escape_html(&mut xml, isbn);
             xml.push_str("</isbn>\n");
         }
         if let Some(ref pub_date) = book.metadata.publication_date {
@@ -931,7 +931,7 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("    <section>\n");
         if let Some(ref ch_title) = chapter.title {
             xml.push_str("      <title><p>");
-            xml.push_str(&escape_html(ch_title));
+            push_escape_html(&mut xml, ch_title);
             xml.push_str("</p></title>\n");
         }
         // Insert an <empty-line/> at the start of each section (after title)
@@ -953,9 +953,9 @@ fn generate_fb2(book: &Book) -> String {
             continue;
         }
         xml.push_str("  <binary id=\"");
-        xml.push_str(&escape_html(resource.id));
+        push_escape_html(&mut xml, resource.id);
         xml.push_str("\" content-type=\"");
-        xml.push_str(&escape_html(resource.media_type));
+        push_escape_html(&mut xml, resource.media_type);
         xml.push_str("\">");
         base64::engine::general_purpose::STANDARD.encode_string(resource.data, &mut xml);
         xml.push_str("</binary>\n");
