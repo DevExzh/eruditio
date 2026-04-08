@@ -31,18 +31,21 @@ pub(crate) fn load_manifest_data<R: Read + Seek>(
     manifest: &mut Manifest,
     opf_dir: &str,
 ) -> Result<()> {
-    let ids: Vec<String> = manifest.ids().map(String::from).collect();
+    let ids_to_load: Vec<String> = manifest
+        .ids()
+        .filter(|id| {
+            manifest
+                .get(id)
+                .map_or(false, |item| item.data.is_empty())
+        })
+        .map(String::from)
+        .collect();
 
-    for id in &ids {
+    for id in &ids_to_load {
         let item = match manifest.get(id) {
             Some(i) => i,
             None => continue,
         };
-
-        // Skip items that already have data loaded.
-        if !item.data.is_empty() {
-            continue;
-        }
 
         let zip_path = resolve_href(opf_dir, &item.href);
         let is_text = is_text_media_type(&item.media_type);
