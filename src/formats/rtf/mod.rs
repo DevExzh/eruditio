@@ -40,7 +40,7 @@ impl FormatReader for RtfReader {
         let mut book = Book::new();
 
         // Parse tokens into book content.
-        let state = parse_rtf_tokens(&tokens);
+        let mut state = parse_rtf_tokens(&tokens);
 
         book.metadata.title = state.title;
         if let Some(author) = state.author {
@@ -48,15 +48,15 @@ impl FormatReader for RtfReader {
         }
         book.metadata.description = state.subject;
 
-        // Add extracted images as resources.
-        for (id, data, media_type) in &state.images {
+        // Add extracted images as resources (drain to move data, avoiding clone).
+        for (id, data, media_type) in std::mem::take(&mut state.images) {
             let ext = if media_type == "image/jpeg" {
                 "jpg"
             } else {
                 "png"
             };
             let href = format!("images/{}.{}", id, ext);
-            book.add_resource(id, &href, data.clone(), media_type);
+            book.add_resource(id, href, data, media_type);
         }
 
         // Split content into chapters at page breaks, or use single chapter.
