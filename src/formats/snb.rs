@@ -685,14 +685,16 @@ impl FormatWriter for SnbWriter {
             }
         }
 
-        // Combine all files with attributes.
-        let mut all_files: Vec<(String, Vec<u8>, u32)> = Vec::new();
-        for (name, data) in &plain_files {
-            all_files.push((name.clone(), data.clone(), ATTR_PLAIN));
-        }
-        for (name, data) in &binary_files {
-            all_files.push((name.clone(), data.clone(), ATTR_BINARY));
-        }
+        // Combine all files with attributes (move instead of clone).
+        let mut all_files: Vec<(String, Vec<u8>, u32)> = plain_files
+            .into_iter()
+            .map(|(name, data)| (name, data, ATTR_PLAIN))
+            .collect();
+        all_files.extend(
+            binary_files
+                .into_iter()
+                .map(|(name, data)| (name, data, ATTR_BINARY)),
+        );
 
         // Sort: plain files first, then binary.
         all_files.sort_by(|a, b| {
