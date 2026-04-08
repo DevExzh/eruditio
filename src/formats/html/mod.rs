@@ -11,6 +11,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
+use crate::formats::common::text_utils::push_escape_html;
 use std::io::{Read, Write};
 
 /// HTML format reader.
@@ -106,7 +107,9 @@ fn book_to_html(book: &Book) -> String {
         }
 
         if let Some(ch_title) = chapter.title {
-            body.push_str(&format!("<h1>{}</h1>\n", escape_html(ch_title)));
+            body.push_str("<h1>");
+            push_escape_html(&mut body, ch_title);
+            body.push_str("</h1>\n");
         }
 
         let content = match chapter.title {
