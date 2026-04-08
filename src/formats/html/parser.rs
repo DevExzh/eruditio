@@ -157,16 +157,32 @@ pub(crate) fn build_html_document(title: &str, meta: &Metadata, body: &str) -> S
 }
 
 /// Extracts text content between opening and closing tags of the given element.
+/// Uses stack buffers for tag patterns to avoid heap allocation.
 fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
     let bytes = html.as_bytes();
-    let open = format!("<{}", tag);
-    let close = format!("</{}>", tag);
+    let tag_bytes = tag.as_bytes();
+    debug_assert!(tag_bytes.len() < 60, "tag name too long for stack buffer");
 
-    let start = text_utils::find_case_insensitive(bytes, open.as_bytes())?;
+    // Build open pattern "<tag" on the stack (no heap allocation).
+    let mut open_buf = [0u8; 64];
+    open_buf[0] = b'<';
+    open_buf[1..1 + tag_bytes.len()].copy_from_slice(tag_bytes);
+    let open_len = 1 + tag_bytes.len();
+
+    // Build close pattern "</tag>" on the stack.
+    let mut close_buf = [0u8; 64];
+    close_buf[0] = b'<';
+    close_buf[1] = b'/';
+    close_buf[2..2 + tag_bytes.len()].copy_from_slice(tag_bytes);
+    close_buf[2 + tag_bytes.len()] = b'>';
+    let close_len = 3 + tag_bytes.len();
+
+    let start = text_utils::find_case_insensitive(bytes, &open_buf[..open_len])?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
-    let content_end = text_utils::find_case_insensitive(&bytes[content_start..], close.as_bytes())?
-        + content_start;
+    let content_end =
+        text_utils::find_case_insensitive(&bytes[content_start..], &close_buf[..close_len])?
+            + content_start;
 
     let text = html[content_start..content_end].trim().to_string();
     if text.is_empty() { None } else { Some(text) }
