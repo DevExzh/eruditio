@@ -906,6 +906,16 @@ mod tests {
         assert_eq!(unescape_basic_entities("&#4294967295;"), "&#4294967295;");
     }
 
+    #[test]
+    fn unescape_apos() {
+        assert_eq!(unescape_basic_entities("&apos;"), "'");
+    }
+
+    #[test]
+    fn unescape_nbsp() {
+        assert_eq!(unescape_basic_entities("&nbsp;"), "\u{00A0}");
+    }
+
     // -- decode_cp1252 -------------------------------------------------------
 
     #[test]
