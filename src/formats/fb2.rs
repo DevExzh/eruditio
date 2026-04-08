@@ -432,166 +432,237 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     continue;
                 }
 
-                if starts_with_ci(tag_str, "<p")
-                    && (tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ')
-                {
-                    // Opening <p> tag – start accumulating inline content
-                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                    if in_anchor {
-                        inline_buf.push_str("</a>");
-                        in_anchor = false;
-                    }
-                    flush_paragraph(&mut out, &mut inline_buf);
-                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
-                    in_p = true;
-                    pos += gt + 1;
-                } else if starts_with_ci(tag_str, "</p") {
-                    // Closing </p> tag – flush current paragraph
-                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                    if in_anchor {
-                        inline_buf.push_str("</a>");
-                        in_anchor = false;
-                    }
-                    flush_paragraph(&mut out, &mut inline_buf);
-                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
-                    in_p = false;
-                    pos += gt + 1;
-                } else if starts_with_ci(tag_str, "<br") {
-                    // <br> or <br/> handling depends on context:
-                    // Inside a <p> or block element: treat as soft break (space)
-                    // Outside: emit empty-line in FB2
-                    if in_p || block_depth > 0 {
-                        // Soft break within a paragraph/block – just add a space if needed
-                        let trimmed = inline_buf.trim_end();
-                        if !trimmed.is_empty() && !trimmed.ends_with('>') {
-                            inline_buf.push(' ');
+                // First-byte dispatch for tag processing
+                let first = if tag_bytes.len() > 1 { tag_bytes[1].to_ascii_lowercase() } else { 0 };
+
+                match first {
+                    b'p' => {
+                        // <p> opening
+                        if tag_bytes.len() < 3 || tag_bytes[2] == b'>' || tag_bytes[2] == b' ' {
+                            // Opening <p> tag – start accumulating inline content
+                            close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                            if in_anchor {
+                                inline_buf.push_str("</a>");
+                                in_anchor = false;
+                            }
+                            flush_paragraph(&mut out, &mut inline_buf);
+                            reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                            in_p = true;
                         }
-                    } else {
-                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                        if in_anchor {
-                            inline_buf.push_str("</a>");
-                            in_anchor = false;
+                        // else: unknown tag starting with 'p' (e.g. <pre>) — skip
+                        pos += gt + 1;
+                    }
+                    b'b' => {
+                        // Could be <br>, <b>, <body> (body already skipped above)
+                        if starts_with_ci(tag_str, "<br") {
+                            // <br> or <br/> handling depends on context:
+                            // Inside a <p> or block element: treat as soft break (space)
+                            // Outside: emit empty-line in FB2
+                            if in_p || block_depth > 0 {
+                                // Soft break within a paragraph/block – just add a space if needed
+                                let trimmed = inline_buf.trim_end();
+                                if !trimmed.is_empty() && !trimmed.ends_with('>') {
+                                    inline_buf.push(' ');
+                                }
+                            } else {
+                                close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                if in_anchor {
+                                    inline_buf.push_str("</a>");
+                                    in_anchor = false;
+                                }
+                                flush_paragraph(&mut out, &mut inline_buf);
+                                out.push_str("      <empty-line/>\n");
+                                reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                            }
+                        } else if eq_ci(tag_str, "<b>") || starts_with_ci(tag_str, "<b ") {
+                            // Opening bold tag → FB2 <strong>
+                            inline_buf.push_str("<strong>");
+                            in_strong = true;
                         }
-                        flush_paragraph(&mut out, &mut inline_buf);
-                        out.push_str("      <empty-line/>\n");
-                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                        // <body> already handled in structural skip above
+                        pos += gt + 1;
                     }
-                    pos += gt + 1;
-                } else if starts_with_ci(tag_str, "<a ") || starts_with_ci(tag_str, "<a>") {
-                    // Opening <a> tag – extract href and convert to l:href
-                    if let Some(href) = extract_href(tag_str) {
-                        // Only emit link for external URLs; internal EPUB references
-                        // are meaningless in FB2 context
-                        if is_external_url(href) {
-                            inline_buf.push_str("<a l:href=\"");
-                            push_escape_html(&mut inline_buf, href);
-                            inline_buf.push_str("\">");
-                            in_anchor = true;
+                    b'a' => {
+                        // <a> anchor
+                        if tag_bytes.len() >= 3 && (tag_bytes[2] == b' ' || tag_bytes[2] == b'>') {
+                            // Opening <a> tag – extract href and convert to l:href
+                            if let Some(href) = extract_href(tag_str) {
+                                // Only emit link for external URLs; internal EPUB references
+                                // are meaningless in FB2 context
+                                if is_external_url(href) {
+                                    inline_buf.push_str("<a l:href=\"");
+                                    push_escape_html(&mut inline_buf, href);
+                                    inline_buf.push_str("\">");
+                                    in_anchor = true;
+                                }
+                                // else: skip the <a> tag, text content will flow through as plain text
+                            }
+                            // If no href, just skip the tag (keep the text content)
                         }
-                        // else: skip the <a> tag, text content will flow through as plain text
+                        pos += gt + 1;
                     }
-                    // If no href, just skip the tag (keep the text content)
-                    pos += gt + 1;
-                } else if starts_with_ci(tag_str, "</a") {
-                    // Closing </a> tag
-                    if in_anchor {
-                        inline_buf.push_str("</a>");
-                        in_anchor = false;
-                    }
-                    pos += gt + 1;
-                } else if tag_str.len() >= 4
-                    && tag_str.as_bytes()[1].eq_ignore_ascii_case(&b'h')
-                    && matches!(tag_str.as_bytes()[2], b'1'..=b'6')
-                    && (tag_str.as_bytes()[3] == b'>' || tag_str.as_bytes()[3] == b' ')
-                    && tag_str.as_bytes()[1] != b'/'
-                {
-                    // Opening <h1>..<h6> tag – treat as paragraph boundary + wrap in <strong>
-                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                    if in_anchor {
-                        inline_buf.push_str("</a>");
-                        in_anchor = false;
-                    }
-                    flush_paragraph(&mut out, &mut inline_buf);
-                    inline_buf.push_str("<strong>");
-                    in_p = true;
-                    pos += gt + 1;
-                } else if tag_str.len() >= 5
-                    && tag_str.as_bytes()[1] == b'/'
-                    && tag_str.as_bytes()[2].eq_ignore_ascii_case(&b'h')
-                    && matches!(tag_str.as_bytes()[3], b'1'..=b'6')
-                    && tag_str.as_bytes()[4] == b'>'
-                {
-                    // Closing </h1>..</h6> tag
-                    inline_buf.push_str("</strong>");
-                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                    if in_anchor {
-                        inline_buf.push_str("</a>");
-                        in_anchor = false;
-                    }
-                    flush_paragraph(&mut out, &mut inline_buf);
-                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
-                    in_p = false;
-                    pos += gt + 1;
-                } else if eq_ci(tag_str, "<b>")
-                    || eq_ci(tag_str, "<strong>")
-                    || starts_with_ci(tag_str, "<b ")
-                    || starts_with_ci(tag_str, "<strong ")
-                {
-                    // Opening bold tag → FB2 <strong>
-                    inline_buf.push_str("<strong>");
-                    in_strong = true;
-                    pos += gt + 1;
-                } else if eq_ci(tag_str, "</b>") || eq_ci(tag_str, "</strong>") {
-                    // Closing bold tag
-                    inline_buf.push_str("</strong>");
-                    in_strong = false;
-                    pos += gt + 1;
-                } else if eq_ci(tag_str, "<i>")
-                    || eq_ci(tag_str, "<em>")
-                    || starts_with_ci(tag_str, "<i ")
-                    || starts_with_ci(tag_str, "<em ")
-                {
-                    // Opening italic tag → FB2 <emphasis>
-                    inline_buf.push_str("<emphasis>");
-                    in_emphasis = true;
-                    pos += gt + 1;
-                } else if eq_ci(tag_str, "</i>") || eq_ci(tag_str, "</em>") {
-                    // Closing italic tag
-                    inline_buf.push_str("</emphasis>");
-                    in_emphasis = false;
-                    pos += gt + 1;
-                } else if is_div_open {
-                    // Opening <div> tag – treat as block boundary; flush any
-                    // pending text and start accumulating within this block so
-                    // that multi-line text inside a single <div> stays in one
-                    // paragraph instead of being split per-newline.
-                    if !in_p {
-                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                        if in_anchor {
-                            inline_buf.push_str("</a>");
-                            in_anchor = false;
+                    b'h' => {
+                        // Could be <h1>-<h6> heading (head/html already handled above)
+                        if tag_bytes.len() >= 4
+                            && matches!(tag_bytes[2], b'1'..=b'6')
+                            && (tag_bytes[3] == b'>' || tag_bytes[3] == b' ')
+                        {
+                            // Opening <h1>..<h6> tag – treat as paragraph boundary + wrap in <strong>
+                            close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                            if in_anchor {
+                                inline_buf.push_str("</a>");
+                                in_anchor = false;
+                            }
+                            flush_paragraph(&mut out, &mut inline_buf);
+                            inline_buf.push_str("<strong>");
+                            in_p = true;
                         }
-                        flush_paragraph(&mut out, &mut inline_buf);
-                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                        pos += gt + 1;
                     }
-                    block_depth += 1;
-                    pos += gt + 1;
-                } else if is_div_close {
-                    // Closing </div> – flush accumulated block content
-                    block_depth = block_depth.saturating_sub(1);
-                    if !in_p && block_depth == 0 {
-                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
-                        if in_anchor {
-                            inline_buf.push_str("</a>");
-                            in_anchor = false;
+                    b'i' | b'e' => {
+                        // <i>, <em> italic open
+                        if eq_ci(tag_str, "<i>")
+                            || eq_ci(tag_str, "<em>")
+                            || starts_with_ci(tag_str, "<i ")
+                            || starts_with_ci(tag_str, "<em ")
+                        {
+                            // Opening italic tag → FB2 <emphasis>
+                            inline_buf.push_str("<emphasis>");
+                            in_emphasis = true;
                         }
-                        flush_paragraph(&mut out, &mut inline_buf);
-                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                        pos += gt + 1;
                     }
-                    pos += gt + 1;
-                } else {
-                    // Other tags (e.g. <span>, <ul>, <ol>, <table>, etc.) – skip the tag, keep going
-                    pos += gt + 1;
+                    b's' => {
+                        // <strong> bold open
+                        if eq_ci(tag_str, "<strong>") || starts_with_ci(tag_str, "<strong ") {
+                            // Opening bold tag → FB2 <strong>
+                            inline_buf.push_str("<strong>");
+                            in_strong = true;
+                        }
+                        pos += gt + 1;
+                    }
+                    b'd' => {
+                        // <div> — div open handling (is_div_open already computed above)
+                        if is_div_open {
+                            // Opening <div> tag – treat as block boundary; flush any
+                            // pending text and start accumulating within this block so
+                            // that multi-line text inside a single <div> stays in one
+                            // paragraph instead of being split per-newline.
+                            if !in_p {
+                                close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                if in_anchor {
+                                    inline_buf.push_str("</a>");
+                                    in_anchor = false;
+                                }
+                                flush_paragraph(&mut out, &mut inline_buf);
+                                reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                            }
+                            block_depth += 1;
+                        }
+                        pos += gt + 1;
+                    }
+                    b'/' => {
+                        // Closing tags — dispatch on byte after '/'
+                        let close = if tag_bytes.len() > 2 { tag_bytes[2].to_ascii_lowercase() } else { 0 };
+                        match close {
+                            b'p' => {
+                                // </p>
+                                // Closing </p> tag – flush current paragraph
+                                close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                if in_anchor {
+                                    inline_buf.push_str("</a>");
+                                    in_anchor = false;
+                                }
+                                flush_paragraph(&mut out, &mut inline_buf);
+                                reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                                in_p = false;
+                            }
+                            b'a' => {
+                                // </a>
+                                // Closing </a> tag
+                                if in_anchor {
+                                    inline_buf.push_str("</a>");
+                                    in_anchor = false;
+                                }
+                            }
+                            b'h' => {
+                                // </h1>-</h6>
+                                if tag_bytes.len() >= 5
+                                    && matches!(tag_bytes[3], b'1'..=b'6')
+                                    && tag_bytes[4] == b'>'
+                                {
+                                    // Closing </h1>..</h6> tag
+                                    inline_buf.push_str("</strong>");
+                                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                    if in_anchor {
+                                        inline_buf.push_str("</a>");
+                                        in_anchor = false;
+                                    }
+                                    flush_paragraph(&mut out, &mut inline_buf);
+                                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                                    in_p = false;
+                                }
+                            }
+                            b'b' => {
+                                // </b>
+                                if eq_ci(tag_str, "</b>") {
+                                    // Closing bold tag
+                                    inline_buf.push_str("</strong>");
+                                    in_strong = false;
+                                }
+                            }
+                            b's' => {
+                                // </strong>
+                                if eq_ci(tag_str, "</strong>") {
+                                    // Closing bold tag
+                                    inline_buf.push_str("</strong>");
+                                    in_strong = false;
+                                }
+                            }
+                            b'i' => {
+                                // </i>
+                                if eq_ci(tag_str, "</i>") {
+                                    // Closing italic tag
+                                    inline_buf.push_str("</emphasis>");
+                                    in_emphasis = false;
+                                }
+                            }
+                            b'e' => {
+                                // </em>
+                                if eq_ci(tag_str, "</em>") {
+                                    // Closing italic tag
+                                    inline_buf.push_str("</emphasis>");
+                                    in_emphasis = false;
+                                }
+                            }
+                            b'd' => {
+                                // </div>
+                                if is_div_close {
+                                    // Closing </div> – flush accumulated block content
+                                    block_depth = block_depth.saturating_sub(1);
+                                    if !in_p && block_depth == 0 {
+                                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                        if in_anchor {
+                                            inline_buf.push_str("</a>");
+                                            in_anchor = false;
+                                        }
+                                        flush_paragraph(&mut out, &mut inline_buf);
+                                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                                    }
+                                }
+                            }
+                            _ => { /* unknown closing tag — skip */ }
+                        }
+                        pos += gt + 1;
+                    }
+                    b'!' | b'?' => {
+                        // Already handled in structural skip above, but catch any stragglers
+                        pos += gt + 1;
+                    }
+                    _ => {
+                        // Other tags (e.g. <span>, <ul>, <ol>, <table>, etc.) – skip the tag, keep going
+                        pos += gt + 1;
+                    }
                 }
             } else {
                 // Unclosed '<' – treat as text
