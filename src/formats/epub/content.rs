@@ -2,6 +2,7 @@ use crate::domain::Manifest;
 use crate::domain::manifest::ManifestData;
 use crate::error::{EruditioError, Result};
 use std::io::{Read, Seek};
+use std::sync::Arc;
 use zip::ZipArchive;
 
 /// Text-based media types whose content should be stored as `ManifestData::Text`.
@@ -128,7 +129,7 @@ fn read_from_archive<R: Read + Seek>(
         let size_hint = (file.size() as usize).min(256 * 1024 * 1024);
         let mut data = Vec::with_capacity(size_hint);
         file.read_to_end(&mut data)?;
-        Ok(ManifestData::Inline(data))
+        Ok(ManifestData::Inline(Arc::new(data)))
     }
 }
 

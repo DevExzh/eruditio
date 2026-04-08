@@ -64,19 +64,9 @@ impl FormatWriter for KepubWriter {
 fn add_kobo_spans(book: &Book) -> Book {
     let mut result = book.clone();
 
-    // Collect IDs of manifest items that contain HTML/XML text content.
-    let text_ids: Vec<String> = result
-        .manifest
-        .iter()
-        .filter(|item| {
-            (item.media_type.contains("html") || item.media_type.contains("xml"))
-                && item.data.as_text().is_some()
-        })
-        .map(|item| item.id.clone())
-        .collect();
-
-    for id in &text_ids {
-        if let Some(item) = result.manifest.get_mut(id)
+    // Iterate manifest items in-place, wrapping text content in Kobo spans.
+    for item in result.manifest.iter_mut() {
+        if (item.media_type.contains("html") || item.media_type.contains("xml"))
             && let Some(text) = item.data.as_text()
         {
             let wrapped = insert_kobo_spans(text);

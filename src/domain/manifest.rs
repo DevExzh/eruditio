@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// How a manifest item's data is stored in memory.
 #[derive(Debug, Clone)]
 pub enum ManifestData {
     /// Raw binary data (images, fonts, etc.).
-    Inline(Vec<u8>),
+    ///
+    /// Wrapped in `Arc` so that cloning a `Book` (e.g. in the Kepub writer)
+    /// is a cheap reference-count bump instead of a deep copy of every image.
+    Inline(Arc<Vec<u8>>),
     /// Text content (XHTML, CSS, NCX, etc.).
     Text(String),
     /// Placeholder — data has not been loaded yet.
@@ -70,7 +74,7 @@ impl ManifestItem {
     }
 
     pub fn with_data(mut self, data: Vec<u8>) -> Self {
-        self.data = ManifestData::Inline(data);
+        self.data = ManifestData::Inline(Arc::new(data));
         self
     }
 
@@ -131,6 +135,11 @@ impl Manifest {
     /// Returns an iterator over all manifest items.
     pub fn iter(&self) -> impl Iterator<Item = &ManifestItem> {
         self.items.values()
+    }
+
+    /// Returns a mutable iterator over all manifest items.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ManifestItem> {
+        self.items.values_mut()
     }
 
     /// Returns the number of items in the manifest.
