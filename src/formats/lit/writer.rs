@@ -199,22 +199,25 @@ fn collect_per_tag_attrs(map: &mut HashMap<(usize, &'static str), u16>) {
 
 /// Encode a value as a variable-length integer (decint).
 /// High bit on each byte signals continuation; final byte has high bit clear.
-fn encode_decint(value: u64) -> Vec<u8> {
+/// Returns `(len, buf)` where `buf[..len]` contains the encoded bytes.
+/// Stack-allocated: max 10 bytes for a u64.
+fn encode_decint(value: u64) -> (usize, [u8; 10]) {
+    let mut buf = [0u8; 10];
     if value == 0 {
-        return vec![0];
+        return (1, buf);
     }
-    let mut bytes = Vec::new();
     let mut v = value;
+    let mut len = 0;
     while v > 0 {
-        bytes.push((v & 0x7F) as u8);
+        buf[len] = (v & 0x7F) as u8;
         v >>= 7;
+        len += 1;
     }
-    bytes.reverse();
-    let len = bytes.len();
-    for b in bytes.iter_mut().take(len - 1) {
+    buf[..len].reverse();
+    for b in buf[..len - 1].iter_mut() {
         *b |= 0x80;
     }
-    bytes
+    (len, buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -222,14 +225,17 @@ fn encode_decint(value: u64) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 /// Encode a u32 value as a UTF-8 character (matching the read_utf8_char decoder).
-fn encode_utf8_ordinal(value: u32) -> Vec<u8> {
+/// Returns `(len, buf)` where `buf[..len]` contains the encoded bytes.
+/// Stack-allocated: max 4 bytes.
+fn encode_utf8_ordinal(value: u32) -> (usize, [u8; 4]) {
+    let mut buf = [0u8; 4];
     if let Some(c) = char::from_u32(value) {
-        let mut buf = [0u8; 4];
         let s = c.encode_utf8(&mut buf);
-        s.as_bytes().to_vec()
+        (s.len(), buf)
     } else {
         // Fallback: encode as replacement character
-        vec![0xEF, 0xBF, 0xBD]
+        buf[..3].copy_from_slice(&[0xEF, 0xBF, 0xBD]);
+        (3, buf)
     }
 }
 
@@ -350,10 +356,12 @@ impl BinaryEncoder {
 
         // Emit: 0x00, flags, tag_index_or_custom
         output.push(0x00);
-        output.extend_from_slice(&encode_utf8_ordinal(u32::from(flags)));
+        let (n, b) = encode_utf8_ordinal(u32::from(flags));
+        output.extend_from_slice(&b[..n]);
 
         if let Some(&idx) = tag_index {
-            output.extend_from_slice(&encode_utf8_ordinal(idx as u32));
+            let (n, b) = encode_utf8_ordinal(idx as u32);
+            output.extend_from_slice(&b[..n]);
 
             // Encode attributes
             for attr in e.attributes().flatten() {
@@ -367,7 +375,8 @@ impl BinaryEncoder {
                     let is_href =
                         self.is_html && (attr_name_lower == "href" || attr_name_lower == "src");
 
-                    output.extend_from_slice(&encode_utf8_ordinal(u32::from(code)));
+                    let (n, b) = encode_utf8_ordinal(u32::from(code));
+                    output.extend_from_slice(&b[..n]);
 
                     if is_href {
                         self.encode_href_value(&attr_value, output);
@@ -377,9 +386,11 @@ impl BinaryEncoder {
                 } else {
                     // Custom attribute: emit 0x8000 prefix, then attr name as
                     // length-prefixed string, then value
-                    output.extend_from_slice(&encode_utf8_ordinal(0x8000));
+                    let (n, b) = encode_utf8_ordinal(0x8000);
+                    output.extend_from_slice(&b[..n]);
                     let name_len = attr_name.chars().count();
-                    output.extend_from_slice(&encode_utf8_ordinal(name_len as u32 + 1));
+                    let (n, b) = encode_utf8_ordinal(name_len as u32 + 1);
+                    output.extend_from_slice(&b[..n]);
                     for c in attr_name.chars() {
                         let mut tmp = [0u8; 4];
                         let s = c.encode_utf8(&mut tmp);
@@ -391,12 +402,15 @@ impl BinaryEncoder {
             }
 
             // End of attributes
-            output.extend_from_slice(&encode_utf8_ordinal(0));
+            let (n, b) = encode_utf8_ordinal(0);
+            output.extend_from_slice(&b[..n]);
         } else {
             // Custom tag: emit 0x8000, then tag name as length-prefixed string
-            output.extend_from_slice(&encode_utf8_ordinal(0x8000));
+            let (n, b) = encode_utf8_ordinal(0x8000);
+            output.extend_from_slice(&b[..n]);
             let name_len = tag_name.chars().count();
-            output.extend_from_slice(&encode_utf8_ordinal(name_len as u32 + 1));
+            let (n, b) = encode_utf8_ordinal(name_len as u32 + 1);
+            output.extend_from_slice(&b[..n]);
             for c in tag_name.chars() {
                 let mut tmp = [0u8; 4];
                 let s = c.encode_utf8(&mut tmp);
@@ -411,13 +425,16 @@ impl BinaryEncoder {
                 // Try global attr lookup first
                 let attr_name_lower = attr_name.to_ascii_lowercase();
                 if let Some(&code) = self.global_attr_reverse.get(attr_name_lower.as_str()) {
-                    output.extend_from_slice(&encode_utf8_ordinal(u32::from(code)));
+                    let (n, b) = encode_utf8_ordinal(u32::from(code));
+                    output.extend_from_slice(&b[..n]);
                     self.encode_string_value(&attr_value, output);
                 } else {
                     // Custom attribute
-                    output.extend_from_slice(&encode_utf8_ordinal(0x8000));
+                    let (n, b) = encode_utf8_ordinal(0x8000);
+                    output.extend_from_slice(&b[..n]);
                     let name_len = attr_name.chars().count();
-                    output.extend_from_slice(&encode_utf8_ordinal(name_len as u32 + 1));
+                    let (n, b) = encode_utf8_ordinal(name_len as u32 + 1);
+                    output.extend_from_slice(&b[..n]);
                     for c in attr_name.chars() {
                         let mut tmp = [0u8; 4];
                         let s = c.encode_utf8(&mut tmp);
@@ -428,7 +445,8 @@ impl BinaryEncoder {
             }
 
             // End of attributes
-            output.extend_from_slice(&encode_utf8_ordinal(0));
+            let (n, b) = encode_utf8_ordinal(0);
+            output.extend_from_slice(&b[..n]);
         }
 
         Ok(())
@@ -439,8 +457,10 @@ impl BinaryEncoder {
         // The tag_index is consumed but not used by the decoder for closing-only
         // tokens. We use 1 as a placeholder (any non-zero value works).
         output.push(0x00);
-        output.extend_from_slice(&encode_utf8_ordinal(u32::from(FLAG_CLOSING)));
-        output.extend_from_slice(&encode_utf8_ordinal(1));
+        let (n, b) = encode_utf8_ordinal(u32::from(FLAG_CLOSING));
+        output.extend_from_slice(&b[..n]);
+        let (n, b) = encode_utf8_ordinal(1);
+        output.extend_from_slice(&b[..n]);
     }
 
     /// Encode a regular string attribute value.
@@ -448,9 +468,11 @@ impl BinaryEncoder {
         let len = value.chars().count();
         if len == 0 {
             // Length of 1 means 0 chars (length = count + 1)
-            output.extend_from_slice(&encode_utf8_ordinal(1));
+            let (n, b) = encode_utf8_ordinal(1);
+            output.extend_from_slice(&b[..n]);
         } else {
-            output.extend_from_slice(&encode_utf8_ordinal(len as u32 + 1));
+            let (n, b) = encode_utf8_ordinal(len as u32 + 1);
+            output.extend_from_slice(&b[..n]);
             for c in value.chars() {
                 let mut tmp = [0u8; 4];
                 let s = c.encode_utf8(&mut tmp);
@@ -487,7 +509,8 @@ impl BinaryEncoder {
         }
 
         let len = href_body.chars().count();
-        output.extend_from_slice(&encode_utf8_ordinal(len as u32 + 1));
+        let (n, b) = encode_utf8_ordinal(len as u32 + 1);
+        output.extend_from_slice(&b[..n]);
         for c in href_body.chars() {
             let mut tmp = [0u8; 4];
             let s = c.encode_utf8(&mut tmp);
@@ -581,7 +604,8 @@ fn build_manifest(
 fn write_sized_utf8_string(out: &mut Vec<u8>, s: &str, zpad: bool) {
     let len = s.chars().count();
     // Length as a UTF-8 encoded ordinal
-    out.extend_from_slice(&encode_utf8_ordinal(len as u32));
+    let (n, b) = encode_utf8_ordinal(len as u32);
+    out.extend_from_slice(&b[..n]);
     for c in s.chars() {
         let mut tmp = [0u8; 4];
         let cs = c.encode_utf8(&mut tmp);
@@ -693,11 +717,15 @@ fn build_aoll_chunks(entries: &[VfsEntry]) -> Vec<Vec<u8>> {
     for entry in entries {
         let mut buf = Vec::new();
         let name_bytes = entry.name.as_bytes();
-        buf.extend_from_slice(&encode_decint(name_bytes.len() as u64));
+        let (n, b) = encode_decint(name_bytes.len() as u64);
+        buf.extend_from_slice(&b[..n]);
         buf.extend_from_slice(name_bytes);
-        buf.extend_from_slice(&encode_decint(u64::from(entry.section)));
-        buf.extend_from_slice(&encode_decint(entry.data.len() as u64)); // offset placeholder: we use data len here initially
-        buf.extend_from_slice(&encode_decint(entry.data.len() as u64));
+        let (n, b) = encode_decint(u64::from(entry.section));
+        buf.extend_from_slice(&b[..n]);
+        let (n, b) = encode_decint(entry.data.len() as u64); // offset placeholder: we use data len here initially
+        buf.extend_from_slice(&b[..n]);
+        let (n, b) = encode_decint(entry.data.len() as u64);
+        buf.extend_from_slice(&b[..n]);
         encoded_entries.push(buf);
     }
 
@@ -716,11 +744,15 @@ fn build_aoll_chunks(entries: &[VfsEntry]) -> Vec<Vec<u8>> {
     for (i, entry) in entries.iter().enumerate() {
         let mut buf = Vec::new();
         let name_bytes = entry.name.as_bytes();
-        buf.extend_from_slice(&encode_decint(name_bytes.len() as u64));
+        let (n, b) = encode_decint(name_bytes.len() as u64);
+        buf.extend_from_slice(&b[..n]);
         buf.extend_from_slice(name_bytes);
-        buf.extend_from_slice(&encode_decint(u64::from(entry.section)));
-        buf.extend_from_slice(&encode_decint(offsets[i]));
-        buf.extend_from_slice(&encode_decint(entry.data.len() as u64));
+        let (n, b) = encode_decint(u64::from(entry.section));
+        buf.extend_from_slice(&b[..n]);
+        let (n, b) = encode_decint(offsets[i]);
+        buf.extend_from_slice(&b[..n]);
+        let (n, b) = encode_decint(entry.data.len() as u64);
+        buf.extend_from_slice(&b[..n]);
         encoded_entries.push(buf);
     }
 
@@ -812,10 +844,14 @@ fn build_count_ifcm(num_entries: usize) -> Vec<u8> {
     // a single entry that records the total count.
     let mut entry_data = Vec::new();
     // A single entry: name="", section=0, offset=0, size=num_entries
-    entry_data.extend_from_slice(&encode_decint(0)); // name_len = 0
-    entry_data.extend_from_slice(&encode_decint(0)); // section
-    entry_data.extend_from_slice(&encode_decint(0)); // offset
-    entry_data.extend_from_slice(&encode_decint(num_entries as u64)); // size
+    let (n, b) = encode_decint(0); // name_len = 0
+    entry_data.extend_from_slice(&b[..n]);
+    let (n, b) = encode_decint(0); // section
+    entry_data.extend_from_slice(&b[..n]);
+    let (n, b) = encode_decint(0); // offset
+    entry_data.extend_from_slice(&b[..n]);
+    let (n, b) = encode_decint(num_entries as u64); // size
+    entry_data.extend_from_slice(&b[..n]);
 
     let chunk = make_aoll_chunk(0, &entry_data);
     build_ifcm(&[chunk])
@@ -1314,27 +1350,32 @@ mod tests {
 
     #[test]
     fn encode_decint_zero() {
-        assert_eq!(encode_decint(0), vec![0]);
+        let (len, buf) = encode_decint(0);
+        assert_eq!(&buf[..len], &[0]);
     }
 
     #[test]
     fn encode_decint_small() {
-        assert_eq!(encode_decint(1), vec![1]);
-        assert_eq!(encode_decint(127), vec![127]);
+        let (len, buf) = encode_decint(1);
+        assert_eq!(&buf[..len], &[1]);
+        let (len, buf) = encode_decint(127);
+        assert_eq!(&buf[..len], &[127]);
     }
 
     #[test]
     fn encode_decint_two_bytes() {
         // 128 = 1 << 7 = 0x81 0x00
-        assert_eq!(encode_decint(128), vec![0x81, 0x00]);
+        let (len, buf) = encode_decint(128);
+        assert_eq!(&buf[..len], &[0x81, 0x00]);
     }
 
     #[test]
     fn encode_decint_roundtrip() {
         use crate::formats::common::itss;
         for val in [0, 1, 127, 128, 255, 1000, 16384, 100_000] {
-            let encoded = encode_decint(val);
-            let (decoded, consumed) = itss::encint(&encoded).unwrap();
+            let (len, buf) = encode_decint(val);
+            let encoded = &buf[..len];
+            let (decoded, consumed) = itss::encint(encoded).unwrap();
             assert_eq!(decoded, val, "roundtrip failed for {val}");
             assert_eq!(consumed, encoded.len());
         }
@@ -1342,12 +1383,14 @@ mod tests {
 
     #[test]
     fn encode_utf8_ordinal_ascii() {
-        assert_eq!(encode_utf8_ordinal(65), b"A".to_vec());
+        let (len, buf) = encode_utf8_ordinal(65);
+        assert_eq!(&buf[..len], b"A");
     }
 
     #[test]
     fn encode_utf8_ordinal_zero() {
-        assert_eq!(encode_utf8_ordinal(0), vec![0]);
+        let (len, buf) = encode_utf8_ordinal(0);
+        assert_eq!(&buf[..len], &[0]);
     }
 
     #[test]
