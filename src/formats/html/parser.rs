@@ -106,17 +106,13 @@ pub(crate) fn split_into_chapters<'a>(body: &'a str) -> Vec<(Option<Cow<'a, str>
     }
 
     // Each heading starts a new chapter.
-    for i in 0..split_points.len() {
-        let start = split_points[i].0;
-        let end = if i + 1 < split_points.len() {
-            split_points[i + 1].0
-        } else {
-            body.len()
-        };
-
+    // Drain split_points to avoid cloning the Cow titles.
+    let mut split_iter = split_points.into_iter().peekable();
+    while let Some((start, title)) = split_iter.next() {
+        let end = split_iter.peek().map_or(body.len(), |(pos, _)| *pos);
         let content = body[start..end].trim();
         if !content.is_empty() {
-            chapters.push((Some(split_points[i].1.clone()), content));
+            chapters.push((Some(title), content));
         }
     }
 
