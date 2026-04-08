@@ -23,18 +23,15 @@ pub fn wrap_paragraph(text: &str) -> String {
 
 /// Wraps content in a minimal XHTML document shell.
 pub fn wrap_xhtml(title: &str, body: &str) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>{}</title></head>
-<body>
-{}
-</body>
-</html>"#,
-        escape_html(title),
-        body
-    )
+    const BOILERPLATE_LEN: usize = 151; // length of the static template parts
+    let escaped_title = escape_html(title);
+    let mut s = String::with_capacity(BOILERPLATE_LEN + escaped_title.len() + body.len());
+    s.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head><title>");
+    s.push_str(&escaped_title);
+    s.push_str("</title></head>\n<body>\n");
+    s.push_str(body);
+    s.push_str("\n</body>\n</html>");
+    s
 }
 
 /// Strips a leading `<h1>` or `<h2>` heading from HTML content if its text matches `title`.
