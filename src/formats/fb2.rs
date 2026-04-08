@@ -482,9 +482,9 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                     if let Some(href) = extract_href(tag_str) {
                         // Only emit link for external URLs; internal EPUB references
                         // are meaningless in FB2 context
-                        if is_external_url(&href) {
+                        if is_external_url(href) {
                             inline_buf.push_str("<a l:href=\"");
-                            push_escape_html(&mut inline_buf, &href);
+                            push_escape_html(&mut inline_buf, href);
                             inline_buf.push_str("\">");
                             in_anchor = true;
                         }
@@ -702,7 +702,7 @@ fn is_only_empty_markup(bytes: &[u8]) -> bool {
 }
 
 /// Extracts the `href` attribute value from an `<a ...>` tag string.
-fn extract_href(tag: &str) -> Option<String> {
+fn extract_href(tag: &str) -> Option<&str> {
     let href_pos = find_case_insensitive(tag.as_bytes(), b"href=")?;
     let after_eq = href_pos + 5; // length of "href="
     let bytes = tag.as_bytes();
@@ -713,14 +713,14 @@ fn extract_href(tag: &str) -> Option<String> {
     if quote == b'"' || quote == b'\'' {
         let start = after_eq + 1;
         let end = memchr::memchr(quote, &bytes[start..])?;
-        Some(tag[start..start + end].to_string())
+        Some(&tag[start..start + end])
     } else {
         // Unquoted value – take until whitespace or '>'
         let start = after_eq;
         let end = tag[start..]
             .find(|c: char| c.is_whitespace() || c == '>')
             .unwrap_or(tag.len() - start);
-        Some(tag[start..start + end].to_string())
+        Some(&tag[start..start + end])
     }
 }
 
