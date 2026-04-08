@@ -194,10 +194,12 @@ impl FormatReader for Fb2Reader {
                                 || !current_section_content.is_empty()
                             {
                                 section_counter += 1;
+                                fmt_buf.clear();
+                                let _ = write!(fmt_buf, "section_{}", section_counter);
                                 book.add_chapter(Chapter {
                                     title: current_section_title.take(),
                                     content: std::mem::take(&mut current_section_content),
-                                    id: Some(format!("section_{}", section_counter)),
+                                    id: Some(fmt_buf.clone()),
                                 });
                             }
                         } else if tag == "body" {
