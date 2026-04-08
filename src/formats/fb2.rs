@@ -138,23 +138,23 @@ impl FormatReader for Fb2Reader {
                     } else if !in_body {
                         // Parse metadata
                         if path_buf == "FictionBook/description/title-info/book-title" {
-                            book.metadata.title = Some(current_text.clone());
+                            book.metadata.title = Some(std::mem::take(&mut current_text));
                         } else if path_buf == "FictionBook/description/title-info/author/first-name"
                             || path_buf == "FictionBook/description/title-info/author/last-name"
                             || path_buf == "FictionBook/description/title-info/author/middle-name"
                         {
                             if tag == "first-name" {
-                                book.metadata.authors.push(current_text.clone());
+                                book.metadata.authors.push(std::mem::take(&mut current_text));
                             } else if tag == "last-name" || tag == "middle-name" {
                                 if let Some(last) = book.metadata.authors.last_mut() {
                                     last.push(' ');
                                     last.push_str(&current_text);
                                 } else {
-                                    book.metadata.authors.push(current_text.clone());
+                                    book.metadata.authors.push(std::mem::take(&mut current_text));
                                 }
                             }
                         } else if path_buf == "FictionBook/description/title-info/lang" {
-                            book.metadata.language = Some(current_text.clone());
+                            book.metadata.language = Some(std::mem::take(&mut current_text));
                         } else if path_buf == "FictionBook/description/title-info/annotation/p" {
                             let desc = book.metadata.description.get_or_insert_with(String::new);
                             if !desc.is_empty() {
@@ -162,9 +162,9 @@ impl FormatReader for Fb2Reader {
                             }
                             desc.push_str(&current_text);
                         } else if path_buf == "FictionBook/description/publish-info/publisher" {
-                            book.metadata.publisher = Some(current_text.clone());
+                            book.metadata.publisher = Some(std::mem::take(&mut current_text));
                         } else if path_buf == "FictionBook/description/publish-info/isbn" {
-                            book.metadata.isbn = Some(current_text.clone());
+                            book.metadata.isbn = Some(std::mem::take(&mut current_text));
                         } else if path_buf == "FictionBook/description/publish-info/year"
                             && let Ok(year) = current_text.trim().parse::<i32>()
                         {
@@ -177,7 +177,7 @@ impl FormatReader for Fb2Reader {
                     } else {
                         // Parse content
                         if tag == "p" && in_section_title {
-                            current_section_title = Some(current_text.clone());
+                            current_section_title = Some(std::mem::take(&mut current_text));
                         } else if tag == "title" && section_depth > 0 {
                             in_section_title = false;
                         } else if section_depth > 0 && tag == "p" {

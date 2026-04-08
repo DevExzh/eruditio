@@ -276,9 +276,12 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
 
 /// Appends `chunk` to `result` while collapsing whitespace runs.
 ///
-/// Uses byte iteration since all ASCII whitespace characters are single-byte,
-/// so splitting at whitespace boundaries cannot break multi-byte UTF-8
-/// sequences. Non-whitespace runs are copied in bulk via `push_str`.
+/// Uses SIMD-accelerated `find_first_in_set` to locate the next whitespace
+/// byte and copy non-whitespace runs in bulk. Whitespace runs are consumed
+/// with a tight scalar loop (they are typically very short in real HTML text,
+/// so the SIMD dispatch overhead is not worthwhile there). All ASCII
+/// whitespace characters are single-byte, so splitting at whitespace
+/// boundaries cannot break multi-byte UTF-8 sequences.
 #[inline]
 fn append_ws_collapsed(
     chunk: &str,
@@ -292,14 +295,20 @@ fn append_ws_collapsed(
 
     while i < len {
         if bytes[i].is_ascii_whitespace() {
-            if bytes[i] == b'\n' {
-                *newline_count += 1;
-            }
+            // Consume the whitespace run with a scalar loop, counting
+            // newlines in the same pass. Whitespace runs in real HTML text
+            // are typically 1–3 bytes, making SIMD dispatch overhead
+            // counterproductive here.
             if !*in_ws {
                 *in_ws = true;
-                *newline_count = if bytes[i] == b'\n' { 1 } else { 0 };
+                *newline_count = 0;
             }
-            i += 1;
+            while i < len && bytes[i].is_ascii_whitespace() {
+                if bytes[i] == b'\n' {
+                    *newline_count += 1;
+                }
+                i += 1;
+            }
         } else {
             // Emit pending whitespace separator.
             if *in_ws && !result.is_empty() {
@@ -314,13 +323,18 @@ fn append_ws_collapsed(
             *in_ws = false;
             *newline_count = 0;
 
-            // Find end of non-whitespace run and copy in bulk.
-            let start = i;
-            i += 1;
-            while i < len && !bytes[i].is_ascii_whitespace() {
-                i += 1;
-            }
-            result.push_str(&chunk[start..i]);
+            // Use SIMD byte_scan to find next whitespace character in bulk.
+            // The set must match `u8::is_ascii_whitespace()`: SP, TAB, LF, CR,
+            // and FF (0x0C).
+            let rest = &bytes[i..];
+            let non_ws_len = super::intrinsics::byte_scan::find_first_in_set(
+                rest,
+                b" \t\n\r\x0C",
+            )
+            .unwrap_or(rest.len());
+            let end = i + non_ws_len;
+            result.push_str(&chunk[i..end]);
+            i = end;
         }
     }
 }

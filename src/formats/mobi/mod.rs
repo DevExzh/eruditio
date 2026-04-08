@@ -124,10 +124,10 @@ fn resolve_kindle_references<'a>(
         let after_kindle = &remaining[pos + 7..]; // skip "kindle:"
 
         if let Some(replacement) = try_resolve_embed(after_kindle, image_paths) {
-            result.push_str(&replacement.0);
+            result.push_str(replacement.0);
             remaining = &remaining[pos + 7 + replacement.1..];
         } else if let Some(replacement) = try_resolve_flow(after_kindle, flow_paths) {
-            result.push_str(&replacement.0);
+            result.push_str(replacement.0);
             remaining = &remaining[pos + 7 + replacement.1..];
         } else if let Some(replacement) = try_resolve_pos_fid(after_kindle, chapter_count) {
             result.push_str(&replacement.0);
@@ -147,7 +147,7 @@ fn resolve_kindle_references<'a>(
 /// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
 ///
 /// kindle:embed indices are 1-based: kindle:embed:0001 refers to the first image.
-fn try_resolve_embed(after_kindle: &str, image_paths: &[String]) -> Option<(String, usize)> {
+fn try_resolve_embed<'a>(after_kindle: &str, image_paths: &'a [String]) -> Option<(&'a str, usize)> {
     let rest = after_kindle.strip_prefix("embed:")?;
     let consumed_prefix = 6; // "embed:"
 
@@ -177,14 +177,14 @@ fn try_resolve_embed(after_kindle: &str, image_paths: &[String]) -> Option<(Stri
 
     // Look up the image path.
     let path = image_paths.get(index)?;
-    Some((path.clone(), total_consumed))
+    Some((path.as_str(), total_consumed))
 }
 
 /// Tries to resolve a kindle:flow:XXXX reference.
 /// Flow indices use the same Kindle base-32 encoding as embed references
 /// (digits 0-9 plus letters A-V).
 /// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
-fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option<(String, usize)> {
+fn try_resolve_flow<'a>(after_kindle: &str, flow_paths: &'a [Option<String>]) -> Option<(&'a str, usize)> {
     let rest = after_kindle.strip_prefix("flow:")?;
     let consumed_prefix = 5; // "flow:"
 
@@ -210,7 +210,7 @@ fn try_resolve_flow(after_kindle: &str, flow_paths: &[Option<String>]) -> Option
 
     // Look up the flow path.
     let path = flow_paths.get(index)?.as_ref()?;
-    Some((path.clone(), total_consumed))
+    Some((path.as_str(), total_consumed))
 }
 
 /// Tries to resolve a kindle:pos:fid:XXXX:off:YYYYYY reference.
@@ -473,7 +473,7 @@ struct PosFidResolver<'a> {
     /// Absolute byte offset of flow 0 within the full decompressed text.
     flow0_start: usize,
     /// Byte ranges (start, end) for each chapter, relative to `text_data`.
-    chapter_ranges: Vec<(usize, usize)>,
+    chapter_ranges: &'a [(usize, usize)],
     /// Borrowed reference to the main HTML bytes (flow 0 of the FDST).
     text_data: &'a [u8],
 }
@@ -826,7 +826,7 @@ impl FormatReader for MobiReader {
                 .map(|insert_positions| PosFidResolver {
                     insert_positions,
                     flow0_start,
-                    chapter_ranges: chapter_byte_ranges.clone(),
+                    chapter_ranges: &chapter_byte_ranges,
                     text_data: main_html_bytes,
                 });
 
