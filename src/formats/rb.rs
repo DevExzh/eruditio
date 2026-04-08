@@ -162,7 +162,7 @@ impl FormatWriter for RbWriter {
         // Build HTML content from chapters.
         let mut html = String::from("<html><body>\n");
         for chapter in book.chapter_views() {
-            if let Some(title) = &chapter.title {
+            if let Some(title) = chapter.title {
                 html.push_str(&format!("<h2>{}</h2>\n", title));
             }
             html.push_str(&chapter.content);

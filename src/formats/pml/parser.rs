@@ -518,7 +518,7 @@ pub(crate) fn book_to_pml(book: &Book) -> String {
             pml.push_str("\\p\n");
         }
 
-        if let Some(ref title) = chapter.title {
+        if let Some(title) = chapter.title {
             pml.push_str("\\x ");
             pml.push_str(title);
             pml.push('\n');

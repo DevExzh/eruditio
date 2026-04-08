@@ -193,12 +193,12 @@ pub fn book_to_plain_text(book: &Book) -> String {
 
     for chapter in &chapters {
         // Skip cover-only chapters to avoid "Cover" alt-text artifacts.
-        if is_cover_only_chapter(chapter.title.as_deref(), chapter.content) {
+        if is_cover_only_chapter(chapter.title, chapter.content) {
             continue;
         }
 
-        if let Some(ref title) = chapter.title {
-            parts.push(title.clone());
+        if let Some(title) = chapter.title {
+            parts.push(title.to_string());
             parts.push(String::new()); // blank line after title
         }
         let plain = strip_tags(&chapter.content);
@@ -207,7 +207,7 @@ pub fn book_to_plain_text(book: &Book) -> String {
         // For TXT output, strip everything up to and including the title
         // to remove both page-header boilerplate and duplicate heading.
         let trimmed = match chapter.title {
-            Some(ref title) => strip_title_prefix(trimmed, title),
+            Some(title) => strip_title_prefix(trimmed, title),
             None => trimmed,
         };
         if !trimmed.is_empty() {

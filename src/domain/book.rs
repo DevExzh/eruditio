@@ -18,7 +18,7 @@ pub struct Chapter {
 /// A borrowed view of a chapter (avoids cloning content).
 #[derive(Debug, Clone)]
 pub struct ChapterView<'a> {
-    pub title: Option<String>,
+    pub title: Option<&'a str>,
     pub content: &'a str,
     pub id: &'a str,
 }
@@ -98,7 +98,7 @@ impl Book {
                 let content = manifest_item.data.as_text()?.to_string();
 
                 // Try to find a title from the TOC.
-                let title = self.find_toc_title(&manifest_item.href);
+                let title = self.find_toc_title(&manifest_item.href).map(String::from);
 
                 Some(Chapter {
                     title,
@@ -178,11 +178,11 @@ impl Book {
     }
 
     /// Searches the TOC tree for an entry whose href matches (prefix match).
-    fn find_toc_title(&self, href: &str) -> Option<String> {
-        fn search(items: &[TocItem], href: &str) -> Option<String> {
+    fn find_toc_title(&self, href: &str) -> Option<&str> {
+        fn search<'a>(items: &'a [TocItem], href: &str) -> Option<&'a str> {
             for item in items {
                 if item.href == href || href.starts_with(&item.href) {
-                    return Some(item.title.clone());
+                    return Some(&item.title);
                 }
                 if let Some(title) = search(&item.children, href) {
                     return Some(title);

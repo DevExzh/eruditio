@@ -657,7 +657,7 @@ impl FormatWriter for SnbWriter {
         for (i, chapter) in chapters.iter().enumerate() {
             let ch_filename = format!("chapter_{}.snbc", i);
             let default_title = format!("Chapter {}", i + 1);
-            let ch_title = chapter.title.as_deref().unwrap_or(&default_title);
+            let ch_title = chapter.title.unwrap_or(default_title.as_str());
 
             toc_xml.push_str(&format!(
                 "  <chapter src=\"{}\">{}</chapter>\n",

@@ -192,11 +192,11 @@ fn generate_htmlz_content(book: &Book) -> String {
         if i > 0 {
             body.push_str("<hr />\n");
         }
-        if let Some(ref ch_title) = chapter.title {
+        if let Some(ch_title) = chapter.title {
             body.push_str(&format!("<h2>{}</h2>\n", escape_html(ch_title)));
         }
         let content = match chapter.title {
-            Some(ref t) => strip_leading_heading(&chapter.content, t),
+            Some(t) => strip_leading_heading(&chapter.content, t),
             None => &chapter.content,
         };
         // Strip XHTML wrapper elements (<?xml>, <!DOCTYPE>, <html>, <head>, <body>)

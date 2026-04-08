@@ -927,7 +927,7 @@ fn generate_fb2(book: &Book) -> String {
         }
 
         xml.push_str("    <section>\n");
-        if let Some(ref ch_title) = chapter.title {
+        if let Some(ch_title) = chapter.title {
             xml.push_str("      <title><p>");
             push_escape_html(&mut xml, ch_title);
             xml.push_str("</p></title>\n");

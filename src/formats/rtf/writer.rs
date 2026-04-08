@@ -54,7 +54,7 @@ pub fn book_to_rtf(book: &Book) -> String {
         }
 
         // Chapter title as Heading 1 style (centered, with spacing).
-        if let Some(ref title) = chapter.title {
+        if let Some(title) = chapter.title {
             rtf.push_str("{\\pard\\s1\\qc\\sb360\\sa120\\keepn\\f0\\fs48\\b ");
             write_rtf_text(&mut rtf, title);
             rtf.push_str("\\par}\n");
@@ -62,7 +62,7 @@ pub fn book_to_rtf(book: &Book) -> String {
 
         // Strip duplicate heading from content before converting.
         let content = match chapter.title {
-            Some(ref title) => strip_leading_heading(&chapter.content, title),
+            Some(title) => strip_leading_heading(&chapter.content, title),
             None => &chapter.content,
         };
 

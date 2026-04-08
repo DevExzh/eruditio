@@ -105,12 +105,12 @@ fn book_to_html(book: &Book) -> String {
             body.push_str("<hr />\n");
         }
 
-        if let Some(ref ch_title) = chapter.title {
+        if let Some(ch_title) = chapter.title {
             body.push_str(&format!("<h1>{}</h1>\n", escape_html(ch_title)));
         }
 
         let content = match chapter.title {
-            Some(ref ch_title) => strip_leading_heading(&chapter.content, ch_title),
+            Some(ch_title) => strip_leading_heading(&chapter.content, ch_title),
             None => &chapter.content,
         };
         body.push_str(content);
