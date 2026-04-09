@@ -1,6 +1,7 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::ends_with_ascii_ci;
+use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use crate::formats::txt::{TxtReader, TxtWriter};
 use std::io::{Cursor, Read, Seek, Write};
 use zip::write::FileOptions;
@@ -89,7 +90,9 @@ fn write_single_file_zip<W: Write + Seek>(
 ) -> Result<()> {
     let mut zip = ZipWriter::new(writer);
     let options: FileOptions<'_, ()> =
-        FileOptions::default().compression_method(CompressionMethod::Deflated);
+        FileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(ZIP_DEFLATE_LEVEL);
 
     zip.start_file(filename, options)
         .map_err(|e| EruditioError::Format(format!("Failed to create {}: {}", filename, e)))?;

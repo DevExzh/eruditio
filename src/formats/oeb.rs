@@ -8,6 +8,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils;
 use crate::formats::common::text_utils::escape_xml;
+use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use std::io::{Cursor, Read, Write};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -174,8 +175,9 @@ impl FormatWriter for OebWriter {
         let mut zip_buf = Cursor::new(Vec::new());
         {
             let mut zip = ZipWriter::new(&mut zip_buf);
-            let options: FileOptions<'_, ()> =
-                FileOptions::default().compression_method(CompressionMethod::Deflated);
+            let options: FileOptions<'_, ()> = FileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .compression_level(ZIP_DEFLATE_LEVEL);
 
             let chapters = book.chapters();
             let resources = book.resources();

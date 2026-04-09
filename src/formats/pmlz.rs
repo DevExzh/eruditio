@@ -6,6 +6,7 @@ use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::text_utils::ends_with_ascii_ci;
+use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use crate::formats::pml::{PmlReader, PmlWriter};
 use std::io::{Cursor, Read, Write};
 
@@ -70,7 +71,8 @@ impl FormatWriter for PmlzWriter {
         {
             let mut zip = zip::ZipWriter::new(&mut cursor);
             let options = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
+                .compression_method(zip::CompressionMethod::Deflated)
+                .compression_level(ZIP_DEFLATE_LEVEL);
             zip.start_file("content.pml", options)?;
             zip.write_all(&pml_buf)?;
             zip.finish()?;
