@@ -29,6 +29,16 @@ pub fn escape_xml(text: &str) -> Cow<'_, str> {
     escape_impl(text, true)
 }
 
+static ESCAPE_TABLE: [&str; 256] = {
+    let mut table = [""; 256];
+    table[b'&' as usize] = "&amp;";
+    table[b'<' as usize] = "&lt;";
+    table[b'>' as usize] = "&gt;";
+    table[b'"' as usize] = "&quot;";
+    table[b'\'' as usize] = "&apos;";
+    table
+};
+
 fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     let bytes = text.as_bytes();
     let len = bytes.len();
@@ -71,13 +81,9 @@ fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
         // special chars with a tight scalar loop to avoid SIMD dispatch overhead
         // when specials are clustered.
         while pos < len && is_html_special(bytes[pos], xml_mode) {
-            match bytes[pos] {
-                b'&' => result.push_str("&amp;"),
-                b'<' => result.push_str("&lt;"),
-                b'>' => result.push_str("&gt;"),
-                b'"' => result.push_str("&quot;"),
-                b'\'' => result.push_str("&apos;"),
-                _ => {},
+            let escape = ESCAPE_TABLE[bytes[pos] as usize];
+            if !escape.is_empty() {
+                result.push_str(escape);
             }
             pos += 1;
         }
@@ -146,13 +152,9 @@ fn push_escape_impl(buf: &mut String, text: &str, xml_mode: bool) {
 
     loop {
         while pos < len && is_html_special(bytes[pos], xml_mode) {
-            match bytes[pos] {
-                b'&' => buf.push_str("&amp;"),
-                b'<' => buf.push_str("&lt;"),
-                b'>' => buf.push_str("&gt;"),
-                b'"' => buf.push_str("&quot;"),
-                b'\'' => buf.push_str("&apos;"),
-                _ => {},
+            let escape = ESCAPE_TABLE[bytes[pos] as usize];
+            if !escape.is_empty() {
+                buf.push_str(escape);
             }
             pos += 1;
         }
