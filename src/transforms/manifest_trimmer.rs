@@ -46,6 +46,17 @@ fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
         .map(|item| (item.href.as_str(), item.id.as_str()))
         .collect();
 
+    // Build a filename→id suffix index once, so that collect_href_references
+    // does not reconstruct it on every call (once per content document).
+    let filename_to_id: std::collections::HashMap<&str, &str> = book
+        .manifest
+        .iter()
+        .map(|item| {
+            let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
+            (filename, item.id.as_str())
+        })
+        .collect();
+
     // Spine references.
     for spine_item in book.spine.iter() {
         ids.insert(spine_item.manifest_id.as_str());
@@ -72,7 +83,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
         if let Some(item) = book.manifest.get(id)
             && let Some(text) = item.data.as_text()
         {
-            collect_href_references(text, &href_to_id, book, &mut ids);
+            collect_href_references(text, &href_to_id, &filename_to_id, &mut ids);
         }
     }
 
@@ -102,20 +113,9 @@ fn collect_toc_refs<'a>(
 fn collect_href_references<'a>(
     text: &str,
     href_to_id: &std::collections::HashMap<&str, &'a str>,
-    book: &'a Book,
+    filename_to_id: &std::collections::HashMap<&str, &'a str>,
     ids: &mut HashSet<&'a str>,
 ) {
-    // Build a filename→id suffix index for O(1) fallback lookups,
-    // replacing the O(M) linear scan per unmatched href.
-    let filename_to_id: std::collections::HashMap<&str, &str> = book
-        .manifest
-        .iter()
-        .map(|item| {
-            let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
-            (filename, item.id.as_str())
-        })
-        .collect();
-
     let bytes = text.as_bytes();
     // Attribute patterns to search for, with their byte representations.
     let patterns: &[&[u8]] = &[b"href=\"", b"src=\""];
