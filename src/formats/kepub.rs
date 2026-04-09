@@ -5,7 +5,7 @@
 //! reader (Kepub files are valid EPUBs). The writer adds Kobo span markup
 //! before delegating to the EPUB writer.
 
-use crate::domain::manifest::ManifestData;
+use crate::domain::manifest::{Manifest, ManifestItem};
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::epub::{EpubReader, EpubWriter};
@@ -61,20 +61,36 @@ impl FormatWriter for KepubWriter {
 }
 
 /// Adds Kobo reading-progress spans to all text content documents in the book.
+///
+/// Builds a new `Book` by iterating the original's manifest items. Text items
+/// that need Kobo spans are transformed directly from the original (avoiding
+/// the clone-then-replace pattern). Binary items get a cheap `Arc` bump.
 fn add_kobo_spans(book: &Book) -> Book {
-    let mut result = book.clone();
-
-    // Iterate manifest items in-place, wrapping text content in Kobo spans.
-    for item in result.manifest.iter_mut() {
+    let mut manifest = Manifest::new();
+    for item in book.manifest.iter() {
         if (item.media_type.contains("html") || item.media_type.contains("xml"))
             && let Some(text) = item.data.as_text()
         {
-            let wrapped = insert_kobo_spans(text);
-            item.data = ManifestData::Text(wrapped);
+            // Build the item directly with wrapped text, avoiding a clone of
+            // the original text content that would be immediately discarded.
+            let mut modified =
+                ManifestItem::new(&item.id, &item.href, &item.media_type)
+                    .with_text(insert_kobo_spans(text));
+            modified.fallback.clone_from(&item.fallback);
+            modified.properties.clone_from(&item.properties);
+            manifest.insert(modified);
+        } else {
+            manifest.insert(item.clone());
         }
     }
 
-    result
+    Book {
+        metadata: book.metadata.clone(),
+        manifest,
+        spine: book.spine.clone(),
+        toc: book.toc.clone(),
+        guide: book.guide.clone(),
+    }
 }
 
 /// Inserts `<span class="koboSpan">` wrappers around text segments within
