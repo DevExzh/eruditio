@@ -71,10 +71,11 @@ fn find_file_by_extension<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     ext: &str,
 ) -> Option<String> {
+    let suffix = format!(".{}", ext);
     for i in 0..archive.len() {
         if let Ok(file) = archive.by_index(i) {
             let name = file.name().to_string();
-            if ends_with_ascii_ci(&name, &format!(".{}", ext)) {
+            if ends_with_ascii_ci(&name, &suffix) {
                 return Some(name);
             }
         }

@@ -17,6 +17,7 @@ pub enum ManifestData {
 
 impl ManifestData {
     /// Returns the text content if this is a `Text` variant.
+    #[inline]
     pub fn as_text(&self) -> Option<&str> {
         match self {
             ManifestData::Text(s) => Some(s),
@@ -25,6 +26,7 @@ impl ManifestData {
     }
 
     /// Returns the binary data if this is an `Inline` variant.
+    #[inline]
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             ManifestData::Inline(b) => Some(b),
@@ -36,6 +38,7 @@ impl ManifestData {
     ///
     /// This allows callers to `Arc::clone` instead of copying the entire buffer
     /// when shared ownership is sufficient.
+    #[inline]
     pub(crate) fn as_inline_arc(&self) -> Option<&Arc<Vec<u8>>> {
         match self {
             ManifestData::Inline(a) => Some(a),
@@ -44,6 +47,7 @@ impl ManifestData {
     }
 
     /// Returns `true` if the data has not been loaded.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         matches!(self, ManifestData::Empty)
     }
@@ -114,8 +118,9 @@ impl Manifest {
 
     /// Inserts an item into the manifest. Overwrites any existing item with the same ID.
     pub fn insert(&mut self, item: ManifestItem) {
-        self.href_to_id.insert(item.href.clone(), item.id.clone());
-        self.items.insert(item.id.clone(), item);
+        let id = item.id.clone();
+        self.href_to_id.insert(item.href.clone(), id.clone());
+        self.items.insert(id, item);
     }
 
     /// Looks up an item by its manifest ID.

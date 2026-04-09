@@ -220,11 +220,10 @@ fn parse_and_extract_data_uri(uri: &str, book: &mut Book, index: usize) -> Optio
 
     let id = format!("extracted_img_{}", index);
     let href = format!("images/extracted_img_{}.{}", index, ext);
-    let replacement = href.clone();
 
-    book.add_resource(id, href, decoded, media_type);
+    book.add_resource(id, &href, decoded, media_type);
 
-    Some(replacement)
+    Some(href)
 }
 
 #[cfg(test)]
