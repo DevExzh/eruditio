@@ -40,7 +40,10 @@ impl FormatReader for HtmlReader {
         // Extract body content.
         let body = parser::extract_body(&contents);
 
-        // Split into chapters.
+        // Extract data URI images from the body and add as resources.
+        let body = extract_data_uri_images(&body, &mut book);
+
+        // Split into chapters (now using the modified body with resource paths).
         let chapters = parser::split_into_chapters(&body);
 
         if chapters.is_empty() {
@@ -136,6 +139,86 @@ fn book_to_html(book: &Book) -> String {
     }
 
     parser::build_html_document(title, &book.metadata, &body)
+}
+
+/// Extracts embedded base64 data URI images from HTML content.
+///
+/// Scans for `<img` tags with `src="data:{media_type};base64,{data}"` URIs,
+/// decodes each image, adds it as a book resource, and replaces the data URI
+/// with the resource path (e.g., `images/extracted_img_0.png`).
+///
+/// Returns the modified HTML with data URIs replaced by resource paths.
+fn extract_data_uri_images(html: &str, book: &mut Book) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut remaining = html;
+    let mut img_index: usize = 0;
+
+    while let Some(src_pos) = remaining.find("src=\"data:") {
+        // Copy everything up to and including `src="`
+        result.push_str(&remaining[..src_pos + 5]);
+        // Advance past `src="`
+        remaining = &remaining[src_pos + 5..];
+
+        // `remaining` now starts with `data:{media_type};base64,{b64_data}"...`
+        // Find the closing quote for the src attribute value.
+        let Some(quote_end) = remaining.find('"') else {
+            // No closing quote -- broken HTML, just copy the rest.
+            break;
+        };
+
+        let data_uri = &remaining[..quote_end];
+
+        // Parse: data:{media_type};base64,{b64_data}
+        if let Some(replaced) = parse_and_extract_data_uri(data_uri, book, img_index) {
+            result.push_str(&replaced);
+            img_index += 1;
+        } else {
+            // Could not parse -- keep the original data URI unchanged.
+            result.push_str(data_uri);
+        }
+        result.push('"');
+        remaining = &remaining[quote_end + 1..];
+    }
+
+    // Copy any remaining content.
+    result.push_str(remaining);
+    result
+}
+
+/// Parses a single `data:` URI value, decodes the base64 payload, adds it as
+/// a resource to the book, and returns the replacement path string.
+///
+/// Returns `None` if the URI cannot be parsed or decoded.
+fn parse_and_extract_data_uri(uri: &str, book: &mut Book, index: usize) -> Option<String> {
+    // Expected format: data:{media_type};base64,{b64_data}
+    let after_data = uri.strip_prefix("data:")?;
+    let semicolon = after_data.find(';')?;
+    let media_type = &after_data[..semicolon];
+
+    let after_semi = &after_data[semicolon + 1..];
+    let b64_data = after_semi.strip_prefix("base64,")?;
+
+    // Decode the base64 payload.
+    let decoded = base64_simd::STANDARD.decode_to_vec(b64_data.as_bytes()).ok()?;
+
+    // Determine file extension from media type.
+    let ext = match media_type {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/svg+xml" => "svg",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        _ => "bin",
+    };
+
+    let id = format!("extracted_img_{}", index);
+    let href = format!("images/extracted_img_{}.{}", index, ext);
+    let replacement = href.clone();
+
+    book.add_resource(id, href, decoded, media_type);
+
+    Some(replacement)
 }
 
 #[cfg(test)]
@@ -276,5 +359,144 @@ mod tests {
             "Expected one <h1>Ch 1</h1>, found {count} in: {html}"
         );
         assert!(html.contains("Body text"));
+    }
+
+    #[test]
+    fn extract_single_data_uri_image() {
+        let png_bytes = vec![0x89, 0x50, 0x4E, 0x47];
+        let b64 = base64_simd::STANDARD.encode_to_string(&png_bytes);
+        let html = format!(
+            r#"<p>Before</p><img src="data:image/png;base64,{}" alt="test" /><p>After</p>"#,
+            b64
+        );
+
+        let mut book = Book::new();
+        let result = extract_data_uri_images(&html, &mut book);
+
+        // The data URI should be replaced with a resource path.
+        assert!(
+            result.contains(r#"src="images/extracted_img_0.png""#),
+            "Data URI should be replaced with resource path. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("base64,"),
+            "No base64 data should remain in the HTML. Got: {}",
+            result
+        );
+        assert!(result.contains("Before"));
+        assert!(result.contains("After"));
+
+        // A resource should have been added.
+        let resources = book.resources();
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].id, "extracted_img_0");
+        assert_eq!(resources[0].href, "images/extracted_img_0.png");
+        assert_eq!(resources[0].media_type, "image/png");
+        assert_eq!(resources[0].data, &png_bytes);
+    }
+
+    #[test]
+    fn extract_multiple_data_uri_images() {
+        let png_bytes = vec![0x89, 0x50];
+        let jpg_bytes = vec![0xFF, 0xD8];
+        let png_b64 = base64_simd::STANDARD.encode_to_string(&png_bytes);
+        let jpg_b64 = base64_simd::STANDARD.encode_to_string(&jpg_bytes);
+        let html = format!(
+            r#"<img src="data:image/png;base64,{}" /><img src="data:image/jpeg;base64,{}" />"#,
+            png_b64, jpg_b64
+        );
+
+        let mut book = Book::new();
+        let result = extract_data_uri_images(&html, &mut book);
+
+        assert!(result.contains(r#"src="images/extracted_img_0.png""#));
+        assert!(result.contains(r#"src="images/extracted_img_1.jpg""#));
+        assert!(!result.contains("base64,"));
+
+        let resources = book.resources();
+        assert_eq!(resources.len(), 2);
+
+        let png_res = resources.iter().find(|r| r.media_type == "image/png");
+        let jpg_res = resources.iter().find(|r| r.media_type == "image/jpeg");
+        assert!(png_res.is_some());
+        assert!(jpg_res.is_some());
+        assert_eq!(png_res.unwrap().data, &png_bytes);
+        assert_eq!(jpg_res.unwrap().data, &jpg_bytes);
+    }
+
+    #[test]
+    fn extract_data_uri_no_images() {
+        let html = "<p>No images here</p><img src=\"photo.jpg\" />";
+        let mut book = Book::new();
+        let result = extract_data_uri_images(html, &mut book);
+
+        assert_eq!(result, html, "HTML without data URIs should be unchanged");
+        assert!(book.resources().is_empty());
+    }
+
+    #[test]
+    fn extract_data_uri_correct_media_types() {
+        let data = vec![0x01, 0x02];
+        let b64 = base64_simd::STANDARD.encode_to_string(&data);
+
+        for (media, ext) in [
+            ("image/png", "png"),
+            ("image/jpeg", "jpg"),
+            ("image/gif", "gif"),
+            ("image/svg+xml", "svg"),
+        ] {
+            let html = format!(r#"<img src="data:{};base64,{}" />"#, media, b64);
+            let mut book = Book::new();
+            let result = extract_data_uri_images(&html, &mut book);
+
+            let expected_href = format!("images/extracted_img_0.{}", ext);
+            assert!(
+                result.contains(&format!(r#"src="{}""#, expected_href)),
+                "Media type {} should produce extension .{}. Got: {}",
+                media,
+                ext,
+                result
+            );
+
+            let resources = book.resources();
+            assert_eq!(resources.len(), 1);
+            assert_eq!(resources[0].media_type, media);
+            assert_eq!(resources[0].data, &data);
+        }
+    }
+
+    #[test]
+    fn html_round_trip_with_images() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Image Round Trip".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch 1".into()),
+            content: "<p>Content with images</p>".into(),
+            id: Some("ch1".into()),
+        });
+        book.add_resource("img1", "cover.png", vec![0x89, 0x50, 0x4E, 0x47], "image/png");
+
+        // Write to HTML (embeds images as data URIs).
+        let mut output = Vec::new();
+        HtmlWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back (should extract data URIs back into resources).
+        let mut cursor = Cursor::new(output);
+        let decoded = HtmlReader::new().read_book(&mut cursor).unwrap();
+
+        assert_eq!(decoded.metadata.title.as_deref(), Some("Image Round Trip"));
+        let resources = decoded.resources();
+        assert!(
+            !resources.is_empty(),
+            "Round-tripped book should have image resources"
+        );
+        let img = resources.iter().find(|r| r.media_type == "image/png");
+        assert!(img.is_some(), "Should have a PNG resource");
+        assert_eq!(
+            img.unwrap().data,
+            &[0x89, 0x50, 0x4E, 0x47],
+            "Image data should be preserved through round trip"
+        );
     }
 }
