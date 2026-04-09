@@ -59,7 +59,14 @@ pub(crate) fn local_name(tag: &str) -> &str {
 /// XML tag names are always valid UTF-8 in well-formed documents. Falls back
 /// to an empty string for invalid UTF-8 (should never happen in practice).
 pub(crate) fn local_tag_name(raw: &[u8]) -> &str {
-    let s = std::str::from_utf8(raw).unwrap_or("");
+    // XML tag names are always ASCII in well-formed documents, so skip
+    // full UTF-8 validation when every byte is < 0x80.
+    let s = if super::intrinsics::is_ascii::is_all_ascii(raw) {
+        // SAFETY: all bytes are < 0x80, which is valid UTF-8.
+        unsafe { std::str::from_utf8_unchecked(raw) }
+    } else {
+        std::str::from_utf8(raw).unwrap_or("")
+    };
     local_name(s)
 }
 

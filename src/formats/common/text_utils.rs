@@ -722,6 +722,11 @@ pub fn bytes_to_string(bytes: &[u8]) -> String {
 /// Unlike [`bytes_to_string`], this avoids allocation when the input is
 /// already valid UTF-8 by returning a `Cow::Borrowed`.
 pub fn bytes_to_cow_str(bytes: &[u8]) -> Cow<'_, str> {
+    // ASCII fast path: skip full UTF-8 validation when every byte is < 0x80.
+    if super::intrinsics::is_ascii::is_all_ascii(bytes) {
+        // SAFETY: all bytes are < 0x80, which is valid UTF-8.
+        return Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) });
+    }
     match std::str::from_utf8(bytes) {
         Ok(s) => Cow::Borrowed(s),
         Err(_) => Cow::Owned(String::from_utf8_lossy(bytes).into_owned()),
