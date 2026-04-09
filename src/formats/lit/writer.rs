@@ -1117,6 +1117,11 @@ fn generate_opf(
         opf.push_str(&escape_xml(rights));
         opf.push_str("</dc:Rights>\n");
     }
+    if let Some(ref date) = book.metadata.publication_date {
+        opf.push_str("      <dc:Date>");
+        opf.push_str(&date.format("%Y-%m-%d").to_string());
+        opf.push_str("</dc:Date>\n");
+    }
 
     opf.push_str("    </dc-metadata>\n");
     opf.push_str("  </metadata>\n");
