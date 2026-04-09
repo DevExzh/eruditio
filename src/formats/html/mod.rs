@@ -41,7 +41,7 @@ impl FormatReader for HtmlReader {
         let body = parser::extract_body(&contents);
 
         // Extract data URI images from the body and add as resources.
-        let body = extract_data_uri_images(&body, &mut book);
+        let body = extract_data_uri_images(body, &mut book);
 
         // Split into chapters (now using the modified body with resource paths).
         let chapters = parser::split_into_chapters(&body);

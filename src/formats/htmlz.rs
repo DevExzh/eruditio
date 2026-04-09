@@ -211,7 +211,7 @@ fn generate_htmlz_content(book: &Book) -> String {
     if let Some(item) = cover_item {
         let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
         body.push_str("<div class=\"cover\"><img src=\"images/");
-        body.push_str(filename);
+        body.push_str(&escape_html(filename));
         body.push_str("\" alt=\"Cover\"/></div>\n");
     }
 
