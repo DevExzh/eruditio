@@ -5,6 +5,8 @@
 
 use std::borrow::Cow;
 
+use ahash::{AHashMap, AHashSet};
+
 use crate::domain::Book;
 use crate::error::Result;
 use crate::formats::common::compression::palmdoc;
@@ -832,8 +834,8 @@ fn flatten_toc_tree(items: &[crate::domain::toc::TocItem]) -> Vec<(usize, &str, 
 ///
 /// Returns a map from fragment identifier (the id value) to the byte offset
 /// of the start of the enclosing tag (the `<` character) within `content`.
-fn find_id_positions(content: &str) -> std::collections::HashMap<&str, usize> {
-    let mut map = std::collections::HashMap::new();
+fn find_id_positions(content: &str) -> AHashMap<&str, usize> {
+    let mut map = AHashMap::new();
     let bytes = content.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -876,10 +878,10 @@ fn find_id_positions(content: &str) -> std::collections::HashMap<&str, usize> {
 /// (relative to the content string, AFTER pagebreak insertion).
 fn insert_pagebreaks_for_fragments<'a>(
     content: &'a str,
-    fragment_ids: &std::collections::HashSet<&str>,
-) -> (Cow<'a, str>, std::collections::HashMap<String, usize>) {
+    fragment_ids: &AHashSet<&str>,
+) -> (Cow<'a, str>, AHashMap<String, usize>) {
     if fragment_ids.is_empty() {
-        return (Cow::Borrowed(content), std::collections::HashMap::new());
+        return (Cow::Borrowed(content), AHashMap::new());
     }
 
     let id_positions = find_id_positions(content);
@@ -896,14 +898,14 @@ fn insert_pagebreaks_for_fragments<'a>(
     insertions.dedup_by_key(|item| item.0);
 
     if insertions.is_empty() {
-        return (Cow::Borrowed(content), std::collections::HashMap::new());
+        return (Cow::Borrowed(content), AHashMap::new());
     }
 
     // Build the new content with pagebreaks inserted.
     let pagebreak_tag = "<mbp:pagebreak/>";
     let extra_len = insertions.len() * pagebreak_tag.len();
     let mut result = String::with_capacity(content.len() + extra_len);
-    let mut offsets = std::collections::HashMap::new();
+    let mut offsets = AHashMap::new();
     let mut prev = 0;
 
     for (orig_pos, _frag_id) in &insertions {
@@ -941,7 +943,7 @@ fn insert_pagebreaks_for_fragments<'a>(
 /// for every TOC entry (at all depth levels) in the generated HTML.
 fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     // Collect chapter info: (spine_index, toc_title_if_any).
-    let mut chapter_info: Vec<(usize, Option<String>)> = Vec::new();
+    let mut chapter_info: Vec<(usize, Option<&str>)> = Vec::new();
     let toc = &book.toc;
 
     let toc_title_map = TocTitleMap::build(toc);
@@ -963,8 +965,8 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 
     // Build a map: spine manifest href -> spine index in chapter_info.
     // This lets us resolve TOC entry hrefs to the correct spine item.
-    let mut href_to_chapter_info_idx: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
+    let mut href_to_chapter_info_idx: AHashMap<&str, usize> =
+        AHashMap::new();
     for (info_idx, (spine_idx, _)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
         if let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) {
@@ -974,10 +976,10 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 
     // Group TOC entries by their base href (spine item) to identify which
     // fragment IDs need pagebreaks within each chapter.
-    let mut fragments_by_chapter: std::collections::HashMap<
+    let mut fragments_by_chapter: AHashMap<
         &str,
-        std::collections::HashSet<&str>,
-    > = std::collections::HashMap::new();
+        AHashSet<&str>,
+    > = AHashMap::new();
     for (_depth, _title, href) in &all_toc_entries {
         if let Some(hash_pos) = href.find('#') {
             let base = &href[..hash_pos];
@@ -1057,8 +1059,8 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     let mut first_chapter_offset: Option<usize> = None;
 
     // Track fragment offsets within serialized content: "base_href#frag" -> byte_offset.
-    let mut fragment_offsets: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut fragment_offsets: AHashMap<String, usize> =
+        AHashMap::new();
 
     for (content_idx, (spine_idx, ch_title)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
@@ -1211,7 +1213,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     // These are used for INDX record generation.
     let mut all_entries: Vec<(String, usize)> = Vec::with_capacity(all_toc_entries.len());
     // Track seen offsets to avoid duplicate INDX entries at the same position.
-    let mut seen_offsets = std::collections::HashSet::new();
+    let mut seen_offsets = AHashSet::new();
     for (i, (_depth, entry_title, _href)) in all_toc_entries.iter().enumerate() {
         let offset = toc_target_offsets[i];
         if seen_offsets.insert(offset) {
@@ -1223,7 +1225,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     if all_entries.is_empty() {
         for (info_idx, (_spine_idx, ch_title)) in chapter_info.iter().enumerate() {
             let title = ch_title
-                .clone()
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("Chapter {}", info_idx + 1));
             let offset = chapter_start_offsets[info_idx];
             all_entries.push((title, offset));
@@ -1240,50 +1242,50 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 /// its fragment-stripped base, preserving first-match (DFS) semantics via
 /// `entry().or_insert_with()`.  A flat entry list handles the rare prefix-match
 /// fallback.
-struct TocTitleMap {
-    /// href (exact or base) → title
-    map: std::collections::HashMap<String, String>,
+struct TocTitleMap<'a> {
+    /// href (exact or base) -> title
+    map: AHashMap<&'a str, &'a str>,
     /// Flat DFS-order entries for prefix-match fallback: (href, title)
-    flat: Vec<(String, String)>,
+    flat: Vec<(&'a str, &'a str)>,
 }
 
-impl TocTitleMap {
-    fn build(items: &[crate::domain::toc::TocItem]) -> Self {
+impl<'a> TocTitleMap<'a> {
+    fn build(items: &'a [crate::domain::toc::TocItem]) -> Self {
         let mut m = TocTitleMap {
-            map: std::collections::HashMap::new(),
+            map: AHashMap::new(),
             flat: Vec::new(),
         };
         m.collect(items);
         m
     }
 
-    fn collect(&mut self, items: &[crate::domain::toc::TocItem]) {
+    fn collect(&mut self, items: &'a [crate::domain::toc::TocItem]) {
         for item in items {
-            // Exact href → title (first match wins)
+            // Exact href -> title (first match wins)
             self.map
-                .entry(item.href.clone())
-                .or_insert_with(|| item.title.clone());
-            // Base href (fragment stripped) → title
+                .entry(&item.href)
+                .or_insert(&item.title);
+            // Base href (fragment stripped) -> title
             let base = item.href.split('#').next().unwrap_or(&item.href);
             if !base.is_empty() && base != item.href {
                 self.map
-                    .entry(base.to_string())
-                    .or_insert_with(|| item.title.clone());
+                    .entry(base)
+                    .or_insert(&item.title);
             }
-            self.flat.push((item.href.clone(), item.title.clone()));
+            self.flat.push((&item.href, &item.title));
             self.collect(&item.children);
         }
     }
 
     /// Look up a title for the given manifest href.
-    fn get(&self, href: &str) -> Option<String> {
+    fn get(&self, href: &str) -> Option<&str> {
         if let Some(title) = self.map.get(href) {
-            return Some(title.clone());
+            return Some(title);
         }
         // Prefix-match fallback (rare): manifest href starts with a TOC href.
         for (toc_href, title) in &self.flat {
-            if href.starts_with(toc_href.as_str()) {
-                return Some(title.clone());
+            if href.starts_with(*toc_href) {
+                return Some(title);
             }
         }
         None
