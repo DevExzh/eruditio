@@ -165,7 +165,7 @@ impl FormatWriter for RbWriter {
             if let Some(title) = chapter.title {
                 html.push_str(&format!("<h2>{}</h2>\n", title));
             }
-            html.push_str(&chapter.content);
+            html.push_str(chapter.content);
             html.push('\n');
         }
         html.push_str("</body></html>");

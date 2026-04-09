@@ -19,7 +19,7 @@ pub(crate) fn extract_metadata(html: &str) -> Metadata {
     // Extract <meta> tags.
     let head_content = extract_between(html, "<head", "</head>");
     if let Some(head) = head_content {
-        extract_meta_tags(&head, &mut meta);
+        extract_meta_tags(head, &mut meta);
     }
 
     meta

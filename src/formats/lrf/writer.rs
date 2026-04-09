@@ -664,7 +664,7 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
         let block_id = alloc_id();
 
         // Build text stream from chapter HTML content.
-        let text_stream = html_to_text_stream(&chapter.content, &image_obj_map);
+        let text_stream = html_to_text_stream(chapter.content, &image_obj_map);
 
         let mut text_obj = LrfWriteObject::new(text_id, OBJ_TYPE_TEXT);
         // Link text to its TextAttr style object.

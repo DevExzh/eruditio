@@ -74,7 +74,7 @@ impl FormatWriter for MdWriter {
             if i > 0 {
                 md.push_str("\n---\n\n");
             }
-            html_to_markdown(&chapter.content, &mut md);
+            html_to_markdown(chapter.content, &mut md);
         }
         writer.write_all(md.as_bytes())?;
         Ok(())

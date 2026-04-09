@@ -2,6 +2,7 @@ use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::push_escape_xml;
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
 use std::io::{Cursor, Seek, Write};
 use zip::CompressionMethod;
@@ -152,9 +153,9 @@ fn write_epub_parallel<W: Write + Seek>(
     // -----------------------------------------------------------------------
     // Collect entries for parallel compression.
     // -----------------------------------------------------------------------
-    struct DeflateEntry {
+    struct DeflateEntry<'a> {
         zip_path: String,
-        data: Vec<u8>,
+        data: Cow<'a, [u8]>,
     }
 
     struct StoredEntry<'a> {
@@ -162,21 +163,21 @@ fn write_epub_parallel<W: Write + Seek>(
         data: &'a [u8],
     }
 
-    let mut deflate_entries: Vec<DeflateEntry> = Vec::new();
+    let mut deflate_entries: Vec<DeflateEntry<'_>> = Vec::new();
     let mut stored_entries: Vec<StoredEntry<'_>> = Vec::new();
 
     // Structural entries (deflated)
     deflate_entries.push(DeflateEntry {
         zip_path: "META-INF/container.xml".to_string(),
-        data: generate_container_xml().as_bytes().to_vec(),
+        data: Cow::Borrowed(generate_container_xml().as_bytes()),
     });
     deflate_entries.push(DeflateEntry {
         zip_path: "OEBPS/content.opf".to_string(),
-        data: opf_xml.as_bytes().to_vec(),
+        data: Cow::Borrowed(opf_xml.as_bytes()),
     });
     deflate_entries.push(DeflateEntry {
         zip_path: "OEBPS/toc.ncx".to_string(),
-        data: ncx_xml.as_bytes().to_vec(),
+        data: Cow::Borrowed(ncx_xml.as_bytes()),
     });
 
     // Manifest entries
@@ -203,9 +204,9 @@ fn write_epub_parallel<W: Write + Seek>(
             }
         } else {
             let data = match &item.data {
-                crate::domain::ManifestData::Text(text) => text.as_bytes().to_vec(),
-                crate::domain::ManifestData::Inline(bytes) => bytes.as_ref().clone(),
-                crate::domain::ManifestData::Empty => Vec::new(),
+                crate::domain::ManifestData::Text(text) => Cow::Borrowed(text.as_bytes()),
+                crate::domain::ManifestData::Inline(bytes) => Cow::Borrowed(bytes.as_slice()),
+                crate::domain::ManifestData::Empty => Cow::Borrowed(&[] as &[u8]),
             };
             deflate_entries.push(DeflateEntry { zip_path, data });
         }
@@ -224,7 +225,7 @@ fn write_epub_parallel<W: Write + Seek>(
             mini.start_file("entry", opts)
                 .map_err(|e| EruditioError::Format(format!("mini zip start: {}", e)))?;
             mini.write_all(&entry.data)
-                .map_err(|e| EruditioError::Io(e))?;
+                .map_err(EruditioError::Io)?;
             let cursor = mini.finish()
                 .map_err(|e| EruditioError::Format(format!("mini zip finish: {}", e)))?;
             Ok((entry.zip_path, cursor.into_inner()))
@@ -452,7 +453,7 @@ fn generate_opf_spine(book: &Book, xml: &mut String) {
         };
         xml.push_str(" page-progression-direction=\"");
         xml.push_str(dir);
-        xml.push_str("\"");
+        xml.push('"');
     }
     xml.push_str(">\n");
 

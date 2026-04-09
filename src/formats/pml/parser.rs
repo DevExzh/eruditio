@@ -524,7 +524,7 @@ pub(crate) fn book_to_pml(book: &Book) -> String {
             pml.push('\n');
         }
 
-        html_to_pml(&chapter.content, &mut pml);
+        html_to_pml(chapter.content, &mut pml);
         pml.push('\n');
     }
 

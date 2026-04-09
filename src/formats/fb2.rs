@@ -992,7 +992,7 @@ fn generate_fb2(book: &Book) -> String {
 
     for chapter in &book.chapter_views() {
         // Convert HTML content to FB2 paragraphs.
-        let fb2_content = html_to_fb2_paragraphs(&chapter.content);
+        let fb2_content = html_to_fb2_paragraphs(chapter.content);
 
         // Skip chapters that produce no visible content after conversion
         // (e.g. the cover page wrapper whose only content is an <img> tag,

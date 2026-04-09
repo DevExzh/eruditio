@@ -201,7 +201,7 @@ pub fn book_to_plain_text(book: &Book) -> String {
             parts.push(title.to_string());
             parts.push(String::new()); // blank line after title
         }
-        let plain = strip_tags(&chapter.content);
+        let plain = strip_tags(chapter.content);
         let decoded = unescape_basic_entities(&plain);
         let trimmed = decoded.trim();
         // For TXT output, strip everything up to and including the title

@@ -62,8 +62,8 @@ pub fn book_to_rtf(book: &Book) -> String {
 
         // Strip duplicate heading from content before converting.
         let content = match chapter.title {
-            Some(title) => strip_leading_heading(&chapter.content, title),
-            None => &chapter.content,
+            Some(title) => strip_leading_heading(chapter.content, title),
+            None => chapter.content,
         };
 
         // Convert HTML content to RTF.

@@ -115,8 +115,8 @@ fn book_to_html(book: &Book) -> String {
         }
 
         let content = match chapter.title {
-            Some(ch_title) => strip_leading_heading(&chapter.content, ch_title),
-            None => &chapter.content,
+            Some(ch_title) => strip_leading_heading(chapter.content, ch_title),
+            None => chapter.content,
         };
         body.push_str(content);
         body.push('\n');

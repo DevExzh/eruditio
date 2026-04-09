@@ -223,8 +223,8 @@ fn generate_htmlz_content(book: &Book) -> String {
             body.push_str(&format!("<h2>{}</h2>\n", escape_html(ch_title)));
         }
         let content = match chapter.title {
-            Some(t) => strip_leading_heading(&chapter.content, t),
-            None => &chapter.content,
+            Some(t) => strip_leading_heading(chapter.content, t),
+            None => chapter.content,
         };
         // Strip XHTML wrapper elements (<?xml>, <!DOCTYPE>, <html>, <head>, <body>)
         // that are present in EPUB chapter content to avoid nested HTML documents.

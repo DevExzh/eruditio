@@ -52,7 +52,7 @@ impl FormatWriter for PdbWriter {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
-            text.push_str(&strip_tags_and_unescape(&chapter.content));
+            text.push_str(&strip_tags_and_unescape(chapter.content));
         }
 
         let text_bytes = text.as_bytes();
@@ -125,7 +125,7 @@ impl FormatWriter for PdbZtxtWriter {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
-            text.push_str(&strip_tags_and_unescape(&chapter.content));
+            text.push_str(&strip_tags_and_unescape(chapter.content));
         }
 
         let text_bytes = text.as_bytes();

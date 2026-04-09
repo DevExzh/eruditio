@@ -37,7 +37,7 @@ pub(crate) fn load_manifest_data<R: Read + Seek>(
         .filter(|id| {
             manifest
                 .get(id)
-                .map_or(false, |item| item.data.is_empty())
+                .is_some_and(|item| item.data.is_empty())
         })
         .map(String::from)
         .collect();

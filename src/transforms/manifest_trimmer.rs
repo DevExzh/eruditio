@@ -4,7 +4,7 @@ use crate::domain::Book;
 use crate::domain::traits::Transform;
 use crate::error::Result;
 use ahash::AHashMap;
-use std::collections::HashSet;
+use ahash::AHashSet;
 
 /// Removes manifest items that are not referenced by the spine, TOC,
 /// guide, cover metadata, or other content documents.
@@ -37,8 +37,8 @@ impl Transform for ManifestTrimmer {
 }
 
 /// Collects all manifest IDs that are referenced somewhere in the book.
-fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
-    let mut ids = HashSet::new();
+fn collect_referenced_ids(book: &Book) -> AHashSet<&str> {
+    let mut ids = AHashSet::new();
 
     // Build a href→id index once, replacing O(n) linear scans per lookup.
     let href_to_id: AHashMap<&str, &str> = book
@@ -95,7 +95,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
 fn collect_toc_refs<'a>(
     items: &[crate::domain::toc::TocItem],
     href_to_id: &AHashMap<&str, &'a str>,
-    ids: &mut HashSet<&'a str>,
+    ids: &mut AHashSet<&'a str>,
 ) {
     for toc_item in items {
         // Strip fragment from href for matching.
@@ -115,7 +115,7 @@ fn collect_href_references<'a>(
     text: &str,
     href_to_id: &AHashMap<&str, &'a str>,
     filename_to_id: &AHashMap<&str, &'a str>,
-    ids: &mut HashSet<&'a str>,
+    ids: &mut AHashSet<&'a str>,
 ) {
     let bytes = text.as_bytes();
     // Attribute patterns to search for, with their byte representations.

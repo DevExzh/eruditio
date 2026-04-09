@@ -669,7 +669,7 @@ impl FormatWriter for SnbWriter {
             let snbc = format!(
                 "<snbc><head><title>{}</title></head><body><text>{}</text></body></snbc>",
                 escape_xml(ch_title),
-                escape_xml(&strip_tags_and_unescape(&chapter.content))
+                escape_xml(&strip_tags_and_unescape(chapter.content))
             );
             plain_files.push((format!("snbc/{}", ch_filename), snbc.into_bytes()));
         }
