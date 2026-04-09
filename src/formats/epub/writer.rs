@@ -337,7 +337,13 @@ fn generate_opf_metadata(book: &Book, xml: &mut String) {
         xml.push_str("</dc:publisher>\n");
     }
     if let Some(ref identifier) = m.identifier {
-        xml.push_str("    <dc:identifier id=\"uid\">");
+        if let Some(ref scheme) = m.identifier_scheme {
+            xml.push_str("    <dc:identifier id=\"uid\" opf:scheme=\"");
+            push_escape_xml(xml, scheme);
+            xml.push_str("\">");
+        } else {
+            xml.push_str("    <dc:identifier id=\"uid\">");
+        }
         push_escape_xml(xml, identifier);
         xml.push_str("</dc:identifier>\n");
     } else {
@@ -995,6 +1001,54 @@ mod tests {
             opf.contains("<dc:date>2024-03-15</dc:date>"),
             "publication_date should be emitted when additional_dates is empty. Got:\n{}",
             opf
+        );
+    }
+
+    #[test]
+    fn generates_opf_with_identifier_scheme() {
+        let mut book = sample_book();
+        book.metadata.identifier_scheme = Some("URI".into());
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains(r#"<dc:identifier id="uid" opf:scheme="URI">urn:test:12345</dc:identifier>"#),
+            "Primary identifier should have opf:scheme attribute. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn generates_opf_without_identifier_scheme_when_absent() {
+        let book = sample_book();
+        assert!(book.metadata.identifier_scheme.is_none());
+        let opf = generate_opf(&book);
+        assert!(
+            opf.contains(r#"<dc:identifier id="uid">urn:test:12345</dc:identifier>"#),
+            "Identifier should have no opf:scheme when identifier_scheme is None. Got:\n{}",
+            opf
+        );
+    }
+
+    #[test]
+    fn identifier_scheme_round_trips_through_opf() {
+        use crate::formats::epub::opf::parse_opf_xml;
+
+        let mut book = sample_book();
+        book.metadata.identifier_scheme = Some("URI".into());
+
+        // Generate OPF XML from the book
+        let opf_xml = generate_opf(&book);
+
+        // Parse the generated OPF XML back
+        let data = parse_opf_xml(&opf_xml).unwrap();
+
+        assert_eq!(
+            data.metadata.identifier.as_deref(),
+            Some("urn:test:12345"),
+        );
+        assert_eq!(
+            data.metadata.identifier_scheme.as_deref(),
+            Some("URI"),
+            "identifier_scheme should survive OPF round-trip"
         );
     }
 }

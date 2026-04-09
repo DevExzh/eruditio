@@ -12,6 +12,9 @@ pub struct Metadata {
     pub publisher: Option<String>,
     pub language: Option<String>,
     pub identifier: Option<String>,
+    /// The `opf:scheme` attribute on the primary `<dc:identifier>` element,
+    /// preserved for roundtrip fidelity (e.g. `"ISBN"`, `"URI"`).
+    pub identifier_scheme: Option<String>,
     pub isbn: Option<String>,
     pub publication_date: Option<DateTime<Utc>>,
     pub description: Option<String>,
@@ -38,6 +41,12 @@ mod tests {
         let m = Metadata::default();
         assert!(m.title.is_none());
         assert!(m.authors.is_empty());
+    }
+
+    #[test]
+    fn default_metadata_has_no_identifier_scheme() {
+        let m = Metadata::default();
+        assert!(m.identifier_scheme.is_none());
     }
 
     #[test]

@@ -55,6 +55,8 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
     let mut current_file_as: Option<String> = None;
     // Track the opf:event attribute on <dc:date>
     let mut current_date_event: Option<String> = None;
+    // Track the opf:scheme attribute on <dc:identifier>
+    let mut current_identifier_scheme: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -99,6 +101,11 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         if tag == "date" {
                             current_date_event = xml_utils::get_attribute(e, "opf:event")
                                 .or_else(|| xml_utils::get_attribute(e, "event"));
+                        }
+                        // Track the opf:scheme attribute on <dc:identifier>
+                        if tag == "identifier" {
+                            current_identifier_scheme = xml_utils::get_attribute(e, "opf:scheme")
+                                .or_else(|| xml_utils::get_attribute(e, "scheme"));
                         }
                     },
                     _ => {},
@@ -165,6 +172,13 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                             && let Some(ref fa) = current_file_as
                         {
                             data.metadata.author_sort = Some(fa.clone());
+                        }
+                        // Capture opf:scheme from the primary identifier.
+                        // Unconditionally assign so scheme stays in sync with
+                        // whichever <dc:identifier> last set metadata.identifier.
+                        if current_dc_tag == "identifier" {
+                            data.metadata.identifier_scheme =
+                                current_identifier_scheme.take();
                         }
                         current_date_event = None;
                         current_dc_tag.clear();
@@ -804,6 +818,59 @@ mod tests {
         assert_eq!(
             data.metadata.additional_dates[0],
             (None, "2024-01-15".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_opf_scheme_attribute() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Test</dc:title>
+    <dc:identifier opf:scheme="URI">urn:uuid:12345</dc:identifier>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(
+            data.metadata.identifier.as_deref(),
+            Some("urn:uuid:12345")
+        );
+        assert_eq!(
+            data.metadata.identifier_scheme.as_deref(),
+            Some("URI"),
+            "identifier_scheme should be parsed from opf:scheme"
+        );
+    }
+
+    #[test]
+    fn parses_bare_scheme_attribute() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test</dc:title>
+    <dc:identifier scheme="ISBN">978-3-16-148410-0</dc:identifier>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest/>
+  <spine/>
+</package>"#;
+        let data = parse_opf_xml(xml).unwrap();
+        assert_eq!(
+            data.metadata.identifier_scheme.as_deref(),
+            Some("ISBN"),
+            "identifier_scheme should be parsed from bare scheme attribute"
+        );
+    }
+
+    #[test]
+    fn no_identifier_scheme_when_absent() {
+        let data = parse_opf_xml(sample_opf()).unwrap();
+        assert!(
+            data.metadata.identifier_scheme.is_none(),
+            "identifier_scheme should be None when no scheme attribute exists"
         );
     }
 }
