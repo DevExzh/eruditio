@@ -466,72 +466,14 @@ impl PalmDocCompressor {
                 && input_len - i >= MIN_MATCH
                 && let Some((distance, length)) = self.chain.find_best_match(input, i)
             {
-                // Update hash chain at every other position + the last position.
-                // Halves insert overhead for MAX_MATCH=10 with minimal
-                // compression ratio impact.
-                //
-                // Unrolled via match to replace the unpredictable `while p < end`
-                // loop (92M branch mispredictions per cachegrind) with a single
-                // computed jump. length is in [3, 10]; the number of stride-2
-                // inserts before the final one varies from 1 to 5.
-                match length {
-                    3 => {
-                        // stride: i; last: i+2
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                    }
-                    4 => {
-                        // stride: i, i+2; last: i+3
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 3);
-                    }
-                    5 => {
-                        // stride: i, i+2; last: i+4
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 4);
-                    }
-                    6 => {
-                        // stride: i, i+2, i+4; last: i+5
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 4);
-                        self.chain.insert(input, i + 5);
-                    }
-                    7 => {
-                        // stride: i, i+2, i+4; last: i+6
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 4);
-                        self.chain.insert(input, i + 6);
-                    }
-                    8 => {
-                        // stride: i, i+2, i+4, i+6; last: i+7
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 4);
-                        self.chain.insert(input, i + 6);
-                        self.chain.insert(input, i + 7);
-                    }
-                    9 => {
-                        // stride: i, i+2, i+4, i+6; last: i+8
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 4);
-                        self.chain.insert(input, i + 6);
-                        self.chain.insert(input, i + 8);
-                    }
-                    10 => {
-                        // stride: i, i+2, i+4, i+6, i+8; last: i+9
-                        self.chain.insert(input, i);
-                        self.chain.insert(input, i + 2);
-                        self.chain.insert(input, i + 4);
-                        self.chain.insert(input, i + 6);
-                        self.chain.insert(input, i + 8);
-                        self.chain.insert(input, i + 9);
-                    }
-                    _ => unreachable!(),
+                // Insert every position in the matched range into the hash
+                // chain (stride-1). This ensures future lookups starting at
+                // any position within the match will find this data, yielding
+                // the best possible compression ratio.  The `insert()` method
+                // has its own bounds check (`pos + 2 < data.len()`), so
+                // positions near the end of the buffer are safely skipped.
+                for p in i..i + length {
+                    self.chain.insert(input, p);
                 }
 
                 let compound = ((distance << 3) | (length - 3)) as u16;
@@ -876,5 +818,50 @@ mod tests {
             compressed_hash.len(),
             compressed_naive.len(),
         );
+    }
+
+    #[test]
+    fn stride1_compression_produces_smaller_output() {
+        // Build a record with repetitive text that benefits from good LZ77
+        // matching. Stride-1 insertion should produce output that is strictly
+        // smaller than the input and comparable to the naive brute-force
+        // compressor (which by definition finds all matches).
+        let phrase = b"The quick brown fox jumps over the lazy dog. ";
+        let mut original = Vec::with_capacity(RECORD_SIZE);
+        while original.len() + phrase.len() <= RECORD_SIZE {
+            original.extend_from_slice(phrase);
+        }
+        while original.len() < RECORD_SIZE {
+            original.push(b'.');
+        }
+
+        let compressed = compress(&original);
+        let decompressed = decompress(&compressed).unwrap();
+        assert_eq!(decompressed, original, "round-trip mismatch");
+
+        // Compression must achieve at least 50% reduction on this highly
+        // repetitive input.
+        assert!(
+            compressed.len() <= original.len() / 2,
+            "compressed size ({}) should be <= half the original ({})",
+            compressed.len(),
+            original.len(),
+        );
+
+        // With stride-1, the hash-chain compressor should be within 5% of
+        // the brute-force naive compressor on repetitive data.
+        let compressed_naive = compress_naive(&original);
+        let tolerance = (compressed_naive.len() as f64 * 1.05) as usize;
+        assert!(
+            compressed_hash_len_within(compressed.len(), tolerance),
+            "stride-1 hash-chain ({}) should be within 5% of naive ({})",
+            compressed.len(),
+            compressed_naive.len(),
+        );
+    }
+
+    /// Helper: checks `actual <= limit`.
+    fn compressed_hash_len_within(actual: usize, limit: usize) -> bool {
+        actual <= limit
     }
 }
