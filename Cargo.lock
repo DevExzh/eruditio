@@ -530,6 +530,7 @@ dependencies = [
  "mime_guess",
  "pulldown-cmark",
  "quick-xml",
+ "rayon",
  "sevenz-rust2",
  "thiserror",
  "unrar",

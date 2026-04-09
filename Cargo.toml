@@ -24,6 +24,7 @@ encoding_rs = "0.8"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp"] }
 clap = { version = "4", features = ["derive"], optional = true }
 base64-simd = "0.8.0"
+rayon = "1.11.0"
 
 [features]
 default = ["native-fs", "cbr", "cb7", "cli"]

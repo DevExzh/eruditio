@@ -1,8 +1,9 @@
 use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::push_escape_xml;
+use rayon::prelude::*;
 use std::fmt::Write as FmtWrite;
-use std::io::{Seek, Write};
+use std::io::{Cursor, Seek, Write};
 use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::write::FileOptions;
@@ -23,38 +24,90 @@ fn is_already_compressed(media_type: &str) -> bool {
 }
 
 /// Writes a `Book` as a valid EPUB archive to the given writer.
+///
+/// When there are enough deflatable entries, they are pre-compressed in
+/// parallel using rayon (via per-entry mini-ZIP archives).  The raw
+/// pre-compressed data is then copied into the final ZIP sequentially.
+/// For small workloads the original sequential deflation path is used to
+/// avoid rayon/mini-ZIP overhead.
 pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
-    let mut zip = ZipWriter::new(writer);
     let stored: FileOptions<'_, ()> =
         FileOptions::default().compression_method(CompressionMethod::Stored);
     let deflated: FileOptions<'_, ()> =
         FileOptions::default().compression_method(CompressionMethod::Deflated);
 
-    // 1. mimetype — must be first, uncompressed.
+    // Structural data generated once.
+    let opf_xml = generate_opf(book);
+    let ncx_xml = generate_ncx(book);
+
+    // -----------------------------------------------------------------------
+    // Decide whether to use the parallel path.
+    // -----------------------------------------------------------------------
+    // Count deflatable manifest entries and their total uncompressed size.
+    const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
+    let mut deflate_count: usize = 3; // container.xml + OPF + NCX
+    let mut deflate_bytes: usize =
+        generate_container_xml().len() + opf_xml.len() + ncx_xml.len();
+
+    for item in book.manifest.iter() {
+        if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
+            continue;
+        }
+        if !is_already_compressed(&item.media_type) {
+            deflate_count += 1;
+            deflate_bytes += match &item.data {
+                crate::domain::ManifestData::Text(t) => t.len(),
+                crate::domain::ManifestData::Inline(b) => b.len(),
+                crate::domain::ManifestData::Empty => 0,
+            };
+        }
+    }
+
+    // Use parallel path when there are enough entries (>= 8) and enough data
+    // (>= 64 KiB) for rayon overhead to be worthwhile.  The per-entry mini-ZIP
+    // approach adds ~50 us per entry overhead, plus ~100-200 us rayon thread-pool
+    // cost, so we need substantial compression work to recoup that.
+    let use_parallel = deflate_count >= 8 && deflate_bytes >= 65_536;
+
+    if use_parallel {
+        write_epub_parallel(book, writer, stored, deflated, &opf_xml, &ncx_xml)
+    } else {
+        write_epub_sequential(book, writer, stored, deflated, &opf_xml, &ncx_xml)
+    }
+}
+
+/// Sequential path: original direct-write approach.
+fn write_epub_sequential<W: Write + Seek>(
+    book: &Book,
+    writer: W,
+    stored: FileOptions<'_, ()>,
+    deflated: FileOptions<'_, ()>,
+    opf_xml: &str,
+    ncx_xml: &str,
+) -> Result<()> {
+    let mut zip = ZipWriter::new(writer);
+
+    // 1. mimetype
     zip.start_file("mimetype", stored)
         .map_err(|e| EruditioError::Format(format!("Failed to write mimetype: {}", e)))?;
     zip.write_all(b"application/epub+zip")?;
 
-    // 2. META-INF/container.xml
+    // 2. container.xml
     zip.start_file("META-INF/container.xml", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
     zip.write_all(generate_container_xml().as_bytes())?;
 
     // 3. OPF
-    let opf_path = "OEBPS/content.opf";
-    let opf_xml = generate_opf(book);
-    zip.start_file(opf_path, deflated)
+    zip.start_file("OEBPS/content.opf", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
     zip.write_all(opf_xml.as_bytes())?;
 
-    // 4. NCX (for EPUB2 compatibility)
-    let ncx_xml = generate_ncx(book);
+    // 4. NCX
     zip.start_file("OEBPS/toc.ncx", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
     zip.write_all(ncx_xml.as_bytes())?;
 
-    // 5. Write all manifest items (content + resources).
-    // Skip structural files that are already written above.
+    // 5. Manifest items
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
     let mut zip_path = String::with_capacity(64);
     for item in book.manifest.iter() {
@@ -68,19 +121,137 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
         zip.start_file(&zip_path, opts)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
         match &item.data {
-            crate::domain::ManifestData::Text(text) => {
-                zip.write_all(text.as_bytes())?;
-            },
-            crate::domain::ManifestData::Inline(bytes) => {
-                zip.write_all(bytes)?;
-            },
+            crate::domain::ManifestData::Text(text) => zip.write_all(text.as_bytes())?,
+            crate::domain::ManifestData::Inline(bytes) => zip.write_all(bytes)?,
             crate::domain::ManifestData::Empty => {},
         }
     }
 
     zip.finish()
         .map_err(|e| EruditioError::Format(format!("Failed to finalize EPUB: {}", e)))?;
+    Ok(())
+}
 
+/// Parallel path: pre-compress deflatable entries via rayon, then write raw
+/// pre-compressed data into the final ZIP using `raw_copy_file_rename`.
+fn write_epub_parallel<W: Write + Seek>(
+    book: &Book,
+    writer: W,
+    stored: FileOptions<'_, ()>,
+    _deflated: FileOptions<'_, ()>,
+    opf_xml: &str,
+    ncx_xml: &str,
+) -> Result<()> {
+    let mut zip = ZipWriter::new(writer);
+
+    // 1. mimetype — must be first, uncompressed.
+    zip.start_file("mimetype", stored)
+        .map_err(|e| EruditioError::Format(format!("Failed to write mimetype: {}", e)))?;
+    zip.write_all(b"application/epub+zip")?;
+
+    // -----------------------------------------------------------------------
+    // Collect entries for parallel compression.
+    // -----------------------------------------------------------------------
+    struct DeflateEntry {
+        zip_path: String,
+        data: Vec<u8>,
+    }
+
+    struct StoredEntry<'a> {
+        zip_path: String,
+        data: &'a [u8],
+    }
+
+    let mut deflate_entries: Vec<DeflateEntry> = Vec::new();
+    let mut stored_entries: Vec<StoredEntry<'_>> = Vec::new();
+
+    // Structural entries (deflated)
+    deflate_entries.push(DeflateEntry {
+        zip_path: "META-INF/container.xml".to_string(),
+        data: generate_container_xml().as_bytes().to_vec(),
+    });
+    deflate_entries.push(DeflateEntry {
+        zip_path: "OEBPS/content.opf".to_string(),
+        data: opf_xml.as_bytes().to_vec(),
+    });
+    deflate_entries.push(DeflateEntry {
+        zip_path: "OEBPS/toc.ncx".to_string(),
+        data: ncx_xml.as_bytes().to_vec(),
+    });
+
+    // Manifest entries
+    const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
+    for item in book.manifest.iter() {
+        if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
+            continue;
+        }
+        let mut zip_path = String::with_capacity(6 + item.href.len());
+        zip_path.push_str("OEBPS/");
+        zip_path.push_str(&item.href);
+
+        if is_already_compressed(&item.media_type) {
+            match &item.data {
+                crate::domain::ManifestData::Inline(bytes) => {
+                    stored_entries.push(StoredEntry { zip_path, data: bytes });
+                },
+                crate::domain::ManifestData::Text(text) => {
+                    stored_entries.push(StoredEntry { zip_path, data: text.as_bytes() });
+                },
+                crate::domain::ManifestData::Empty => {
+                    stored_entries.push(StoredEntry { zip_path, data: &[] });
+                },
+            }
+        } else {
+            let data = match &item.data {
+                crate::domain::ManifestData::Text(text) => text.as_bytes().to_vec(),
+                crate::domain::ManifestData::Inline(bytes) => bytes.as_ref().clone(),
+                crate::domain::ManifestData::Empty => Vec::new(),
+            };
+            deflate_entries.push(DeflateEntry { zip_path, data });
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Parallel compression via per-entry mini-ZIP archives.
+    // -----------------------------------------------------------------------
+    let mini_zips: Vec<std::result::Result<(String, Vec<u8>), EruditioError>> = deflate_entries
+        .into_par_iter()
+        .map(|entry| {
+            let buf = Cursor::new(Vec::with_capacity(entry.data.len()));
+            let mut mini = ZipWriter::new(buf);
+            let opts: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(CompressionMethod::Deflated);
+            mini.start_file("entry", opts)
+                .map_err(|e| EruditioError::Format(format!("mini zip start: {}", e)))?;
+            mini.write_all(&entry.data)
+                .map_err(|e| EruditioError::Io(e))?;
+            let cursor = mini.finish()
+                .map_err(|e| EruditioError::Format(format!("mini zip finish: {}", e)))?;
+            Ok((entry.zip_path, cursor.into_inner()))
+        })
+        .collect();
+
+    // Write pre-compressed entries via raw_copy_file_rename.
+    for result in mini_zips {
+        let (zip_path, mini_bytes) = result?;
+        let cursor = Cursor::new(mini_bytes);
+        let mut archive = zip::ZipArchive::new(cursor)
+            .map_err(|e| EruditioError::Format(format!("mini zip read: {}", e)))?;
+        let file = archive.by_index(0)
+            .map_err(|e| EruditioError::Format(format!("mini zip entry: {}", e)))?;
+        zip.raw_copy_file_rename(file, &zip_path)
+            .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
+    }
+
+    // Write stored entries (binary data, no compression needed).
+    for entry in &stored_entries {
+        zip.start_file(&entry.zip_path, stored)
+            .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", entry.zip_path, e)))?;
+        zip.write_all(entry.data)?;
+    }
+
+    zip.finish()
+        .map_err(|e| EruditioError::Format(format!("Failed to finalize EPUB: {}", e)))?;
     Ok(())
 }
 
