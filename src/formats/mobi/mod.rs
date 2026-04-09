@@ -756,17 +756,33 @@ impl FormatReader for MobiReader {
         // For KF8 files, split flows and resolve kindle: references.
         let is_kf8 = mobi_header.as_ref().is_some_and(|h| h.is_kf8());
 
-        if is_kf8 {
-            // Try to find and parse the FDST record for flow boundaries.
-            let first_image = mobi_header
+        // Pre-compute all PDB-dependent data so we can drop the raw buffer early.
+        let first_image = mobi_header
+            .as_ref()
+            .map(|h| h.first_image_index as usize)
+            .filter(|&idx| idx != NULL_INDEX as usize)
+            .unwrap_or(pdb.record_count());
+
+        let fdst_entries = if is_kf8 {
+            find_fdst_record(&pdb, first_image).and_then(|idx| parse_fdst(&pdb, idx))
+        } else {
+            None
+        };
+
+        let div_insert_positions = if is_kf8 {
+            mobi_header
                 .as_ref()
-                .map(|h| h.first_image_index as usize)
-                .filter(|&idx| idx != NULL_INDEX as usize)
-                .unwrap_or(pdb.record_count());
+                .and_then(|h| h.fragment_index)
+                .filter(|&idx| idx != NULL_INDEX)
+                .and_then(|frag_idx| parse_div_insert_positions(&pdb, frag_idx as usize))
+        } else {
+            None
+        };
 
-            let fdst_entries =
-                find_fdst_record(&pdb, first_image).and_then(|idx| parse_fdst(&pdb, idx));
+        // All data has been extracted from the PDB; drop the raw 25 MB buffer.
+        drop(pdb);
 
+        if is_kf8 {
             let (main_html_bytes, flow_paths) = if let Some(ref entries) = fdst_entries {
                 // Extract flow 0 as main HTML, flows 1+ as resources.
                 let main_bytes = if !entries.is_empty() && entries[0].end <= text.len() {
@@ -818,17 +834,12 @@ impl FormatReader for MobiReader {
             let chapter_byte_ranges = split_bytes_at_xml_boundaries(main_html_bytes);
 
             // Build the PosFidResolver using the div table from the fragment index.
-            let pos_fid_resolver = mobi_header
-                .as_ref()
-                .and_then(|h| h.fragment_index)
-                .filter(|&idx| idx != NULL_INDEX)
-                .and_then(|frag_idx| parse_div_insert_positions(&pdb, frag_idx as usize))
-                .map(|insert_positions| PosFidResolver {
-                    insert_positions,
-                    flow0_start,
-                    chapter_ranges: &chapter_byte_ranges,
-                    text_data: main_html_bytes,
-                });
+            let pos_fid_resolver = div_insert_positions.map(|insert_positions| PosFidResolver {
+                insert_positions,
+                flow0_start,
+                chapter_ranges: &chapter_byte_ranges,
+                text_data: main_html_bytes,
+            });
 
             // Split KF8 content on XHTML document boundaries first,
             // so we know how many chapters exist for kindle:pos:fid resolution.
@@ -1214,7 +1225,7 @@ fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
         // Try to extract a title from the first heading in the body.
         let title = extract_first_heading(&fixed)
             .or_else(|| extract_fallback_title(&fixed))
-            .map(|t| sanitize_toc_label(&t))
+            .map(|t| sanitize_toc_label(&t).into_owned())
             .or_else(|| {
                 untitled_counter += 1;
                 Some(format!("Untitled Section {}", untitled_counter))
@@ -1411,7 +1422,7 @@ fn split_mobi_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
         // Try to extract a title from the first heading.
         let title = extract_first_heading(trimmed)
             .or_else(|| extract_fallback_title(trimmed))
-            .map(|t| sanitize_toc_label(&t))
+            .map(|t| sanitize_toc_label(&t).into_owned())
             .or_else(|| {
                 untitled_counter += 1;
                 Some(format!("Untitled Section {}", untitled_counter))
@@ -1520,7 +1531,7 @@ fn extract_fallback_title(html: &str) -> Option<String> {
             && !cleaned.contains("Project Gutenberg")
             && !cleaned.contains('|')
         {
-            return Some(cleaned);
+            return Some(cleaned.into_owned());
         }
     }
 
@@ -1615,7 +1626,40 @@ fn truncate_title(s: &str, max_chars: usize) -> String {
 /// - Replaces all newline characters (`\n`, `\r\n`, `\r`) with a single space
 /// - Collapses multiple consecutive spaces to one
 /// - Trims leading/trailing whitespace
-fn sanitize_toc_label(label: &str) -> String {
+fn sanitize_toc_label(label: &str) -> Cow<'_, str> {
+    // Fast path: check whether any sanitization is actually needed.
+    // A label is clean when it has no leading/trailing whitespace,
+    // no newlines/tabs/carriage-returns, and no consecutive spaces.
+    let needs_sanitize = {
+        let bytes = label.as_bytes();
+        if bytes.is_empty() {
+            false
+        } else {
+            let first = bytes[0];
+            let last = bytes[bytes.len() - 1];
+            first == b' '
+                || first == b'\t'
+                || first == b'\n'
+                || first == b'\r'
+                || last == b' '
+                || last == b'\t'
+                || last == b'\n'
+                || last == b'\r'
+                || bytes.windows(2).any(|w| {
+                    let a = w[0];
+                    let b = w[1];
+                    a == b'\n'
+                        || a == b'\r'
+                        || a == b'\t'
+                        || (a == b' ' && (b == b' ' || b == b'\n' || b == b'\r' || b == b'\t'))
+                })
+        }
+    };
+
+    if !needs_sanitize {
+        return Cow::Borrowed(label);
+    }
+
     let mut result = String::with_capacity(label.len());
     let mut last_was_space = true; // start true to trim leading whitespace
 
@@ -1636,7 +1680,7 @@ fn sanitize_toc_label(label: &str) -> String {
         result.pop();
     }
 
-    result
+    Cow::Owned(result)
 }
 
 #[cfg(test)]
