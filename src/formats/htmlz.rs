@@ -9,7 +9,7 @@ use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
-use crate::formats::common::text_utils::ends_with_ascii_ci;
+use crate::formats::common::text_utils::{contains_ascii_ci, ends_with_ascii_ci};
 use crate::formats::common::xml_utils;
 use crate::formats::html::HtmlReader;
 use quick_xml::Reader as XmlReader;
@@ -188,6 +188,33 @@ fn generate_htmlz_content(book: &Book) -> String {
     let chapters = book.chapter_views();
 
     let mut body = String::with_capacity(4096);
+
+    // Prepend a cover page div if the book has a cover image.
+    // First check metadata.cover_image_id, then fall back to heuristic search.
+    let cover_item = book
+        .metadata
+        .cover_image_id
+        .as_ref()
+        .and_then(|cid| {
+            book.manifest
+                .get(cid)
+                .filter(|item| item.media_type.starts_with("image/"))
+        })
+        .or_else(|| {
+            book.manifest
+                .iter()
+                .find(|item| {
+                    contains_ascii_ci(&item.id, "cover")
+                        && item.media_type.starts_with("image/")
+                })
+        });
+    if let Some(item) = cover_item {
+        let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
+        body.push_str("<div class=\"cover\"><img src=\"images/");
+        body.push_str(filename);
+        body.push_str("\" alt=\"Cover\"/></div>\n");
+    }
+
     for (i, chapter) in chapters.iter().enumerate() {
         if i > 0 {
             body.push_str("<hr />\n");
@@ -2101,6 +2128,168 @@ mod tests {
             html_content.contains(r#"href="style.css""#),
             "Should link to style.css. Got: {}",
             html_content
+        );
+    }
+
+    #[test]
+    fn htmlz_content_includes_cover_page_div() {
+        use crate::domain::ManifestItem;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Cover Test".into());
+        book.metadata.cover_image_id = Some("cover-img".into());
+
+        // Add a cover image manifest item
+        let cover_item = ManifestItem::new("cover-img", "images/cover.jpg", "image/jpeg")
+            .with_data(vec![0xFF, 0xD8, 0xFF, 0xE0]);
+        book.manifest.insert(cover_item);
+
+        book.add_chapter(Chapter {
+            title: Some("Chapter 1".into()),
+            content: "<p>First chapter content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        // Should contain a cover div with the correct image reference
+        assert!(
+            html.contains(r#"<div class="cover"><img src="images/cover.jpg" alt="Cover"/></div>"#),
+            "HTML should contain cover page div with cover image. Got: {}",
+            html
+        );
+
+        // Cover div should appear before chapter content
+        let cover_pos = html
+            .find(r#"<div class="cover">"#)
+            .expect("cover div should exist");
+        let chapter_pos = html
+            .find("First chapter content")
+            .expect("chapter content should exist");
+        assert!(
+            cover_pos < chapter_pos,
+            "Cover div should appear before chapter content"
+        );
+    }
+
+    #[test]
+    fn htmlz_content_cover_page_heuristic_fallback() {
+        use crate::domain::ManifestItem;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Heuristic Cover Test".into());
+        // No explicit cover_image_id set — rely on heuristic fallback
+        assert!(book.metadata.cover_image_id.is_none());
+
+        // Add an image with "cover" in the id
+        let cover_item = ManifestItem::new("cover", "cover.png", "image/png")
+            .with_data(vec![0x89, 0x50, 0x4E, 0x47]);
+        book.manifest.insert(cover_item);
+
+        book.add_chapter(Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        assert!(
+            html.contains(r#"<div class="cover"><img src="images/cover.png" alt="Cover"/></div>"#),
+            "HTML should find cover via heuristic fallback. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_content_no_cover_div_without_cover_image() {
+        let mut book = Book::new();
+        book.metadata.title = Some("No Cover Test".into());
+        book.add_chapter(Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        assert!(
+            !html.contains(r#"<div class="cover">"#),
+            "HTML should NOT contain cover div when no cover image exists. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_content_cover_ignores_non_image_manifest_item() {
+        use crate::domain::ManifestItem;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Non-Image Cover Test".into());
+        book.metadata.cover_image_id = Some("cover-page".into());
+
+        // The manifest item exists but is NOT an image (e.g. an XHTML cover page)
+        let cover_item =
+            ManifestItem::new("cover-page", "cover.xhtml", "application/xhtml+xml")
+                .with_text("<html><body>Cover</body></html>");
+        book.manifest.insert(cover_item);
+
+        book.add_chapter(Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let html = generate_htmlz_content(&book);
+
+        assert!(
+            !html.contains(r#"<div class="cover">"#),
+            "HTML should NOT contain cover div for non-image manifest item. Got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn htmlz_cover_page_in_zip_output() {
+        use crate::domain::ManifestItem;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("ZIP Cover Test".into());
+        book.metadata.cover_image_id = Some("cover-img".into());
+
+        let cover_item = ManifestItem::new("cover-img", "images/cover.png", "image/png")
+            .with_data(vec![0x89, 0x50, 0x4E, 0x47]);
+        book.manifest.insert(cover_item);
+
+        book.add_chapter(Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Vec::new();
+        HtmlzWriter::new().write_book(&book, &mut output).unwrap();
+
+        // Read back the index.html from the ZIP
+        let cursor = Cursor::new(output);
+        let mut archive = ZipArchive::new(cursor).unwrap();
+        let mut html_file = archive.by_name("index.html").unwrap();
+        let mut html_content = String::new();
+        html_file.read_to_string(&mut html_content).unwrap();
+        drop(html_file);
+
+        assert!(
+            html_content.contains(
+                r#"<div class="cover"><img src="images/cover.png" alt="Cover"/></div>"#
+            ),
+            "ZIP index.html should contain cover page div. Got: {}",
+            html_content
+        );
+
+        // Also verify the image is in the ZIP
+        assert!(
+            archive.by_name("images/cover.png").is_ok(),
+            "ZIP should contain images/cover.png"
         );
     }
 }
