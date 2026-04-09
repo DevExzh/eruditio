@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
 use crate::formats::common::text_utils::push_escape_html;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 /// HTML format reader.
@@ -148,7 +149,12 @@ fn book_to_html(book: &Book) -> String {
 /// with the resource path (e.g., `images/extracted_img_0.png`).
 ///
 /// Returns the modified HTML with data URIs replaced by resource paths.
-fn extract_data_uri_images(html: &str, book: &mut Book) -> String {
+fn extract_data_uri_images<'a>(html: &'a str, book: &mut Book) -> Cow<'a, str> {
+    // Fast path: skip allocation entirely when no data URIs are present.
+    if !html.contains("src=\"data:") {
+        return Cow::Borrowed(html);
+    }
+
     let mut result = String::with_capacity(html.len());
     let mut remaining = html;
     let mut img_index: usize = 0;
@@ -182,7 +188,7 @@ fn extract_data_uri_images(html: &str, book: &mut Book) -> String {
 
     // Copy any remaining content.
     result.push_str(remaining);
-    result
+    Cow::Owned(result)
 }
 
 /// Parses a single `data:` URI value, decodes the base64 payload, adds it as
