@@ -7,10 +7,10 @@ use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::write::FileOptions;
 
-/// Returns `true` for binary media types that benefit from ZIP deflate compression.
-/// Text-based entries (XHTML, CSS, NCX, OPF, XML) use Stored to avoid redundant
-/// compression CPU cost.
-fn is_binary_media_type(media_type: &str) -> bool {
+/// Returns `true` for already-compressed binary media types that should use
+/// `Stored` (no compression) in the ZIP archive.  Text-based entries (XHTML,
+/// CSS, NCX, OPF, XML) compress very well with Deflate and should use it.
+fn is_already_compressed(media_type: &str) -> bool {
     media_type.starts_with("image/")
         || media_type.starts_with("audio/")
         || media_type.starts_with("video/")
@@ -36,20 +36,20 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     zip.write_all(b"application/epub+zip")?;
 
     // 2. META-INF/container.xml
-    zip.start_file("META-INF/container.xml", stored)
+    zip.start_file("META-INF/container.xml", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
     zip.write_all(generate_container_xml().as_bytes())?;
 
     // 3. OPF
     let opf_path = "OEBPS/content.opf";
     let opf_xml = generate_opf(book);
-    zip.start_file(opf_path, stored)
+    zip.start_file(opf_path, deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
     zip.write_all(opf_xml.as_bytes())?;
 
     // 4. NCX (for EPUB2 compatibility)
     let ncx_xml = generate_ncx(book);
-    zip.start_file("OEBPS/toc.ncx", stored)
+    zip.start_file("OEBPS/toc.ncx", deflated)
         .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
     zip.write_all(ncx_xml.as_bytes())?;
 
@@ -64,7 +64,7 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
         zip_path.clear();
         zip_path.push_str("OEBPS/");
         zip_path.push_str(&item.href);
-        let opts = if is_binary_media_type(&item.media_type) { deflated } else { stored };
+        let opts = if is_already_compressed(&item.media_type) { stored } else { deflated };
         zip.start_file(&zip_path, opts)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
         match &item.data {

@@ -97,6 +97,7 @@ pub(crate) const TAG_STREAM_END: u16 = 0xF506;
 pub(crate) const TAG_CONTAINED_OBJECTS: u16 = 0xF50B;
 pub(crate) const TAG_STREAM_FLAGS: u16 = 0xF554;
 pub(crate) const TAG_REFSTREAM: u16 = 0xF54C;
+pub(crate) const TAG_PAGE_LIST: u16 = 0xF55C;
 
 // -- Text content tag IDs --
 pub(crate) const TAG_TEXT_P_START: u16 = 0xF5A1;
@@ -225,6 +226,9 @@ fn tag_payload_size(tag_id: u16) -> Option<usize> {
         0x57 => Some(0), // Unknown/None
         0x58 => Some(0), // Unknown/None
 
+        // PageTree child page list (same format as ContainedObjectsList)
+        0x5C => None, // PageList (variable: u16 count + count × u32)
+
         // Default: skip 2 bytes (best guess for unknown fixed tags)
         _ => Some(0),
     }
@@ -267,18 +271,18 @@ pub(crate) fn parse_tag(data: &[u8], offset: usize) -> Result<(Tag, usize)> {
         None => {
             // Variable-length: string or object list.
             let low = tag_id & 0xFF;
-            if low == 0x0B {
-                // ContainedObjectsList: u16 count, then count × u32
+            if low == 0x0B || low == 0x5C {
+                // ContainedObjectsList / PageList: u16 count, then count × u32
                 if pos + 2 > data.len() {
                     return Err(EruditioError::Format(
-                        "LRF tag: ContainedObjectsList missing count".into(),
+                        "LRF tag: object list missing count".into(),
                     ));
                 }
                 let count = read_u16_le(data, pos) as usize;
                 let total = 2 + count * 4;
                 if pos + total > data.len() {
                     return Err(EruditioError::Format(
-                        "LRF tag: ContainedObjectsList extends past data".into(),
+                        "LRF tag: object list extends past data".into(),
                     ));
                 }
                 let c = data[pos..pos + total].to_vec();

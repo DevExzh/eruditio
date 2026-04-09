@@ -8,8 +8,8 @@ use std::io::Read as IoRead;
 
 use super::header::{read_u16_le, read_u32_le};
 use super::tags::{
-    self, TAG_CONTAINED_OBJECTS, TAG_LINK, TAG_OBJECT_START, TAG_STREAM_END, TAG_STREAM_FLAGS,
-    TAG_STREAM_SIZE, TAG_STREAM_START, Tag,
+    self, TAG_CONTAINED_OBJECTS, TAG_LINK, TAG_OBJECT_START, TAG_PAGE_LIST, TAG_STREAM_END,
+    TAG_STREAM_FLAGS, TAG_STREAM_SIZE, TAG_STREAM_START, Tag,
 };
 
 /// Stream flag bits.
@@ -96,10 +96,11 @@ pub(crate) struct LrfObject {
 }
 
 impl LrfObject {
-    /// Returns the contained object IDs (from ContainedObjectsList tag).
+    /// Returns the contained object IDs (from ContainedObjectsList or PageList tag).
+    /// Returns the first matching tag; LRF objects have at most one of these.
     pub fn contained_object_ids(&self) -> Vec<u32> {
         for tag in &self.tags {
-            if tag.id == TAG_CONTAINED_OBJECTS {
+            if tag.id == TAG_CONTAINED_OBJECTS || tag.id == TAG_PAGE_LIST {
                 return tag.as_object_ids();
             }
         }
@@ -313,16 +314,20 @@ pub(crate) struct TocEntry {
 }
 
 pub(crate) fn parse_toc_stream(stream: &[u8]) -> Result<Vec<TocEntry>> {
-    if stream.len() < 2 {
+    if stream.len() < 4 {
         return Ok(Vec::new());
     }
 
-    let count = read_u16_le(stream, 0) as usize;
-    // Skip offset table: (count + 1) × 4 bytes.
-    let offset_table_size = (count + 1) * 4;
-    let mut pos = 2 + offset_table_size;
+    let count = read_u32_le(stream, 0) as usize;
+    // Skip offset table: count × 4 bytes (one u32 offset per entry).
+    let mut pos = count
+        .checked_mul(4)
+        .and_then(|n| n.checked_add(4))
+        .filter(|&n| n <= stream.len())
+        .unwrap_or(stream.len());
 
-    let mut entries = Vec::with_capacity(count);
+    let cap = count.min(stream.len() / 10); // Each entry is ≥10 bytes
+    let mut entries = Vec::with_capacity(cap);
     for _ in 0..count {
         if pos + 10 > stream.len() {
             break;
@@ -388,9 +393,9 @@ mod tests {
     fn parse_toc_stream_basic() {
         // Build a minimal TOC stream: 1 entry
         let mut stream = Vec::new();
-        stream.extend_from_slice(&1u16.to_le_bytes()); // count = 1
-        // Offset table: (1 + 1) × u32 = 8 bytes
-        stream.extend_from_slice(&[0u8; 8]);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // count = 1 (u32)
+        // Offset table: count × u32 = 4 bytes (one offset entry)
+        stream.extend_from_slice(&[0u8; 4]);
         // Entry: refpage=1, refobj=2, label="Ch1" (UTF-16LE)
         stream.extend_from_slice(&1u32.to_le_bytes());
         stream.extend_from_slice(&2u32.to_le_bytes());

@@ -134,8 +134,17 @@ pub(crate) fn parse_metadata(data: &[u8], header: &LrfHeader) -> Result<LrfMetad
     let compressed = &data[start..end];
     let xml_bytes = zlib_decompress(compressed)?;
 
-    // Strip UTF-8 BOM if present.
-    let xml_str = if xml_bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+    // Detect encoding from BOM.  Real LRF files produced by Sony / Calibre
+    // store metadata XML as UTF-16LE (with FF FE BOM); our unit tests use UTF-8.
+    let xml_str: std::borrow::Cow<'_, str> = if xml_bytes.starts_with(&[0xFF, 0xFE]) {
+        // UTF-16LE BOM — decode byte pairs to a Rust String.
+        let u16s: Vec<u16> = xml_bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        std::borrow::Cow::Owned(String::from_utf16_lossy(&u16s))
+    } else if xml_bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        // UTF-8 BOM — strip it.
         crate::formats::common::text_utils::bytes_to_cow_str(&xml_bytes[3..])
     } else {
         crate::formats::common::text_utils::bytes_to_cow_str(&xml_bytes)
@@ -346,5 +355,49 @@ mod tests {
         assert_eq!(meta.publisher.as_deref(), Some("Test Publisher"));
         assert_eq!(meta.language.as_deref(), Some("en"));
         assert_eq!(meta.book_id.as_deref(), Some("12345"));
+    }
+
+    #[test]
+    fn parses_utf16le_metadata_xml() {
+        // Real LRF files store metadata XML as UTF-16LE with a BOM.
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\
+<Info version=\"1.1\">\
+<BookInfo>\
+<Title reading=\"\">East of the Sun</Title>\
+<Author reading=\"Ringo, John\">John Ringo</Author>\
+<Publisher>Baen Books</Publisher>\
+</BookInfo>\
+<DocInfo><Language>en</Language></DocInfo>\
+</Info>";
+
+        // Encode as UTF-16LE with BOM.
+        let mut utf16_bytes: Vec<u8> = vec![0xFF, 0xFE]; // BOM
+        for code_unit in xml.encode_utf16() {
+            utf16_bytes.extend_from_slice(&code_unit.to_le_bytes());
+        }
+
+        // Compress with zlib (matching what the real header stores).
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write as _;
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&utf16_bytes).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Build a header with the compressed metadata embedded.
+        let mut data = build_lrf_header(1000, 0, 1, 0x200);
+        let info_start = 0x58usize; // version > 800
+        let compressed_info_size = (compressed.len() + 4) as u16;
+        data[0x4C..0x4E].copy_from_slice(&compressed_info_size.to_le_bytes());
+        // Ensure data is large enough.
+        data.resize(info_start + compressed.len(), 0);
+        data[info_start..info_start + compressed.len()].copy_from_slice(&compressed);
+
+        let header = LrfHeader::parse(&data).unwrap();
+        let meta = parse_metadata(&data, &header).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("East of the Sun"));
+        assert_eq!(meta.author.as_deref(), Some("John Ringo"));
+        assert_eq!(meta.publisher.as_deref(), Some("Baen Books"));
+        assert_eq!(meta.language.as_deref(), Some("en"));
     }
 }
