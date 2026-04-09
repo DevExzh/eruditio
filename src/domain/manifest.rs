@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ahash::AHashMap;
 use std::sync::Arc;
 
 /// How a manifest item's data is stored in memory.
@@ -103,8 +103,8 @@ impl ManifestItem {
 /// The manifest: a collection of all resources in the book, indexed by ID and href.
 #[derive(Debug, Clone, Default)]
 pub struct Manifest {
-    items: HashMap<String, ManifestItem>,
-    href_to_id: HashMap<String, String>,
+    items: AHashMap<String, ManifestItem>,
+    href_to_id: AHashMap<String, String>,
 }
 
 impl Manifest {
