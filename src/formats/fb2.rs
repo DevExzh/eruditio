@@ -4,7 +4,6 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive, push_escape_html};
-use base64::Engine;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use std::io::{Read, Write};
@@ -124,8 +123,8 @@ impl FormatReader for Fb2Reader {
                             // Strip newlines in-place to avoid allocating a copy
                             // of potentially large (100KB+) base64 blocks.
                             current_text.retain(|c| c != '\n' && c != '\r');
-                            let decoded = base64::engine::general_purpose::STANDARD
-                                .decode(current_text.trim())
+                            let decoded = base64_simd::STANDARD
+                                .decode_to_vec(current_text.trim())
                                 .unwrap_or_default();
 
                             let media_type = current_binary_ctype
@@ -1031,7 +1030,7 @@ fn generate_fb2(book: &Book) -> String {
         xml.push_str("\" content-type=\"");
         push_escape_html(&mut xml, resource.media_type);
         xml.push_str("\">");
-        base64::engine::general_purpose::STANDARD.encode_string(resource.data, &mut xml);
+        base64_simd::STANDARD.encode_append(resource.data, &mut xml);
         xml.push_str("</binary>\n");
     }
 

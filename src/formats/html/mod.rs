@@ -5,8 +5,6 @@
 
 pub mod parser;
 
-use base64::Engine;
-
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::common::MAX_INPUT_SIZE;
@@ -129,7 +127,7 @@ fn book_to_html(book: &Book) -> String {
                 body.push_str("<img src=\"data:");
                 body.push_str(res.media_type);
                 body.push_str(";base64,");
-                base64::engine::general_purpose::STANDARD.encode_string(res.data, &mut body);
+                base64_simd::STANDARD.encode_append(res.data, &mut body);
                 body.push_str("\" alt=\"");
                 body.push_str(&escape_html(res.id));
                 body.push_str("\" />\n");

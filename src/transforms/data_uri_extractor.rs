@@ -1,7 +1,5 @@
 //! Extracts data URI images from HTML content into manifest resources.
 
-use base64::Engine;
-
 use crate::domain::Book;
 use crate::domain::manifest::{ManifestData, ManifestItem};
 use crate::domain::traits::Transform;
@@ -136,7 +134,7 @@ fn extract_data_uris(html: &str, counter: &mut u32) -> (String, Vec<ExtractedIma
             // Parse the data URI: data:[<mediatype>][;base64],<data>
             if let Some(parsed) = parse_data_uri(data_uri) {
                 // Decode the base64 data.
-                match base64::engine::general_purpose::STANDARD.decode(parsed.data) {
+                match base64_simd::STANDARD.decode_to_vec(parsed.data) {
                     Ok(decoded) => {
                         let idx = *counter;
                         *counter += 1;
@@ -261,8 +259,8 @@ mod tests {
     const TINY_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
 
     fn decode_tiny_png() -> Vec<u8> {
-        base64::engine::general_purpose::STANDARD
-            .decode(TINY_PNG_B64)
+        base64_simd::STANDARD
+            .decode_to_vec(TINY_PNG_B64)
             .unwrap()
     }
 
