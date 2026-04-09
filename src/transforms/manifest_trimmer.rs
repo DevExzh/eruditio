@@ -3,6 +3,7 @@
 use crate::domain::Book;
 use crate::domain::traits::Transform;
 use crate::error::Result;
+use ahash::AHashMap;
 use std::collections::HashSet;
 
 /// Removes manifest items that are not referenced by the spine, TOC,
@@ -40,7 +41,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
     let mut ids = HashSet::new();
 
     // Build a href→id index once, replacing O(n) linear scans per lookup.
-    let href_to_id: std::collections::HashMap<&str, &str> = book
+    let href_to_id: AHashMap<&str, &str> = book
         .manifest
         .iter()
         .map(|item| (item.href.as_str(), item.id.as_str()))
@@ -48,7 +49,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
 
     // Build a filename→id suffix index once, so that collect_href_references
     // does not reconstruct it on every call (once per content document).
-    let filename_to_id: std::collections::HashMap<&str, &str> = book
+    let filename_to_id: AHashMap<&str, &str> = book
         .manifest
         .iter()
         .map(|item| {
@@ -93,7 +94,7 @@ fn collect_referenced_ids(book: &Book) -> HashSet<&str> {
 /// Recursively collects manifest IDs referenced by TOC entries.
 fn collect_toc_refs<'a>(
     items: &[crate::domain::toc::TocItem],
-    href_to_id: &std::collections::HashMap<&str, &'a str>,
+    href_to_id: &AHashMap<&str, &'a str>,
     ids: &mut HashSet<&'a str>,
 ) {
     for toc_item in items {
@@ -112,8 +113,8 @@ fn collect_toc_refs<'a>(
 /// `str::pattern` machinery on every iteration.
 fn collect_href_references<'a>(
     text: &str,
-    href_to_id: &std::collections::HashMap<&str, &'a str>,
-    filename_to_id: &std::collections::HashMap<&str, &'a str>,
+    href_to_id: &AHashMap<&str, &'a str>,
+    filename_to_id: &AHashMap<&str, &'a str>,
     ids: &mut HashSet<&'a str>,
 ) {
     let bytes = text.as_bytes();
