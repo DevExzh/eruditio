@@ -129,6 +129,24 @@ impl HashChain {
         }
     }
 
+    /// Inserts `pos` into the chain for `data[pos..pos+3]` without checking
+    /// that `pos + 2 < data.len()`.
+    ///
+    /// # Safety contract (not unsafe, but caller must ensure):
+    /// The caller MUST guarantee that `pos + 2 < data.len()`.
+    #[inline]
+    fn insert_unchecked(&mut self, data: &[u8], pos: usize) {
+        debug_assert!(pos + 2 < data.len());
+        let h = Self::hash3(data, pos);
+        self.prev[pos] = if self.head_gen[h] == self.generation {
+            self.head[h]
+        } else {
+            NO_ENTRY
+        };
+        self.head[h] = pos as u16;
+        self.head_gen[h] = self.generation;
+    }
+
     /// Computes the match length between `data[a_pos..]` and `data[b_pos..]`,
     /// up to `max_len` bytes.
     ///
@@ -458,6 +476,9 @@ impl PalmDocCompressor {
         self.chain.reset();
         output.reserve(input.len());
         let input_len = input.len();
+        // Positions below this limit are guaranteed to have 3 valid bytes for
+        // hash3 (pos, pos+1, pos+2), so insert_unchecked can be used safely.
+        let hash_safe_limit = input_len.saturating_sub(2);
         let mut i = 0;
 
         while i < input_len {
@@ -469,10 +490,18 @@ impl PalmDocCompressor {
                 // Insert every position in the matched range into the hash
                 // chain (stride-1). This ensures future lookups starting at
                 // any position within the match will find this data, yielding
-                // the best possible compression ratio.  The `insert()` method
-                // has its own bounds check (`pos + 2 < data.len()`), so
-                // positions near the end of the buffer are safely skipped.
-                for p in i..i + length {
+                // the best possible compression ratio.
+                //
+                // The match starts at i and extends for `length` bytes.
+                // Positions i..safe_end are guaranteed to have 3 valid bytes
+                // (pos, pos+1, pos+2) for hash3, so we can skip the bounds
+                // check. Remaining 0-2 positions near the buffer end use the
+                // checked insert.
+                let safe_end = (i + length).min(hash_safe_limit);
+                for p in i..safe_end {
+                    self.chain.insert_unchecked(input, p);
+                }
+                for p in safe_end..i + length {
                     self.chain.insert(input, p);
                 }
 
@@ -484,13 +513,21 @@ impl PalmDocCompressor {
             }
 
             // Update the hash chain for the current position.
-            self.chain.insert(input, i);
+            if i < hash_safe_limit {
+                self.chain.insert_unchecked(input, i);
+            } else {
+                self.chain.insert(input, i);
+            }
 
             // Try space + character optimization.
             if input[i] == b' ' && i + 1 < input_len {
                 let next = input[i + 1];
                 if (0x40..=0x7F).contains(&next) {
-                    self.chain.insert(input, i + 1);
+                    if i + 1 < hash_safe_limit {
+                        self.chain.insert_unchecked(input, i + 1);
+                    } else {
+                        self.chain.insert(input, i + 1);
+                    }
                     output.push(next ^ 0x80);
                     i += 2;
                     continue;
@@ -514,7 +551,11 @@ impl PalmDocCompressor {
                 if input[i] == b' ' && i + 1 < input_len && (0x40..=0x7F).contains(&input[i + 1]) {
                     break;
                 }
-                self.chain.insert(input, i);
+                if i < hash_safe_limit {
+                    self.chain.insert_unchecked(input, i);
+                } else {
+                    self.chain.insert(input, i);
+                }
                 count += 1;
                 i += 1;
             }
