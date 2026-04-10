@@ -786,7 +786,9 @@ fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
 /// The HTMLZ archive has its own `style.css` linked from the outer document.
 fn strip_link_tags(content: &str) -> Cow<'_, str> {
     // Fast path: no link tags to strip
-    if !content.contains("<link") && !content.contains("<LINK") {
+    if memchr::memmem::find(content.as_bytes(), b"<link").is_none()
+        && memchr::memmem::find(content.as_bytes(), b"<LINK").is_none()
+    {
         return Cow::Borrowed(content);
     }
     let mut s = content.to_string();
