@@ -283,12 +283,15 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
 
 /// Appends `chunk` to `result` while collapsing whitespace runs.
 ///
-/// Uses SIMD-accelerated `find_first_in_set` to locate the next whitespace
-/// byte and copy non-whitespace runs in bulk. Whitespace runs are consumed
-/// with a tight scalar loop (they are typically very short in real HTML text,
-/// so the SIMD dispatch overhead is not worthwhile there). All ASCII
-/// whitespace characters are single-byte, so splitting at whitespace
-/// boundaries cannot break multi-byte UTF-8 sequences.
+/// Uses a 256-byte const lookup table for O(1) per-byte whitespace
+/// classification, avoiding the per-call SIMD setup cost that
+/// `find_first_in_set` incurs (PSHUFB LUT rebuild + AVX2 lane broadcast).
+/// For the typical HTML→text workload (many small-to-medium text chunks
+/// between tags), the table-driven loop is faster because the 256-byte
+/// table stays in L1d cache and pays zero dispatch overhead.
+///
+/// All ASCII whitespace characters are single-byte, so splitting at
+/// whitespace boundaries cannot break multi-byte UTF-8 sequences.
 #[inline]
 fn append_ws_collapsed(
     chunk: &str,
@@ -296,21 +299,30 @@ fn append_ws_collapsed(
     in_ws: &mut bool,
     newline_count: &mut usize,
 ) {
+    /// 256-byte lookup table: `true` for the 5 ASCII whitespace bytes
+    /// (SP 0x20, TAB 0x09, LF 0x0A, CR 0x0D, FF 0x0C), `false` otherwise.
+    const IS_WS: [bool; 256] = {
+        let mut t = [false; 256];
+        t[b' ' as usize] = true;
+        t[b'\t' as usize] = true;
+        t[b'\n' as usize] = true;
+        t[b'\r' as usize] = true;
+        t[0x0C] = true; // form feed
+        t
+    };
+
     let bytes = chunk.as_bytes();
     let len = bytes.len();
     let mut i = 0;
 
     while i < len {
-        if bytes[i].is_ascii_whitespace() {
-            // Consume the whitespace run with a scalar loop, counting
-            // newlines in the same pass. Whitespace runs in real HTML text
-            // are typically 1–3 bytes, making SIMD dispatch overhead
-            // counterproductive here.
+        if IS_WS[bytes[i] as usize] {
+            // Consume the whitespace run, counting newlines in the same pass.
             if !*in_ws {
                 *in_ws = true;
                 *newline_count = 0;
             }
-            while i < len && bytes[i].is_ascii_whitespace() {
+            while i < len && IS_WS[bytes[i] as usize] {
                 if bytes[i] == b'\n' {
                     *newline_count += 1;
                 }
@@ -330,18 +342,13 @@ fn append_ws_collapsed(
             *in_ws = false;
             *newline_count = 0;
 
-            // Use SIMD byte_scan to find next whitespace character in bulk.
-            // The set must match `u8::is_ascii_whitespace()`: SP, TAB, LF, CR,
-            // and FF (0x0C).
-            let rest = &bytes[i..];
-            let non_ws_len = super::intrinsics::byte_scan::find_first_in_set(
-                rest,
-                b" \t\n\r\x0C",
-            )
-            .unwrap_or(rest.len());
-            let end = i + non_ws_len;
-            result.push_str(&chunk[i..end]);
-            i = end;
+            // Scan for next whitespace byte using the table.
+            let start = i;
+            i += 1;
+            while i < len && !IS_WS[bytes[i] as usize] {
+                i += 1;
+            }
+            result.push_str(&chunk[start..i]);
         }
     }
 }

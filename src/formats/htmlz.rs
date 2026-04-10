@@ -14,6 +14,11 @@ use crate::formats::common::text_utils::{
 };
 use crate::formats::common::xml_utils;
 use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
+
+/// Minimum entry size (bytes) for using Deflated compression.
+/// Entries smaller than this use Stored to skip the ~256 KB zlib_rs
+/// deflate state initialization (memset) overhead.
+const MIN_DEFLATE_SIZE: usize = 4096;
 use crate::formats::html::HtmlReader;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -116,10 +121,12 @@ impl FormatWriter for HtmlzWriter {
         let mut zip_buf = Cursor::new(Vec::new());
         {
             let mut zip = ZipWriter::new(&mut zip_buf);
-            let options: FileOptions<'_, ()> =
+            let deflated: FileOptions<'_, ()> =
                 FileOptions::default()
                     .compression_method(CompressionMethod::Deflated)
                     .compression_level(ZIP_DEFLATE_LEVEL);
+            let stored: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(CompressionMethod::Stored);
 
             // Collect CSS content: use manifest CSS resources, or generate a default
             let resources = book.resources();
@@ -150,19 +157,22 @@ impl FormatWriter for HtmlzWriter {
 
             // 1. Write index.html (HTML content with stylesheet link)
             let html = generate_htmlz_content(book);
-            zip.start_file("index.html", options)
+            let html_opts = if html.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            zip.start_file("index.html", html_opts)
                 .map_err(|e| EruditioError::Format(format!("Failed to write index.html: {}", e)))?;
             zip.write_all(html.as_bytes())?;
 
             // 2. Write metadata.opf
             let opf = generate_htmlz_opf(book);
-            zip.start_file("metadata.opf", options).map_err(|e| {
+            let opf_opts = if opf.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            zip.start_file("metadata.opf", opf_opts).map_err(|e| {
                 EruditioError::Format(format!("Failed to write metadata.opf: {}", e))
             })?;
             zip.write_all(opf.as_bytes())?;
 
             // 3. Write style.css
-            zip.start_file("style.css", options)
+            let css_opts = if css_content.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            zip.start_file("style.css", css_opts)
                 .map_err(|e| EruditioError::Format(format!("Failed to write style.css: {}", e)))?;
             zip.write_all(css_content.as_bytes())?;
 

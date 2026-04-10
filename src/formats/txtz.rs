@@ -83,6 +83,10 @@ fn find_file_by_extension<R: Read + Seek>(
     None
 }
 
+/// Entries smaller than this are stored without compression to avoid
+/// the ~256 KB `zlib_rs` deflate-state initialisation overhead.
+const MIN_DEFLATE_SIZE: usize = 4096;
+
 /// Creates a ZIP archive containing a single file.
 fn write_single_file_zip<W: Write + Seek>(
     writer: &mut W,
@@ -90,10 +94,13 @@ fn write_single_file_zip<W: Write + Seek>(
     data: &[u8],
 ) -> Result<()> {
     let mut zip = ZipWriter::new(writer);
-    let options: FileOptions<'_, ()> =
+    let options: FileOptions<'_, ()> = if data.len() >= MIN_DEFLATE_SIZE {
         FileOptions::default()
             .compression_method(CompressionMethod::Deflated)
-            .compression_level(ZIP_DEFLATE_LEVEL);
+            .compression_level(ZIP_DEFLATE_LEVEL)
+    } else {
+        FileOptions::default().compression_method(CompressionMethod::Stored)
+    };
 
     zip.start_file(filename, options)
         .map_err(|e| EruditioError::Format(format!("Failed to create {}: {}", filename, e)))?;

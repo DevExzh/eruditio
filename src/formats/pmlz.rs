@@ -67,12 +67,19 @@ impl FormatWriter for PmlzWriter {
         PmlWriter::new().write_book(book, &mut pml_buf)?;
 
         // Pack into a ZIP.
+        // Skip deflate for small payloads to avoid ~256 KB zlib_rs state init.
+        const MIN_DEFLATE_SIZE: usize = 4096;
         let mut cursor = Cursor::new(Vec::new());
         {
             let mut zip = zip::ZipWriter::new(&mut cursor);
-            let options = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated)
-                .compression_level(ZIP_DEFLATE_LEVEL);
+            let options = if pml_buf.len() >= MIN_DEFLATE_SIZE {
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated)
+                    .compression_level(ZIP_DEFLATE_LEVEL)
+            } else {
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored)
+            };
             zip.start_file("content.pml", options)?;
             zip.write_all(&pml_buf)?;
             zip.finish()?;

@@ -187,9 +187,14 @@ impl FormatWriter for OebWriter {
         let mut zip_buf = Cursor::new(Vec::new());
         {
             let mut zip = ZipWriter::new(&mut zip_buf);
-            let options: FileOptions<'_, ()> = FileOptions::default()
+            let deflated: FileOptions<'_, ()> = FileOptions::default()
                 .compression_method(CompressionMethod::Deflated)
                 .compression_level(ZIP_DEFLATE_LEVEL);
+            let stored: FileOptions<'_, ()> = FileOptions::default()
+                .compression_method(CompressionMethod::Stored);
+
+            /// Minimum entry size for using Deflated compression.
+            const MIN_DEFLATE_SIZE: usize = 4096;
 
             let chapters = book.chapter_views();
             let resources = book.resources();
@@ -215,13 +220,14 @@ impl FormatWriter for OebWriter {
                 xhtml.push_str(&chapter.content);
                 xhtml.push_str("\n</body>\n</html>");
 
-                zip.start_file(&filename, options)?;
+                let opts = if xhtml.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+                zip.start_file(&filename, opts)?;
                 zip.write_all(xhtml.as_bytes())?;
 
                 content_items.push((id, filename));
             }
 
-            // Write image resources.
+            // Write image resources (Stored — images are already compressed).
             let mut resource_items: Vec<(String, String, &str)> = Vec::new();
 
             for (i, resource) in resources.iter().enumerate() {
@@ -230,7 +236,7 @@ impl FormatWriter for OebWriter {
                 let filename = format!("images/{}", basename);
                 let id = format!("image_{}", i);
 
-                zip.start_file(&filename, options)?;
+                zip.start_file(&filename, stored)?;
                 zip.write_all(resource.data)?;
 
                 resource_items.push((id, filename, resource.media_type));
@@ -238,7 +244,8 @@ impl FormatWriter for OebWriter {
 
             // Generate OPF.
             let opf = build_opf(book, &content_items, &resource_items);
-            zip.start_file("content.opf", options)?;
+            let opf_opts = if opf.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            zip.start_file("content.opf", opf_opts)?;
             zip.write_all(opf.as_bytes())?;
 
             zip.finish()?;
