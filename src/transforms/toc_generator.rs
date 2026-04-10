@@ -49,17 +49,23 @@ impl Transform for TocGenerator {
 
 /// Extracts the text of the first heading (h1-h6) found in HTML content.
 ///
-/// Uses a single-pass byte-level scan so the actual first heading in document
-/// order is returned, regardless of its level. Previous versions scanned for
-/// h1, then h2, then h3 separately, which could miss an h2 that appeared
-/// before any h1.
+/// Uses `memchr` for SIMD-accelerated `<` scanning so the scan jumps directly
+/// to `<` characters instead of checking every byte.  Callgrind showed the
+/// previous byte-by-byte loop consumed 27% of all instructions for RTF→EPUB.
 fn extract_first_heading(html: &str) -> Option<String> {
     let bytes = html.as_bytes();
     let len = bytes.len();
     let mut i = 0;
     while i + 3 < len {
-        if bytes[i] == b'<'
-            && (bytes[i + 1] == b'h' || bytes[i + 1] == b'H')
+        // SIMD-accelerated skip to the next '<' byte.
+        match memchr::memchr(b'<', &bytes[i..]) {
+            Some(offset) => i += offset,
+            None => break,
+        }
+        if i + 3 >= len {
+            break;
+        }
+        if (bytes[i + 1] == b'h' || bytes[i + 1] == b'H')
             && bytes[i + 2] >= b'1'
             && bytes[i + 2] <= b'6'
             && (bytes[i + 3] == b'>'
@@ -69,8 +75,8 @@ fn extract_first_heading(html: &str) -> Option<String> {
                 || bytes[i + 3] == b'\r')
         {
             let level = bytes[i + 2] - b'0';
-            // Find closing '>' of the opening tag.
-            let tag_end = match html[i..].find('>') {
+            // Find closing '>' of the opening tag using memchr.
+            let tag_end = match memchr::memchr(b'>', &bytes[i..]) {
                 Some(pos) => i + pos + 1,
                 None => {
                     i += 1;
