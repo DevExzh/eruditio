@@ -301,7 +301,7 @@ fn load_parallel(
     let zip_data = archive.into_inner().into_inner();
     let zip_ref = zip_data.as_slice();
     let results: Vec<(String, ManifestData)> = entries
-        .par_iter()
+        .into_par_iter()
         .map_init(
             || {
                 (
@@ -317,19 +317,19 @@ fn load_parallel(
                     Err(_) => return None,
                 };
                 let data = match read_from_archive_reuse(
-                    archive, zip_path, *is_text, decompressor, raw_buf,
+                    archive, &zip_path, is_text, decompressor, raw_buf,
                 ) {
                     Ok(d) => d,
                     Err(_) => {
                         match read_from_archive_reuse(
-                            archive, fallback, *is_text, decompressor, raw_buf,
+                            archive, &fallback, is_text, decompressor, raw_buf,
                         ) {
                             Ok(d) => d,
                             Err(_) => return None,
                         }
                     },
                 };
-                Some((id.clone(), data))
+                Some((id, data))
             },
         )
         .flatten()

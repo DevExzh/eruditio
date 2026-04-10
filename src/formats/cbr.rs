@@ -41,15 +41,15 @@ impl FormatReader for CbrReader {
 
         let mut book = Book::new();
 
-        for (index, (name, data)) in image_entries.iter().enumerate() {
-            let media_type = from_path(name)
+        for (index, (name, data)) in image_entries.into_iter().enumerate() {
+            let media_type = from_path(&name)
                 .first()
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "application/octet-stream".into());
             let resource_id = format!("page_{:04}", index);
             let chapter_id = format!("chapter_{:04}", index);
 
-            book.add_resource(&resource_id, name, data.clone(), &media_type);
+            book.add_resource(&resource_id, &name, data, &media_type);
 
             book.add_chapter(Chapter {
                 title: Some(format!("Page {}", index + 1)),

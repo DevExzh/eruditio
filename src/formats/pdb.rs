@@ -880,12 +880,12 @@ fn read_plucker(pdb: &PdbFile) -> Result<Book> {
     }
 
     // Add images as resources.
-    for (uid, data) in &image_data {
-        let media_type = detect_image_media_type(data);
+    for (uid, data) in image_data {
+        let media_type = detect_image_media_type(&data);
         let ext = media_type_to_ext(media_type);
         let id = format!("plucker_img_{}", uid);
         let href = format!("images/{}.{}", uid, ext);
-        book.add_resource(&id, &href, data.clone(), media_type);
+        book.add_resource(&id, &href, data, media_type);
     }
 
     Ok(book)

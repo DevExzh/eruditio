@@ -1038,8 +1038,8 @@ mod tests {
             ("snbf/book.snbf".into(), meta_xml.into_bytes(), ATTR_PLAIN),
             ("snbf/toc.snbf".into(), toc_xml.into_bytes(), ATTR_PLAIN),
         ];
-        for (name, data) in &chapter_files {
-            all_files.push((format!("snbc/{}", name), data.clone(), ATTR_PLAIN));
+        for (name, data) in chapter_files {
+            all_files.push((format!("snbc/{}", name), data, ATTR_PLAIN));
         }
 
         let file_count = all_files.len();
