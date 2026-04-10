@@ -134,7 +134,10 @@ fn insert_kobo_spans(html: &str) -> String {
                 pos = tag_end;
 
                 // Now wrap text segments until the closing block tag.
-                let close_tag = closing_tag_for(tag_content);
+                let mut close_buf = [0u8; 18];
+                let close_len = closing_tag_for_buf(tag_content, &mut close_buf);
+                // SAFETY: buf contains only ASCII bytes (b'<', b'/', lowercase letters).
+                let close_tag = std::str::from_utf8(&close_buf[..close_len]).unwrap();
                 loop {
                     if pos >= len {
                         break;
@@ -147,7 +150,7 @@ fn insert_kobo_spans(html: &str) -> String {
                         };
                         let inner_tag = &html[pos..inner_end];
 
-                        if ascii_starts_with_ci(inner_tag, &close_tag) {
+                        if ascii_starts_with_ci(inner_tag, close_tag) {
                             // Closing block tag — stop wrapping.
                             out.push_str(inner_tag);
                             pos = inner_end;
@@ -246,21 +249,24 @@ fn push_u32(s: &mut String, mut n: u32) {
     s.push_str(unsafe { std::str::from_utf8_unchecked(&buf[i..]) });
 }
 
-/// Returns the lowercase closing tag prefix for a given opening tag.
-fn closing_tag_for(tag: &str) -> String {
-    // Extract the tag name from something like "<P class='x'>"
+/// Writes the lowercase closing tag prefix for a given opening tag into a stack buffer.
+///
+/// Returns a `&str` view of the filled portion (e.g. `"</p"` for `"<P class='x'>"`).
+/// The buffer must be at least 18 bytes (sufficient for all HTML tag names).
+fn closing_tag_for_buf(tag: &str, buf: &mut [u8; 18]) -> usize {
     let name_end = tag[1..]
         .find(['>', ' ', '/'])
         .map(|i| i + 1)
         .unwrap_or(tag.len());
     let name = &tag[1..name_end];
-    // Lowercase only the short tag name, not the full tag content.
-    let mut close = String::with_capacity(2 + name.len());
-    close.push_str("</");
-    for &b in name.as_bytes() {
-        close.push(b.to_ascii_lowercase() as char);
+    buf[0] = b'<';
+    buf[1] = b'/';
+    let name_bytes = name.as_bytes();
+    let n = name_bytes.len().min(16);
+    for (i, &b) in name_bytes[..n].iter().enumerate() {
+        buf[2 + i] = b.to_ascii_lowercase();
     }
-    close
+    2 + n
 }
 
 #[cfg(test)]
@@ -346,10 +352,15 @@ mod tests {
 
     #[test]
     fn closing_tag_extraction() {
-        assert_eq!(closing_tag_for("<p>"), "</p");
-        assert_eq!(closing_tag_for("<p class=\"x\">"), "</p");
-        assert_eq!(closing_tag_for("<blockquote>"), "</blockquote");
-        assert_eq!(closing_tag_for("<h2>"), "</h2");
+        let mut buf = [0u8; 18];
+        let len = closing_tag_for_buf("<p>", &mut buf);
+        assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), "</p");
+        let len = closing_tag_for_buf("<p class=\"x\">", &mut buf);
+        assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), "</p");
+        let len = closing_tag_for_buf("<blockquote>", &mut buf);
+        assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), "</blockquote");
+        let len = closing_tag_for_buf("<h2>", &mut buf);
+        assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), "</h2");
     }
 
     #[test]

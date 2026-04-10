@@ -493,7 +493,7 @@ mod tests {
         let mut cursor = Cursor::new(rtf.as_slice());
         let book = RtfReader::new().read_book(&mut cursor).unwrap();
 
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains('\u{2014}'));
     }
 
@@ -503,7 +503,7 @@ mod tests {
         let mut cursor = Cursor::new(rtf.as_slice());
         let book = RtfReader::new().read_book(&mut cursor).unwrap();
 
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains('\u{00E9}')); // é
     }
 
@@ -536,9 +536,9 @@ mod tests {
         assert_eq!(decoded.metadata.title.as_deref(), Some("RTF Test"));
         assert_eq!(decoded.metadata.authors, vec!["Author"]);
         let content: String = decoded
-            .chapters()
+            .chapter_views()
             .iter()
-            .map(|c| c.content.clone())
+            .map(|c| c.content)
             .collect();
         assert!(content.contains("Hello world"));
     }
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(resources[0].media_type, "image/png");
 
         // HTML should contain img tag.
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("<img src="));
         assert!(content.contains("Hello"));
         assert!(content.contains("World"));

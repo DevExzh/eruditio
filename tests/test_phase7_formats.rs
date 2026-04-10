@@ -408,7 +408,7 @@ fn pdb_read_through_pipeline() {
         .expect("read PDB through pipeline");
 
     assert_eq!(book.metadata.title.as_deref(), Some("PDB Pipeline Book"));
-    let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+    let content: String = book.chapter_views().iter().map(|c| c.content).collect();
     assert!(content.contains("Hello from PDB reader!"));
 }
 
@@ -456,7 +456,7 @@ fn rb_read_through_pipeline() {
 
     assert_eq!(book.metadata.title.as_deref(), Some("RB Pipeline Book"));
     assert_eq!(book.metadata.authors, vec!["RB Author"]);
-    let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+    let content: String = book.chapter_views().iter().map(|c| c.content).collect();
     assert!(content.contains("Hello from RocketBook!"));
 }
 
@@ -500,7 +500,7 @@ fn lrf_read_through_pipeline() {
 
     assert_eq!(book.metadata.title.as_deref(), Some("LRF Pipeline Book"));
     assert_eq!(book.metadata.authors, vec!["LRF Author"]);
-    let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+    let content: String = book.chapter_views().iter().map(|c| c.content).collect();
     assert!(content.contains("Hello from LRF reader!"));
 }
 
@@ -546,7 +546,7 @@ fn snb_read_through_pipeline() {
 
     assert_eq!(book.metadata.title.as_deref(), Some("SNB Pipeline Book"));
     assert_eq!(book.metadata.authors, vec!["SNB Author"]);
-    let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+    let content: String = book.chapter_views().iter().map(|c| c.content).collect();
     assert!(content.contains("Hello from SNB reader!"));
 }
 
@@ -619,7 +619,7 @@ fn djvu_read_through_pipeline() {
         .read(Format::Djvu, &mut cursor, &ConversionOptions::none())
         .expect("read DJVU through pipeline");
 
-    let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+    let content: String = book.chapter_views().iter().map(|c| c.content).collect();
     assert!(content.contains("Hello from DJVU reader!"));
 }
 

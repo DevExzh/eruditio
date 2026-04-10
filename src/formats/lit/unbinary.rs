@@ -4,7 +4,7 @@
 //! calibre's `ebooks/lit/reader.py` (`UnBinary` class).
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 
 use crate::error::{EruditioError, Result};
 

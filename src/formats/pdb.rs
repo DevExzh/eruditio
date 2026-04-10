@@ -1451,7 +1451,7 @@ mod tests {
         let book = PdbReader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(book.metadata.title.as_deref(), Some("Test PalmDOC"));
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Hello, PalmDOC world!"));
         assert!(content.contains("Second paragraph"));
     }
@@ -1464,7 +1464,7 @@ mod tests {
         let mut cursor = Cursor::new(data);
         let book = PdbReader::new().read_book(&mut cursor).unwrap();
 
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("quick brown fox"));
     }
 
@@ -1477,7 +1477,7 @@ mod tests {
         let book = PdbReader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(book.metadata.title.as_deref(), Some("Test zTXT"));
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Hello, zTXT world!"));
         assert!(content.contains("Second paragraph"));
     }

@@ -16,7 +16,7 @@ use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::{Read, Write};
 
 /// SNB ebook format reader.
@@ -1111,7 +1111,7 @@ mod tests {
         assert_eq!(book.metadata.title.as_deref(), Some("Test SNB Book"));
         assert_eq!(book.metadata.authors, vec!["SNB Author"]);
         assert_eq!(book.chapters().len(), 2);
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Hello from SNB chapter one!"));
         assert!(content.contains("Content of chapter two."));
     }

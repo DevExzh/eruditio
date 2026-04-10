@@ -3,7 +3,7 @@ use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::intrinsics;
 use crate::formats::txt::{TxtReader, book_to_plain_text};
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::{Cursor, Read, Write};
 
 /// TCR format reader.
@@ -123,7 +123,10 @@ fn tcr_compress(data: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
     unique_bytes.sort_by(|a, b| byte_freq[*b as usize].cmp(&byte_freq[*a as usize]));
 
     let mut dictionary: Vec<Vec<u8>> = Vec::with_capacity(256);
-    let mut entry_map: HashMap<Vec<u8>, u8> = HashMap::new();
+    // Use array for O(1) single-byte lookup (no heap allocation per byte).
+    let mut single_map: [Option<u8>; 256] = [None; 256];
+    // Use [u8; 2] keys instead of Vec<u8> to avoid heap allocation per pair.
+    let mut pair_map: HashMap<[u8; 2], u8> = HashMap::new();
 
     // Fill with unique single bytes first.
     for &b in &unique_bytes {
@@ -132,7 +135,7 @@ fn tcr_compress(data: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
         }
         let idx = dictionary.len() as u8;
         dictionary.push(vec![b]);
-        entry_map.insert(vec![b], idx);
+        single_map[b as usize] = Some(idx);
     }
 
     // If we have remaining slots, add frequent byte-pairs.
@@ -149,11 +152,10 @@ fn tcr_compress(data: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
             if dictionary.len() >= 256 {
                 break;
             }
-            let key = pair.to_vec();
-            if !entry_map.contains_key(&key) {
+            if !pair_map.contains_key(&pair) {
                 let idx = dictionary.len() as u8;
-                entry_map.insert(key.clone(), idx);
-                dictionary.push(key);
+                pair_map.insert(pair, idx);
+                dictionary.push(pair.to_vec());
             }
         }
     }
@@ -167,15 +169,14 @@ fn tcr_compress(data: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
     let mut encoded = Vec::with_capacity(data.len());
     let mut i = 0;
     while i < data.len() {
-        if i + 1 < data.len() {
-            let pair = vec![data[i], data[i + 1]];
-            if let Some(&idx) = entry_map.get(&pair) {
-                encoded.push(idx);
-                i += 2;
-                continue;
-            }
+        if i + 1 < data.len()
+            && let Some(&idx) = pair_map.get(&[data[i], data[i + 1]])
+        {
+            encoded.push(idx);
+            i += 2;
+            continue;
         }
-        if let Some(&idx) = entry_map.get(&data[i..i + 1]) {
+        if let Some(idx) = single_map[data[i] as usize] {
             encoded.push(idx);
         }
         i += 1;

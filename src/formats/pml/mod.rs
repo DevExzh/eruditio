@@ -91,7 +91,7 @@ mod tests {
         let mut cursor = Cursor::new(pml.as_slice());
         let book = PmlReader::new().read_book(&mut cursor).unwrap();
 
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("<b>") || content.contains("font-weight"));
         assert!(content.contains("Bold text"));
     }

@@ -5,7 +5,7 @@
 //! shared primitives: variable-length integer encoding, directory entry parsing,
 //! LZX reset table parsing, and LZX section decompression.
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 
 use lzxd::{Lzxd, WindowSize};
 

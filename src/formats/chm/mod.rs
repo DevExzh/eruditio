@@ -4,7 +4,7 @@
 //! listing blocks with encint-encoded entries. Content lives in section 0
 //! (uncompressed) or section 1 (LZX-compressed via MSCompressed transform).
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::Read;
 
 use crate::domain::{Book, Chapter, FormatReader};

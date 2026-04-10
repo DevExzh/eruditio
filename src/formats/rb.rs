@@ -7,7 +7,7 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use flate2::{Compress, Decompress};
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::{Read, Write};
 
 /// RB ebook format reader.
@@ -659,7 +659,7 @@ mod tests {
 
         assert_eq!(book.metadata.title.as_deref(), Some("Test Book"));
         assert_eq!(book.metadata.authors, vec!["Test Author"]);
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Hello, RocketBook!"));
     }
 
@@ -677,7 +677,7 @@ mod tests {
         let book = RbReader::new().read_book(&mut cursor).unwrap();
 
         assert_eq!(book.metadata.title.as_deref(), Some("Compressed Book"));
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Compressed content"));
     }
 
@@ -723,7 +723,7 @@ mod tests {
         let book = RbReader::new().read_book(&mut cursor).unwrap();
 
         assert!(book.metadata.title.is_none());
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("No info page"));
     }
 

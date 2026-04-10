@@ -8,7 +8,7 @@
 //! with `quick_xml` and emit the binary token stream using the same tag and
 //! attribute code tables from `maps.rs`.
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::Write;
 use std::sync::Arc;
 

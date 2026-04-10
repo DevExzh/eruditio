@@ -19,7 +19,7 @@ pub use writer::LrfWriter;
 
 use header::{LrfHeader, parse_metadata};
 use objects::{LrfObject, ObjType, parse_objects, parse_toc_stream};
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use tags::TAG_REFSTREAM;
 use text::{tokenize_text_stream, tokens_to_html};
 
@@ -535,7 +535,7 @@ mod tests {
 
         assert_eq!(book.metadata.title.as_deref(), Some("Test LRF Book"));
         assert_eq!(book.metadata.authors, vec!["LRF Author"]);
-        let content: String = book.chapters().iter().map(|c| c.content.clone()).collect();
+        let content: String = book.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Hello from LRF!"));
     }
 

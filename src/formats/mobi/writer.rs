@@ -948,12 +948,14 @@ fn insert_pagebreaks_for_fragments<'a>(
     }
     result.push_str(&content[prev..]);
 
-    // Now compute fragment offsets in the NEW content.
-    // Re-scan the result for id positions.
-    let new_id_positions = find_id_positions(&result);
+    // Compute fragment offsets in the NEW content arithmetically.
+    // Each insertion shifts all subsequent content by pagebreak_tag.len() bytes.
+    // Since insertions are sorted, we use partition_point for O(log n) lookup.
+    let pb_len = pagebreak_tag.len();
     for &frag_id in fragment_ids {
-        if let Some(&pos) = new_id_positions.get(frag_id) {
-            offsets.insert(frag_id.to_string(), pos);
+        if let Some(&orig_pos) = id_positions.get(frag_id) {
+            let shift = insertions.partition_point(|(pos, _)| *pos <= orig_pos) * pb_len;
+            offsets.insert(frag_id.to_string(), orig_pos + shift);
         }
     }
 
@@ -1476,7 +1478,7 @@ mod tests {
         let chapters = decoded.chapters();
         assert!(!chapters.is_empty());
 
-        let all_content: String = chapters.iter().map(|c| c.content.clone()).collect();
+        let all_content: String = decoded.chapter_views().iter().map(|c| c.content).collect();
         assert!(all_content.contains("First chapter content"));
         assert!(all_content.contains("Second chapter"));
     }
@@ -1497,8 +1499,7 @@ mod tests {
         let mut cursor = std::io::Cursor::new(mobi_data);
         let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
 
-        let chapters = decoded.chapters();
-        let all_content: String = chapters.iter().map(|c| c.content.clone()).collect();
+        let all_content: String = decoded.chapter_views().iter().map(|c| c.content).collect();
         assert!(all_content.contains("Word"));
     }
 
@@ -2522,9 +2523,9 @@ mod tests {
         let mut cursor = std::io::Cursor::new(mobi_data);
         let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
         let all_content: String = decoded
-            .chapters()
+            .chapter_views()
             .iter()
-            .map(|c| c.content.clone())
+            .map(|c| c.content)
             .collect();
 
         // The decompressed/decoded text should preserve filepos references.

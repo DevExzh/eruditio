@@ -1,6 +1,6 @@
 //! RTF writer — generates RTF documents from `Book`.
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 
 use crate::domain::Book;
 use crate::formats::common::html_utils::{strip_leading_heading, strip_tags};

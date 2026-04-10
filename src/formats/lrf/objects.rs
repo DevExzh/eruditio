@@ -3,7 +3,7 @@
 
 use crate::error::{EruditioError, Result};
 use flate2::bufread::ZlibDecoder;
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::Read as IoRead;
 
 use super::header::{read_u16_le, read_u32_le};

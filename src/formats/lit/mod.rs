@@ -10,7 +10,7 @@ pub mod mssha1;
 pub mod unbinary;
 pub mod writer;
 
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
 use std::io::Read;
 
 use quick_xml::Reader;
