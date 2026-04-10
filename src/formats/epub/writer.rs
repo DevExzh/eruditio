@@ -26,6 +26,15 @@ fn is_already_compressed(media_type: &str) -> bool {
         || media_type == "application/vnd.ms-opentype"
 }
 
+/// Minimum uncompressed entry size to justify Deflate compression.
+///
+/// Each deflate init/reset zeroes ~256 KB of internal hash-chain state.
+/// Callgrind showed this memset consumed 53% of all instructions for a
+/// 434 KB HTML→EPUB conversion (35 entries × 256 KB = 9 MB of zeroing).
+/// Entries below this threshold use `Stored` — the typical compression
+/// savings (< 1 KB for a 2 KB file) don't justify the 256 KB memset cost.
+const MIN_DEFLATE_SIZE: usize = 4096;
+
 /// Writes a `Book` as a valid EPUB archive to the given writer.
 ///
 /// When there are enough deflatable entries, they are pre-compressed in
@@ -50,21 +59,39 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     // -----------------------------------------------------------------------
     // Count deflatable manifest entries and their total uncompressed size.
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
-    let mut deflate_count: usize = 3; // container.xml + OPF + NCX
-    let mut deflate_bytes: usize =
-        generate_container_xml().len() + opf_xml.len() + ncx_xml.len();
+    let mut deflate_count: usize = 0;
+    let mut deflate_bytes: usize = 0;
+
+    // Only count entries >= MIN_DEFLATE_SIZE — smaller entries will use Stored
+    // to avoid the ~256 KB deflate state initialization cost.
+    let container_len = generate_container_xml().len();
+    if container_len >= MIN_DEFLATE_SIZE {
+        deflate_count += 1;
+        deflate_bytes += container_len;
+    }
+    if opf_xml.len() >= MIN_DEFLATE_SIZE {
+        deflate_count += 1;
+        deflate_bytes += opf_xml.len();
+    }
+    if ncx_xml.len() >= MIN_DEFLATE_SIZE {
+        deflate_count += 1;
+        deflate_bytes += ncx_xml.len();
+    }
 
     for item in book.manifest.iter() {
         if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
             continue;
         }
         if !is_already_compressed(&item.media_type) {
-            deflate_count += 1;
-            deflate_bytes += match &item.data {
+            let entry_size = match &item.data {
                 crate::domain::ManifestData::Text(t) => t.len(),
                 crate::domain::ManifestData::Inline(b) => b.len(),
                 crate::domain::ManifestData::Empty => 0,
             };
+            if entry_size >= MIN_DEFLATE_SIZE {
+                deflate_count += 1;
+                deflate_bytes += entry_size;
+            }
         }
     }
 
@@ -97,18 +124,22 @@ fn write_epub_sequential<W: Write + Seek>(
         .map_err(|e| EruditioError::Format(format!("Failed to write mimetype: {}", e)))?;
     zip.write_all(b"application/epub+zip")?;
 
-    // 2. container.xml
-    zip.start_file("META-INF/container.xml", deflated)
+    // 2. container.xml — skip deflate for small entries to avoid ~256 KB state init.
+    let container_xml = generate_container_xml();
+    let container_opts = if container_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
+    zip.start_file("META-INF/container.xml", container_opts)
         .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
-    zip.write_all(generate_container_xml().as_bytes())?;
+    zip.write_all(container_xml.as_bytes())?;
 
     // 3. OPF
-    zip.start_file("OEBPS/content.opf", deflated)
+    let opf_opts = if opf_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
+    zip.start_file("OEBPS/content.opf", opf_opts)
         .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
     zip.write_all(opf_xml.as_bytes())?;
 
     // 4. NCX
-    zip.start_file("OEBPS/toc.ncx", deflated)
+    let ncx_opts = if ncx_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
+    zip.start_file("OEBPS/toc.ncx", ncx_opts)
         .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
     zip.write_all(ncx_xml.as_bytes())?;
 
@@ -122,7 +153,16 @@ fn write_epub_sequential<W: Write + Seek>(
         zip_path.clear();
         zip_path.push_str("OEBPS/");
         zip_path.push_str(&item.href);
-        let opts = if is_already_compressed(&item.media_type) { stored } else { deflated };
+        let entry_size = match &item.data {
+            crate::domain::ManifestData::Text(t) => t.len(),
+            crate::domain::ManifestData::Inline(b) => b.len(),
+            crate::domain::ManifestData::Empty => 0,
+        };
+        let opts = if is_already_compressed(&item.media_type) || entry_size < MIN_DEFLATE_SIZE {
+            stored
+        } else {
+            deflated
+        };
         zip.start_file(&zip_path, opts)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
         match &item.data {
@@ -170,19 +210,41 @@ fn write_epub_parallel<W: Write + Seek>(
     let mut deflate_entries: Vec<DeflateEntry<'_>> = Vec::new();
     let mut stored_entries: Vec<StoredEntry<'_>> = Vec::new();
 
-    // Structural entries (deflated)
-    deflate_entries.push(DeflateEntry {
-        zip_path: "META-INF/container.xml".to_string(),
-        data: Cow::Borrowed(generate_container_xml().as_bytes()),
-    });
-    deflate_entries.push(DeflateEntry {
-        zip_path: "OEBPS/content.opf".to_string(),
-        data: Cow::Borrowed(opf_xml.as_bytes()),
-    });
-    deflate_entries.push(DeflateEntry {
-        zip_path: "OEBPS/toc.ncx".to_string(),
-        data: Cow::Borrowed(ncx_xml.as_bytes()),
-    });
+    // Structural entries — use Stored for small entries to skip deflate init.
+    let container_xml = generate_container_xml();
+    if container_xml.len() >= MIN_DEFLATE_SIZE {
+        deflate_entries.push(DeflateEntry {
+            zip_path: "META-INF/container.xml".to_string(),
+            data: Cow::Borrowed(container_xml.as_bytes()),
+        });
+    } else {
+        stored_entries.push(StoredEntry {
+            zip_path: "META-INF/container.xml".to_string(),
+            data: container_xml.as_bytes(),
+        });
+    }
+    if opf_xml.len() >= MIN_DEFLATE_SIZE {
+        deflate_entries.push(DeflateEntry {
+            zip_path: "OEBPS/content.opf".to_string(),
+            data: Cow::Borrowed(opf_xml.as_bytes()),
+        });
+    } else {
+        stored_entries.push(StoredEntry {
+            zip_path: "OEBPS/content.opf".to_string(),
+            data: opf_xml.as_bytes(),
+        });
+    }
+    if ncx_xml.len() >= MIN_DEFLATE_SIZE {
+        deflate_entries.push(DeflateEntry {
+            zip_path: "OEBPS/toc.ncx".to_string(),
+            data: Cow::Borrowed(ncx_xml.as_bytes()),
+        });
+    } else {
+        stored_entries.push(StoredEntry {
+            zip_path: "OEBPS/toc.ncx".to_string(),
+            data: ncx_xml.as_bytes(),
+        });
+    }
 
     // Manifest entries
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
@@ -207,12 +269,31 @@ fn write_epub_parallel<W: Write + Seek>(
                 },
             }
         } else {
-            let data = match &item.data {
-                crate::domain::ManifestData::Text(text) => Cow::Borrowed(text.as_bytes()),
-                crate::domain::ManifestData::Inline(bytes) => Cow::Borrowed(bytes.as_slice()),
-                crate::domain::ManifestData::Empty => Cow::Borrowed(&[] as &[u8]),
-            };
-            deflate_entries.push(DeflateEntry { zip_path, data });
+            match &item.data {
+                crate::domain::ManifestData::Text(text) => {
+                    if text.len() < MIN_DEFLATE_SIZE {
+                        stored_entries.push(StoredEntry { zip_path, data: text.as_bytes() });
+                    } else {
+                        deflate_entries.push(DeflateEntry {
+                            zip_path,
+                            data: Cow::Borrowed(text.as_bytes()),
+                        });
+                    }
+                },
+                crate::domain::ManifestData::Inline(bytes) => {
+                    if bytes.len() < MIN_DEFLATE_SIZE {
+                        stored_entries.push(StoredEntry { zip_path, data: bytes });
+                    } else {
+                        deflate_entries.push(DeflateEntry {
+                            zip_path,
+                            data: Cow::Borrowed(bytes.as_slice()),
+                        });
+                    }
+                },
+                crate::domain::ManifestData::Empty => {
+                    stored_entries.push(StoredEntry { zip_path, data: &[] });
+                },
+            }
         }
     }
 
