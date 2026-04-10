@@ -500,19 +500,71 @@ fn html_to_rtf(
             write_rtf_char(rtf, ch);
             pos += consumed;
         } else {
-            // Regular character — decode full UTF-8 codepoint.
-            let Some(ch) = html[pos..].chars().next() else {
-                break;
-            };
+            // Regular text — batch-copy runs of safe ASCII to avoid
+            // per-character write_rtf_char() overhead.  For English text,
+            // the vast majority of bytes are safe ASCII (a-z, A-Z, 0-9,
+            // space, punctuation) that need no RTF escaping.
             if skip_leading_ws {
-                if ch.is_whitespace() {
-                    pos += ch.len_utf8();
+                while pos < len {
+                    let b = bytes[pos];
+                    if b == b'<' || b == b'&' || !b.is_ascii_whitespace() {
+                        break;
+                    }
+                    pos += 1;
+                }
+                if pos >= len {
+                    break;
+                }
+                if bytes[pos] == b'<' || bytes[pos] == b'&' {
                     continue;
                 }
                 skip_leading_ws = false;
             }
-            write_rtf_char(rtf, ch);
-            pos += ch.len_utf8();
+
+            // Scan for the end of a safe ASCII run.  "Safe" means: not a
+            // tag start (<), entity start (&), RTF special (\, {, }),
+            // newline, or non-ASCII byte (>= 128).
+            let start = pos;
+            while pos < len {
+                let b = bytes[pos];
+                if b == b'<' || b == b'&' || b == b'\\' || b == b'{' || b == b'}' || b == b'\n' || b >= 128 {
+                    break;
+                }
+                pos += 1;
+            }
+
+            if pos > start {
+                // Bulk copy the safe ASCII run — no per-character dispatch.
+                rtf.push_str(&html[start..pos]);
+            }
+
+            // If we stopped at a character that is NOT a tag/entity opener,
+            // handle the single special character before the next loop iter.
+            if pos < len {
+                let b = bytes[pos];
+                if b == b'<' || b == b'&' {
+                    // Let the next loop iteration handle tags/entities.
+                } else if b == b'\\' {
+                    rtf.push_str("\\\\");
+                    pos += 1;
+                } else if b == b'{' {
+                    rtf.push_str("\\{");
+                    pos += 1;
+                } else if b == b'}' {
+                    rtf.push_str("\\}");
+                    pos += 1;
+                } else if b == b'\n' {
+                    rtf.push_str("\\par\n");
+                    pos += 1;
+                } else {
+                    // Non-ASCII UTF-8 character — decode and emit \uNNNN?.
+                    let ch = html[pos..].chars().next().unwrap();
+                    rtf.push_str("\\u");
+                    push_i32(rtf, ch as i32);
+                    rtf.push('?');
+                    pos += ch.len_utf8();
+                }
+            }
         }
     }
 }
