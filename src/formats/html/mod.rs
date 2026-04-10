@@ -7,8 +7,7 @@ pub mod parser;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::MAX_INPUT_SIZE;
-use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
+use crate::formats::common::html_utils::strip_leading_heading;
 use crate::formats::common::text_utils::push_escape_html;
 use std::borrow::Cow;
 use std::io::{Read, Write};
@@ -28,10 +27,7 @@ impl HtmlReader {
 
 impl FormatReader for HtmlReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut contents = String::new();
-        (&mut *reader)
-            .take(MAX_INPUT_SIZE)
-            .read_to_string(&mut contents)?;
+        let contents = crate::formats::common::read_string_capped(reader)?;
 
         let mut book = Book::new();
 
@@ -133,7 +129,7 @@ fn book_to_html(book: &Book) -> String {
                 body.push_str(";base64,");
                 base64_simd::STANDARD.encode_append(res.data, &mut body);
                 body.push_str("\" alt=\"");
-                body.push_str(&escape_html(res.id));
+                push_escape_html(&mut body, res.id);
                 body.push_str("\" />\n");
             }
         }

@@ -9,13 +9,14 @@
 //! attribute code tables from `maps.rs`.
 
 use ahash::AHashMap as HashMap;
+use std::borrow::Cow;
 use std::io::Write;
 use std::sync::Arc;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::formats::common::text_utils::{bytes_to_cow_str, escape_xml};
+use crate::formats::common::text_utils::{bytes_to_cow_str, push_escape_xml};
 
 use crate::domain::{Book, FormatWriter};
 use crate::error::{EruditioError, Result};
@@ -293,16 +294,17 @@ impl<'a> BinaryEncoder<'a> {
                     self.encode_end_tag(e, &mut output);
                 },
                 Ok(Event::Text(ref e)) => {
-                    let bytes = e.clone().into_inner();
+                    // Use as_ref() to borrow the bytes without cloning.
+                    let bytes = e.as_ref();
                     // Fast path: if all bytes are valid UTF-8, scan for NUL
                     // directly in the byte buffer instead of iterating chars.
-                    if memchr::memchr(0, &bytes).is_none() {
+                    if memchr::memchr(0, bytes).is_none() {
                         // No NUL bytes -- emit raw bytes directly.
                         // For valid UTF-8, bytes_to_cow_str avoids allocation.
-                        output.extend_from_slice(&bytes);
+                        output.extend_from_slice(bytes);
                     } else {
                         // Rare path: contains NUL bytes that need replacement.
-                        let text = bytes_to_cow_str(&bytes);
+                        let text = bytes_to_cow_str(bytes);
                         for c in text.chars() {
                             if c == '\0' {
                                 output.push(0x0B);
@@ -340,13 +342,13 @@ impl<'a> BinaryEncoder<'a> {
     ) -> Result<()> {
         let tag_name_raw = e.name();
         let tag_name = bytes_to_cow_str(tag_name_raw.as_ref());
-        let tag_name_lower = tag_name.to_ascii_lowercase();
+        let tag_name_lower = cow_ascii_lower(&tag_name);
 
         // Look up tag index
         let tag_index = self
             .tag_reverse
             .get(tag_name.as_ref())
-            .or_else(|| self.tag_reverse.get(tag_name_lower.as_str()));
+            .or_else(|| self.tag_reverse.get(&*tag_name_lower));
 
         // Flags: OPENING, and if empty (self-closing), also CLOSING
         let flags = if is_empty {
@@ -367,7 +369,7 @@ impl<'a> BinaryEncoder<'a> {
             // Encode attributes
             for attr in e.attributes().flatten() {
                 let attr_name = bytes_to_cow_str(attr.key.as_ref());
-                let attr_name_lower = attr_name.to_ascii_lowercase();
+                let attr_name_lower = cow_ascii_lower(&attr_name);
                 let attr_value = bytes_to_cow_str(&attr.value);
 
                 let attr_code = self.find_attr_code(idx, &attr_name, &attr_name_lower);
@@ -424,8 +426,8 @@ impl<'a> BinaryEncoder<'a> {
                 let attr_value = bytes_to_cow_str(&attr.value);
 
                 // Try global attr lookup first
-                let attr_name_lower = attr_name.to_ascii_lowercase();
-                if let Some(&code) = self.global_attr_reverse.get(attr_name_lower.as_str()) {
+                let attr_name_lower = cow_ascii_lower(&attr_name);
+                if let Some(&code) = self.global_attr_reverse.get(&*attr_name_lower) {
                     let (n, b) = encode_utf8_ordinal(u32::from(code));
                     output.extend_from_slice(&b[..n]);
                     self.encode_string_value(&attr_value, output);
@@ -695,12 +697,13 @@ fn build_free_drm(meta_binary: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     hasher.update(&meta_padded);
 
     // /DRMStorage/DRMSource, padded to 64-byte boundary
-    let mut source_padded = source_data.clone();
-    let postpad = 64 - (source_padded.len() % 64);
-    if postpad < 64 {
-        source_padded.resize(source_padded.len() + postpad, 0);
+    // Hash source data + zero-padding in two calls to avoid cloning.
+    hasher.update(&source_data);
+    let remainder = source_data.len() % 64;
+    if remainder != 0 {
+        let zeros = [0u8; 64];
+        hasher.update(&zeros[..64 - remainder]);
     }
-    hasher.update(&source_padded);
 
     let digest = hasher.finalize();
 
@@ -1075,32 +1078,32 @@ fn generate_opf(
 
     if let Some(ref title) = book.metadata.title {
         opf.push_str("      <dc:Title>");
-        opf.push_str(&escape_xml(title));
+        push_escape_xml(&mut opf, title);
         opf.push_str("</dc:Title>\n");
     }
     for author in &book.metadata.authors {
         opf.push_str("      <dc:Creator>");
-        opf.push_str(&escape_xml(author));
+        push_escape_xml(&mut opf, author);
         opf.push_str("</dc:Creator>\n");
     }
     if let Some(ref lang) = book.metadata.language {
         opf.push_str("      <dc:Language>");
-        opf.push_str(&escape_xml(lang));
+        push_escape_xml(&mut opf, lang);
         opf.push_str("</dc:Language>\n");
     }
     if let Some(ref publisher) = book.metadata.publisher {
         opf.push_str("      <dc:Publisher>");
-        opf.push_str(&escape_xml(publisher));
+        push_escape_xml(&mut opf, publisher);
         opf.push_str("</dc:Publisher>\n");
     }
     if let Some(ref desc) = book.metadata.description {
         opf.push_str("      <dc:Description>");
-        opf.push_str(&escape_xml(desc));
+        push_escape_xml(&mut opf, desc);
         opf.push_str("</dc:Description>\n");
     }
     if let Some(ref ident) = book.metadata.identifier {
         opf.push_str("      <dc:Identifier id=\"bookid\">");
-        opf.push_str(&escape_xml(ident));
+        push_escape_xml(&mut opf, ident);
         opf.push_str("</dc:Identifier>\n");
     } else {
         opf.push_str(
@@ -1109,12 +1112,12 @@ fn generate_opf(
     }
     for subject in &book.metadata.subjects {
         opf.push_str("      <dc:Subject>");
-        opf.push_str(&escape_xml(subject));
+        push_escape_xml(&mut opf, subject);
         opf.push_str("</dc:Subject>\n");
     }
     if let Some(ref rights) = book.metadata.rights {
         opf.push_str("      <dc:Rights>");
-        opf.push_str(&escape_xml(rights));
+        push_escape_xml(&mut opf, rights);
         opf.push_str("</dc:Rights>\n");
     }
     if let Some(ref date) = book.metadata.publication_date {
@@ -1130,11 +1133,11 @@ fn generate_opf(
     opf.push_str("  <manifest>\n");
     for (id, href, media_type) in manifest_entries {
         opf.push_str("    <item id=\"");
-        opf.push_str(&escape_xml(id));
+        push_escape_xml(&mut opf, id);
         opf.push_str("\" href=\"");
-        opf.push_str(&escape_xml(href));
+        push_escape_xml(&mut opf, href);
         opf.push_str("\" media-type=\"");
-        opf.push_str(&escape_xml(media_type));
+        push_escape_xml(&mut opf, media_type);
         opf.push_str("\" />\n");
     }
     opf.push_str("  </manifest>\n");
@@ -1143,7 +1146,7 @@ fn generate_opf(
     opf.push_str("  <spine>\n");
     for id in spine_ids {
         opf.push_str("    <itemref idref=\"");
-        opf.push_str(&escape_xml(id));
+        push_escape_xml(&mut opf, id);
         opf.push_str("\" />\n");
     }
     opf.push_str("  </spine>\n");
@@ -1345,22 +1348,32 @@ fn write_lit(book: &Book) -> Result<Vec<u8>> {
 }
 
 /// Ensure content is wrapped in an XHTML structure for the XML parser.
-fn ensure_xhtml(content: &str) -> String {
+/// Returns an ASCII-lowercased view, borrowing when the input is already lowercase.
+#[inline]
+fn cow_ascii_lower(s: &str) -> Cow<'_, str> {
+    if s.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Owned(s.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(s)
+    }
+}
+
+fn ensure_xhtml(content: &str) -> Cow<'_, str> {
     let trimmed = content.trim();
 
     // If it already has an <html> tag, assume it's complete XHTML
     if trimmed.starts_with("<?xml") || trimmed.starts_with("<html") || trimmed.starts_with("<HTML")
     {
-        return trimmed.to_string();
+        return Cow::Borrowed(trimmed);
     }
 
     // If it starts with a <body> or <head> tag, wrap in <html>
     if trimmed.starts_with("<body") || trimmed.starts_with("<head") {
-        return format!("<html>{trimmed}</html>");
+        return Cow::Owned(format!("<html>{trimmed}</html>"));
     }
 
     // Otherwise, wrap in a minimal XHTML structure
-    format!("<html><body>{trimmed}</body></html>")
+    Cow::Owned(format!("<html><body>{trimmed}</body></html>"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1445,10 +1458,16 @@ mod tests {
     }
 
     #[test]
-    fn escape_xml_special_chars() {
-        assert_eq!(escape_xml("a & b"), "a &amp; b");
-        assert_eq!(escape_xml("<tag>"), "&lt;tag&gt;");
-        assert_eq!(escape_xml("\"quoted\""), "&quot;quoted&quot;");
+    fn push_escape_xml_special_chars() {
+        let mut buf = String::new();
+        push_escape_xml(&mut buf, "a & b");
+        assert_eq!(buf, "a &amp; b");
+        buf.clear();
+        push_escape_xml(&mut buf, "<tag>");
+        assert_eq!(buf, "&lt;tag&gt;");
+        buf.clear();
+        push_escape_xml(&mut buf, "\"quoted\"");
+        assert_eq!(buf, "&quot;quoted&quot;");
     }
 
     #[test]

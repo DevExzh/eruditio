@@ -4,6 +4,7 @@
 //! calibre's `ebooks/lit/reader.py` (`UnBinary` class).
 
 use std::borrow::Cow;
+use std::fmt::Write as FmtWrite;
 use ahash::AHashMap as HashMap;
 
 use crate::error::{EruditioError, Result};
@@ -174,7 +175,7 @@ pub(crate) fn unbinary_to_html(
     atoms: &AtomTable,
 ) -> Result<String> {
     let dir = path.rsplit_once('/').map_or("", |(d, _)| d);
-    let mut buf = String::new();
+    let mut buf = String::with_capacity(bin.len() * 2);
     let mut cpos: usize = 0;
     let mut stack = vec![Frame::new_root()];
 
@@ -348,7 +349,7 @@ pub(crate) fn unbinary_to_html(
                     if frame.count == 0xFFFE {
                         // Numeric value mode
                         if !frame.in_censorship {
-                            buf.push_str(&(oc - 1).to_string());
+                            let _ = write!(buf, "{}", oc - 1);
                             buf.push('"');
                         }
                         frame.in_censorship = false;
@@ -447,8 +448,13 @@ pub(crate) fn unbinary_to_html(
         }
     }
 
-    let result = escape_reserved(&buf);
-    Ok(result.trim_start().to_string())
+    let mut result = escape_reserved(&buf).into_owned();
+    // Trim leading whitespace in-place to avoid allocating a new String.
+    let leading_ws = result.bytes().take_while(|b| b.is_ascii_whitespace()).count();
+    if leading_ws > 0 {
+        result.drain(..leading_ws);
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------

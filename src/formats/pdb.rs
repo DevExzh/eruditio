@@ -8,11 +8,12 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
+use std::fmt::Write as FmtWrite;
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{
     PdbFile, build_pdb_header, read_u16_be, read_u32_be, write_u16_be, write_u32_be,
 };
-use crate::formats::common::text_utils::{decode_cp1252, strip_tags_and_unescape};
+use crate::formats::common::text_utils::{decode_cp1252, push_escape_html, strip_tags_and_unescape};
 use flate2::Compression;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -330,7 +331,7 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Compresses data with zlib.
 fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder
         .write_all(data)
         .map_err(|e| EruditioError::Compression(format!("zlib compression failed: {}", e)))?;
@@ -569,10 +570,13 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
             let fn_text = decode_cp1252(&decompressed);
             let fn_html = crate::formats::pml::parser::pml_to_html(&fn_text);
             let fn_id = fn_ids.get(idx).cloned().unwrap_or_default();
-            footnote_html.push_str(&format!(
-                "<div class=\"footnote\" id=\"fn_{}\"><p><b>[{}]</b> {}</p></div>",
-                fn_id, fn_id, fn_html
-            ));
+            footnote_html.push_str("<div class=\"footnote\" id=\"fn_");
+            footnote_html.push_str(&fn_id);
+            footnote_html.push_str("\"><p><b>[");
+            footnote_html.push_str(&fn_id);
+            footnote_html.push_str("]</b> ");
+            footnote_html.push_str(&fn_html);
+            footnote_html.push_str("</p></div>");
         }
     }
 
@@ -596,10 +600,13 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
             let sb_text = decode_cp1252(&decompressed);
             let sb_html = crate::formats::pml::parser::pml_to_html(&sb_text);
             let sb_id = sb_ids.get(idx).cloned().unwrap_or_default();
-            sidebar_html.push_str(&format!(
-                "<div class=\"sidebar\" id=\"sb_{}\"><p><b>[{}]</b> {}</p></div>",
-                sb_id, sb_id, sb_html
-            ));
+            sidebar_html.push_str("<div class=\"sidebar\" id=\"sb_");
+            sidebar_html.push_str(&sb_id);
+            sidebar_html.push_str("\"><p><b>[");
+            sidebar_html.push_str(&sb_id);
+            sidebar_html.push_str("]</b> ");
+            sidebar_html.push_str(&sb_html);
+            sidebar_html.push_str("</p></div>");
         }
     }
 
@@ -648,10 +655,15 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
             }
 
             let media_type = detect_image_media_type(img_data);
-            let id = format!("ereader_img_{}", i);
+            let mut id = String::with_capacity(16 + 4);
+            id.push_str("ereader_img_");
+            let _ = write!(id, "{}", i);
+            let mut href = String::with_capacity(7 + name.len());
+            href.push_str("images/");
+            href.push_str(&name);
             book.add_resource(
-                &id,
-                format!("images/{}", name),
+                id,
+                href,
                 img_data.to_vec(),
                 media_type,
             );
@@ -922,7 +934,9 @@ fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
 
     while offset < data.len() {
         if !paragraph_open {
-            html.push_str(&format!("<p id=\"p{}\">", p_num));
+            html.push_str("<p id=\"p");
+            let _ = write!(html, "{}", p_num);
+            html.push_str("\">");
             p_num += 1;
             paragraph_open = true;
         }
@@ -938,7 +952,9 @@ fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
                     if offset + 2 < data.len() {
                         offset += 1;
                         let uid = read_u16_be(data, offset);
-                        html.push_str(&format!("<a href=\"{}.html\">", uid));
+                        html.push_str("<a href=\"");
+                        let _ = write!(html, "{}", uid);
+                        html.push_str(".html\">");
                         link_open = true;
                         offset += 1;
                     }
@@ -954,7 +970,11 @@ fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
                         let uid = read_u16_be(data, offset);
                         offset += 2;
                         let pid = read_u16_be(data, offset);
-                        html.push_str(&format!("<a href=\"{}.html#p{}\">", uid, pid));
+                        html.push_str("<a href=\"");
+                        let _ = write!(html, "{}", uid);
+                        html.push_str(".html#p");
+                        let _ = write!(html, "{}", pid);
+                        html.push_str("\">");
                         link_open = true;
                         offset += 1;
                     }
@@ -1031,7 +1051,9 @@ fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
                     if offset + 2 < data.len() {
                         offset += 1;
                         let uid = read_u16_be(data, offset);
-                        html.push_str(&format!("<img src=\"images/{}.jpg\" />", uid));
+                        html.push_str("<img src=\"images/");
+                        let _ = write!(html, "{}", uid);
+                        html.push_str(".jpg\" />");
                         offset += 1;
                     }
                 },
@@ -1072,7 +1094,9 @@ fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
                     if offset + 4 < data.len() {
                         offset += 3;
                         let uid = read_u16_be(data, offset);
-                        html.push_str(&format!("<img src=\"images/{}.jpg\" />", uid));
+                        html.push_str("<img src=\"images/");
+                        let _ = write!(html, "{}", uid);
+                        html.push_str(".jpg\" />");
                         offset += 1;
                     }
                 },
@@ -1162,9 +1186,12 @@ fn text_to_html(text: &str) -> String {
         let trimmed = paragraph.trim();
         if !trimmed.is_empty() {
             html.push_str("<p>");
-            html.push_str(
-                &crate::formats::common::text_utils::escape_html(trimmed).replace('\n', "<br />"),
-            );
+            for (i, part) in trimmed.split('\n').enumerate() {
+                if i > 0 {
+                    html.push_str("<br />");
+                }
+                push_escape_html(&mut html, part);
+            }
             html.push_str("</p>\n");
         }
     }
@@ -1303,7 +1330,7 @@ fn haodoo_text_to_html(text: &str) -> String {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             html.push_str("<p>");
-            html.push_str(&crate::formats::common::text_utils::escape_html(trimmed));
+            push_escape_html(&mut html, trimmed);
             html.push_str("</p>\n");
         }
     }

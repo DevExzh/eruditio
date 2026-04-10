@@ -409,33 +409,10 @@ fn parse_div_insert_positions(pdb: &PdbFile, fragment_index: usize) -> Option<Ve
 /// for each resulting part. Falls back to `<html` boundaries if no multiple
 /// `<?xml` declarations are found.
 fn split_bytes_at_xml_boundaries(data: &[u8]) -> Vec<(usize, usize)> {
-    let xml_needle = b"<?xml";
-    let mut positions = Vec::new();
-
-    let mut search_from = 0;
-    while search_from + xml_needle.len() <= data.len() {
-        if let Some(offset) = text_utils::find_case_insensitive(&data[search_from..], xml_needle) {
-            positions.push(search_from + offset);
-            search_from = search_from + offset + 1;
-        } else {
-            break;
-        }
-    }
+    let mut positions = text_utils::find_all_case_insensitive(data, b"<?xml");
 
     if positions.len() <= 1 {
-        let html_needle = b"<html";
-        let mut html_positions = Vec::new();
-        search_from = 0;
-        while search_from + html_needle.len() <= data.len() {
-            if let Some(offset) =
-                text_utils::find_case_insensitive(&data[search_from..], html_needle)
-            {
-                html_positions.push(search_from + offset);
-                search_from = search_from + offset + 1;
-            } else {
-                break;
-            }
-        }
+        let html_positions = text_utils::find_all_case_insensitive(data, b"<html");
         if html_positions.len() > 1 {
             positions = html_positions;
         }
@@ -1206,7 +1183,6 @@ fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
     let parts = split_on_xhtml_boundaries(html);
 
     if parts.len() <= 1 {
-        // No XHTML document boundaries found; fall back to pagebreak splitting.
         return split_mobi_content(html);
     }
 
@@ -1218,11 +1194,8 @@ fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
             continue;
         }
 
-        // Fix KF8 skeleton/fragment assembly: move content that is after
-        // </html> into the <body> element where it belongs.
         let fixed = reassemble_kf8_xhtml(trimmed);
 
-        // Try to extract a title from the first heading in the body.
         let title = extract_first_heading(&fixed)
             .or_else(|| extract_fallback_title(&fixed))
             .map(|t| sanitize_toc_label(&t).into_owned())
@@ -1262,10 +1235,9 @@ fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
 /// If there is no content after `</html>`, or if the structure doesn't match
 /// the expected KF8 skeleton pattern, the input is returned unchanged.
 fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
-    let bytes = part.as_bytes();
 
-    // Find the closing </html> tag (case-insensitive).
-    let html_close_pos = match text_utils::find_case_insensitive(bytes, b"</html") {
+    // Find the closing </html> tag.
+    let html_close_pos = match text_utils::find_case_insensitive(part.as_bytes(), b"</html") {
         Some(pos) => pos,
         None => return Cow::Borrowed(part),
     };
@@ -1286,8 +1258,8 @@ fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
     // We have content after </html> that needs to be moved inside <body>.
     let skeleton = &part[..html_tag_end];
 
-    // Find the </body> close tag in the skeleton (case-insensitive).
-    let body_close_pos = match text_utils::find_case_insensitive(skeleton.as_bytes(), b"</body") {
+    // Find the </body> close tag in the skeleton.
+    let body_close_pos = match text_utils::find_case_insensitive(&part.as_bytes()[..html_tag_end], b"</body") {
         Some(pos) => pos,
         None => {
             // No </body> tag: fall back to inserting before </html>.
@@ -1317,44 +1289,18 @@ fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
 /// Returns a vector of string slices, each being a complete XHTML document.
 /// If the content does not contain multiple `<?xml` declarations, falls back
 /// to looking for multiple `<html` tags as boundaries.
-fn split_on_xhtml_boundaries(html: &str) -> Vec<&str> {
-    let bytes = html.as_bytes();
-    let xml_needle = b"<?xml";
-
-    // Count <?xml occurrences to determine if we have concatenated documents.
-    let xml_positions = find_all_case_insensitive(bytes, xml_needle);
-
+fn split_on_xhtml_boundaries<'a>(html: &'a str) -> Vec<&'a str> {
+    let xml_positions = text_utils::find_all_case_insensitive(html.as_bytes(), b"<?xml");
     if xml_positions.len() > 1 {
-        // Split at each <?xml declaration.
         return split_at_positions(html, &xml_positions);
     }
 
-    // No multiple <?xml declarations; check for multiple <html tags.
-    let html_needle = b"<html";
-    let html_positions = find_all_case_insensitive(bytes, html_needle);
-
+    let html_positions = text_utils::find_all_case_insensitive(html.as_bytes(), b"<html");
     if html_positions.len() > 1 {
         return split_at_positions(html, &html_positions);
     }
 
-    // Single document -- return as-is.
     vec![html]
-}
-
-/// Finds all positions of a case-insensitive needle in a byte haystack.
-fn find_all_case_insensitive(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
-    let mut positions = Vec::new();
-    let mut search_from = 0;
-    while search_from + needle.len() <= haystack.len() {
-        if let Some(offset) = text_utils::find_case_insensitive(&haystack[search_from..], needle) {
-            let pos = search_from + offset;
-            positions.push(pos);
-            search_from = pos + 1;
-        } else {
-            break;
-        }
-    }
-    positions
 }
 
 /// Splits a string at the given byte positions. Each position becomes the start
@@ -1400,11 +1346,9 @@ fn split_at_positions<'a>(html: &'a str, positions: &[usize]) -> Vec<&'a str> {
 fn split_mobi_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
     let mut chapters = Vec::new();
 
-    // Split on <mbp:pagebreak /> or <mbp:pagebreak/>.
     let parts: Vec<&str> = split_on_pagebreaks(html);
 
     if parts.len() <= 1 {
-        // No page breaks — single chapter.
         chapters.push(SimpleChapter {
             title: None,
             content: Cow::Borrowed(html),
@@ -1419,7 +1363,6 @@ fn split_mobi_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
             continue;
         }
 
-        // Try to extract a title from the first heading.
         let title = extract_first_heading(trimmed)
             .or_else(|| extract_fallback_title(trimmed))
             .map(|t| sanitize_toc_label(&t).into_owned())
@@ -1451,25 +1394,27 @@ struct SimpleChapter<'a> {
 }
 
 /// Splits HTML on `<mbp:pagebreak` tags.
-fn split_on_pagebreaks(html: &str) -> Vec<&str> {
-    let bytes = html.as_bytes();
+fn split_on_pagebreaks<'a>(html: &'a str) -> Vec<&'a str> {
     let needle = b"<mbp:pagebreak";
-    let mut parts = Vec::new();
+    let positions = text_utils::find_all_case_insensitive(html.as_bytes(), needle);
+
+    if positions.is_empty() {
+        return vec![html];
+    }
+
+    let mut parts = Vec::with_capacity(positions.len() + 1);
     let mut last = 0;
 
-    let mut search_from = 0;
-    while let Some(offset) = text_utils::find_case_insensitive(&bytes[search_from..], needle) {
-        let idx = search_from + offset;
+    for idx in positions {
         if idx > last {
             parts.push(&html[last..idx]);
         }
-        // Find the end of this tag.
+        // Find the end of this tag in the original.
         if let Some(end) = html[idx..].find('>') {
             last = idx + end + 1;
         } else {
             last = idx + needle.len();
         }
-        search_from = last;
     }
 
     if last < html.len() {
@@ -1485,20 +1430,17 @@ fn split_on_pagebreaks(html: &str) -> Vec<&str> {
 
 /// Extracts the text content of the first `<h1>...<h3>` tag.
 fn extract_first_heading(html: &str) -> Option<String> {
-    let bytes = html.as_bytes();
-
     for (open_tag, close_needle) in [
         (b"<h1" as &[u8], b"</h1" as &[u8]),
         (b"<h2", b"</h2"),
         (b"<h3", b"</h3"),
     ] {
-        if let Some(start_idx) = text_utils::find_case_insensitive(bytes, open_tag) {
+        if let Some(start_idx) = text_utils::find_case_insensitive(html.as_bytes(), open_tag) {
             // Find end of opening tag.
             let content_start = html[start_idx..].find('>')? + start_idx + 1;
             // Find closing tag.
             let content_end =
-                text_utils::find_case_insensitive(&bytes[content_start..], close_needle)?
-                    + content_start;
+                text_utils::find_case_insensitive(&html.as_bytes()[content_start..], close_needle)? + content_start;
 
             let heading_html = &html[content_start..content_end];
             let text = strip_tags(heading_html).trim().to_string();
@@ -1520,10 +1462,8 @@ fn extract_first_heading(html: &str) -> Option<String> {
 ///
 /// Returns `None` if no meaningful text can be extracted.
 fn extract_fallback_title(html: &str) -> Option<String> {
-    let bytes = html.as_bytes();
-
     // Strategy 1: Try the <title> tag.
-    if let Some(title) = extract_title_tag(bytes, html) {
+    if let Some(title) = extract_title_tag(html) {
         let cleaned = sanitize_toc_label(&title);
         // Skip generic/site-level titles.
         if !cleaned.is_empty()
@@ -1536,7 +1476,7 @@ fn extract_fallback_title(html: &str) -> Option<String> {
     }
 
     // Strategy 2: Try alt text from the first <img> in the body.
-    if let Some(alt) = extract_first_img_alt(bytes, html) {
+    if let Some(alt) = extract_first_img_alt(html) {
         let cleaned = sanitize_toc_label(&alt);
         if !cleaned.is_empty() {
             return Some(truncate_title(&cleaned, 80));
@@ -1555,26 +1495,27 @@ fn extract_fallback_title(html: &str) -> Option<String> {
 }
 
 /// Extracts the content of the `<title>` tag from an HTML document.
-fn extract_title_tag(bytes: &[u8], html: &str) -> Option<String> {
-    let start = text_utils::find_case_insensitive(bytes, b"<title")?;
+fn extract_title_tag(html: &str) -> Option<String> {
+    let start = text_utils::find_case_insensitive(html.as_bytes(), b"<title")?;
     let content_start = html[start..].find('>')? + start + 1;
     let content_end =
-        text_utils::find_case_insensitive(&bytes[content_start..], b"</title")? + content_start;
+        text_utils::find_case_insensitive(&html.as_bytes()[content_start..], b"</title")? + content_start;
     let raw = &html[content_start..content_end];
     let text = strip_tags(raw).trim().to_string();
     if text.is_empty() { None } else { Some(text) }
 }
 
 /// Extracts the `alt` attribute from the first `<img>` tag in the body.
-fn extract_first_img_alt(bytes: &[u8], html: &str) -> Option<String> {
+fn extract_first_img_alt(html: &str) -> Option<String> {
+    let bytes = html.as_bytes();
+
     // Only look inside <body>.
     let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
-    let body_bytes = &bytes[body_start..];
     let body_html = &html[body_start..];
 
-    let img_pos = text_utils::find_case_insensitive(body_bytes, b"<img ")?;
+    let img_pos = text_utils::find_case_insensitive(body_html.as_bytes(), b"<img ")?;
     let img_end = body_html[img_pos..].find('>')?;
-    let img_tag = &body_bytes[img_pos..img_pos + img_end + 1];
+    let img_tag = &bytes[body_start + img_pos..body_start + img_pos + img_end + 1];
 
     extract_attr_value(img_tag, b"alt")
         .filter(|s| !s.trim().is_empty())
@@ -1583,14 +1524,11 @@ fn extract_first_img_alt(bytes: &[u8], html: &str) -> Option<String> {
 
 /// Extracts the first few words of visible text from the body content.
 fn extract_body_text_snippet(html: &str) -> Option<String> {
-    let bytes = html.as_bytes();
-
     // Find <body>.
-    let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
+    let body_start = text_utils::find_case_insensitive(html.as_bytes(), b"<body")?;
     let body_tag_end = html[body_start..].find('>')? + body_start + 1;
 
-    // Find </body>.
-    let body_close = text_utils::find_case_insensitive(&bytes[body_tag_end..], b"</body")
+    let body_close = text_utils::find_case_insensitive(&html.as_bytes()[body_tag_end..], b"</body")
         .map(|pos| body_tag_end + pos)
         .unwrap_or(html.len());
 
@@ -2357,7 +2295,7 @@ mod tests {
     #[test]
     fn find_all_case_insensitive_basic() {
         let haystack = b"<?xml one><?xml two><?XML three>";
-        let positions = find_all_case_insensitive(haystack, b"<?xml");
+        let positions = text_utils::find_all_case_insensitive(haystack, b"<?xml");
         assert_eq!(positions.len(), 3);
         assert_eq!(positions[0], 0);
         assert_eq!(positions[1], 10);

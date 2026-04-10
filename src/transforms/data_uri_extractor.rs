@@ -21,22 +21,32 @@ impl Transform for DataUriExtractor {
         let mut result = book;
         let mut image_counter = 0u32;
 
-        // Collect spine item IDs first to avoid borrow issues.
-        let spine_ids: Vec<String> = result.spine.iter().map(|s| s.manifest_id.clone()).collect();
+        // Disjoint borrows: spine (immutable) and manifest (mutable) are separate fields.
+        for spine_item in result.spine.iter() {
+            if let Some(item) = result.manifest.get_mut(&spine_item.manifest_id) {
+                // Fast pre-check with a borrowed reference — skip chapters
+                // without data URIs before taking ownership.
+                let has_data_uri = item
+                    .data
+                    .as_text()
+                    .is_some_and(|t| memchr::memmem::find(t.as_bytes(), b"data:").is_some());
 
-        for manifest_id in &spine_ids {
-            if let Some(item) = result.manifest.get_mut(manifest_id)
-                && let Some(text) = item.data.as_text()
-            {
-                // Fast pre-check: skip the expensive clone + scan if no
-                // data URI is present in this chapter.
-                if memchr::memmem::find(text.as_bytes(), b"data:").is_none() {
+                if !has_data_uri {
                     continue;
                 }
-                let text = text.to_string(); // Clone to release borrow
+
+                // Take ownership of the text without cloning.
+                let text = match item.data.take_text() {
+                    Some(t) => t,
+                    None => continue,
+                };
+
                 let (new_content, extracted) = extract_data_uris(&text, &mut image_counter);
 
-                if !extracted.is_empty() {
+                if extracted.is_empty() {
+                    // No extraction happened — restore the original text.
+                    item.data = ManifestData::Text(text);
+                } else {
                     // Update the chapter content.
                     item.data = ManifestData::Text(new_content);
 

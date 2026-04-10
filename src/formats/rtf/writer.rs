@@ -266,7 +266,7 @@ fn parse_png_dimensions(data: &[u8]) -> Option<(u16, u16)> {
 ///
 /// Only recognises simple selectors of the form `p.classname`, `.classname`,
 /// or `element.classname` blocks that contain `text-align: left|center|right`.
-fn build_class_alignment_map(book: &Book) -> HashMap<String, String> {
+fn build_class_alignment_map(book: &Book) -> HashMap<String, &'static str> {
     let mut map = HashMap::new();
 
     for resource in book.resources() {
@@ -286,7 +286,7 @@ fn build_class_alignment_map(book: &Book) -> HashMap<String, String> {
 ///
 /// Handles selectors like `p.right`, `.center`, `div.myclass` where the
 /// declaration block contains `text-align: left|center|right`.
-fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
+fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, &'static str>) {
     let len = css.len();
     let mut pos = 0;
 
@@ -348,7 +348,7 @@ fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, String>) {
                             .map(|c| c.to_ascii_lowercase())
                             .collect();
                         if !class_name.is_empty() {
-                            map.insert(class_name, align.to_string());
+                            map.insert(class_name, align);
                         }
                     }
                 }
@@ -391,7 +391,7 @@ fn html_to_rtf(
     html: &str,
     rtf: &mut String,
     after_break: bool,
-    align_map: &HashMap<String, String>,
+    align_map: &HashMap<String, &'static str>,
 ) {
     let mut pos = 0;
     let bytes = html.as_bytes();
@@ -570,7 +570,7 @@ fn decode_html_entity(html: &str, pos: usize) -> (char, usize) {
 /// Given the full tag string (e.g., `<p style="text-align: right">` or
 /// `<p class="right">`), returns the RTF alignment command (`\qr`, `\qc`,
 /// or `\ql`).
-fn alignment_from_tag(tag_str: &str, align_map: &HashMap<String, String>) -> &'static str {
+fn alignment_from_tag(tag_str: &str, align_map: &HashMap<String, &'static str>) -> &'static str {
     // Stack-based lowercasing avoids heap allocation for most tags.
     let tag_bytes = tag_str.as_bytes();
     let mut lower_buf = [0u8; 512];
@@ -624,8 +624,8 @@ fn alignment_from_tag(tag_str: &str, align_map: &HashMap<String, String>) -> &'s
                     let class_value = &inner[..end];
                     // A class attribute can contain multiple space-separated classes.
                     for class_name in class_value.split_whitespace() {
-                        if let Some(align) = align_map.get(class_name) {
-                            match align.as_str() {
+                        if let Some(&align) = align_map.get(class_name) {
+                            match align {
                                 "right" => return "\\qr",
                                 "center" => return "\\qc",
                                 _ => {},
@@ -1293,7 +1293,7 @@ mod tests {
     fn class_based_right_align_emits_qr() {
         let mut rtf = String::new();
         let mut align_map = HashMap::new();
-        align_map.insert("right".to_string(), "right".to_string());
+        align_map.insert("right".to_string(), "right");
         html_to_rtf(
             "<p class=\"right\">Right aligned</p>",
             &mut rtf,
@@ -1310,7 +1310,7 @@ mod tests {
     fn class_based_center_align_emits_qc() {
         let mut rtf = String::new();
         let mut align_map = HashMap::new();
-        align_map.insert("center".to_string(), "center".to_string());
+        align_map.insert("center".to_string(), "center");
         html_to_rtf(
             "<p class=\"center\">Centered</p>",
             &mut rtf,
@@ -1327,14 +1327,14 @@ mod tests {
     fn parse_css_alignment_rules_extracts_class() {
         let mut map = HashMap::new();
         parse_css_alignment_rules("p.right { text-align: right; }", &mut map);
-        assert_eq!(map.get("right"), Some(&"right".to_string()));
+        assert_eq!(map.get("right"), Some(&"right"));
     }
 
     #[test]
     fn parse_css_alignment_rules_dot_only_selector() {
         let mut map = HashMap::new();
         parse_css_alignment_rules(".centered { text-align: center; }", &mut map);
-        assert_eq!(map.get("centered"), Some(&"center".to_string()));
+        assert_eq!(map.get("centered"), Some(&"center"));
     }
 
     #[test]
@@ -1344,8 +1344,8 @@ mod tests {
             "p.right { text-align: right; }\n.center { text-align: center; }",
             &mut map,
         );
-        assert_eq!(map.get("right"), Some(&"right".to_string()));
-        assert_eq!(map.get("center"), Some(&"center".to_string()));
+        assert_eq!(map.get("right"), Some(&"right"));
+        assert_eq!(map.get("center"), Some(&"center"));
     }
 
     #[test]
@@ -1388,7 +1388,7 @@ mod tests {
     fn leading_newline_in_paragraph_is_trimmed() {
         let mut rtf = String::new();
         let mut align_map = HashMap::new();
-        align_map.insert("right".to_string(), "right".to_string());
+        align_map.insert("right".to_string(), "right");
         // Simulate HTML with a newline between <p> tag and text content,
         // as commonly found in real-world EPUBs.
         html_to_rtf(

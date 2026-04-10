@@ -66,16 +66,16 @@ impl FormatReader for CbcReader {
                 );
             }
 
-            for (i, chapter) in inner_book.chapters().iter().enumerate() {
+            for (i, chapter) in inner_book.chapter_views().iter().enumerate() {
                 let chapter_id = format!("{}_{:04}", filename, i);
                 let chapter_title = if i == 0 {
                     Some(title.clone())
                 } else {
-                    chapter.title.clone()
+                    chapter.title.map(String::from)
                 };
 
                 // Rewrite img src references to use prefixed resource IDs
-                let content = rewrite_img_refs(&chapter.content, filename);
+                let content = rewrite_img_refs(chapter.content, filename);
 
                 book.add_chapter(Chapter {
                     title: chapter_title,

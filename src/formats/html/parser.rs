@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use crate::domain::metadata::Metadata;
 use crate::formats::common::text_utils;
-use crate::formats::common::text_utils::escape_xml as escape_html;
+use crate::formats::common::text_utils::push_escape_xml;
 
 /// Extracts metadata from HTML `<head>` section.
 ///
@@ -43,51 +43,66 @@ pub(crate) fn extract_body(html: &str) -> &str {
 ///
 /// Splits on `<h1>` and `<h2>` tags. Each chunk becomes a chapter.
 /// If no headings are found, returns the entire content as one chapter.
+///
+/// Uses memchr to find `<` positions and checks for heading tags inline,
+/// avoiding the allocation + memcpy of a full-body lowercased copy.
 pub(crate) fn split_into_chapters<'a>(body: &'a str) -> Vec<(Option<Cow<'a, str>>, &'a str)> {
     let mut chapters = Vec::new();
 
     // Find all h1/h2 positions.
     let mut split_points: Vec<(usize, Cow<'a, str>)> = Vec::new();
 
-    // Pre-computed tag strings — avoids `format!()` allocation in the loop.
-    const HEADING_TAGS: [(&[u8], &[u8]); 2] = [(b"<h1", b"</h1>"), (b"<h2", b"</h2>")];
+    let bytes = body.as_bytes();
+    let len = bytes.len();
 
-    for &(open_tag, close_tag) in &HEADING_TAGS {
-        let mut search_from = 0;
-        while let Some(pos) =
-            text_utils::find_case_insensitive(&body.as_bytes()[search_from..], open_tag)
+    // Single pass: scan for `<` using memchr, then check for heading tags
+    // with inline byte comparisons. This avoids allocating a full-body
+    // lowercased copy (saves len bytes of heap + memcpy + lowercase pass).
+    let mut search_from = 0;
+    while let Some(lt_offset) = memchr::memchr(b'<', &bytes[search_from..]) {
+        let abs_pos = search_from + lt_offset;
+
+        // Need at least 3 more bytes for "hN>"
+        if abs_pos + 3 >= len {
+            break;
+        }
+
+        let b1 = bytes[abs_pos + 1];
+        if (b1 == b'h' || b1 == b'H')
+            && (bytes[abs_pos + 2] == b'1' || bytes[abs_pos + 2] == b'2')
         {
-            let abs_pos = search_from + pos;
+            let b3 = bytes[abs_pos + 3];
+            // Verify this is a real tag (followed by '>', whitespace, or '/')
+            if b3 == b'>' || b3 == b' ' || b3 == b'\t' || b3 == b'\n' || b3 == b'\r' || b3 == b'/' {
+                let heading_level = bytes[abs_pos + 2];
 
-            // Extract the heading text.
-            let after_open = &body[abs_pos..];
-            if let Some(gt) = after_open.find('>') {
-                let content_start = abs_pos + gt + 1;
-                if let Some(close_pos) =
-                    text_utils::find_case_insensitive(&body.as_bytes()[content_start..], close_tag)
-                {
-                    let heading_cow =
-                        text_utils::strip_tags(&body[content_start..content_start + close_pos]);
-                    let trimmed = heading_cow.trim();
-                    if !trimmed.is_empty() {
-                        // Re-borrow or own depending on whether strip_tags modified the input.
-                        let title: Cow<'a, str> = match heading_cow {
-                            Cow::Borrowed(s) => {
-                                // strip_tags returned a borrow into body; trim is also a sub-slice.
-                                Cow::Borrowed(s.trim())
-                            }
-                            Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
-                        };
-                        split_points.push((abs_pos, title));
+                // Find closing '>' of the opening tag.
+                if let Some(gt_offset) = memchr::memchr(b'>', &bytes[abs_pos..]) {
+                    let content_start = abs_pos + gt_offset + 1;
+
+                    // Find matching closing tag </hN> using memchr.
+                    if let Some(close_pos) = find_closing_heading(bytes, content_start, heading_level) {
+                        let heading_cow =
+                            text_utils::strip_tags(&body[content_start..close_pos]);
+                        let trimmed = heading_cow.trim();
+                        if !trimmed.is_empty() {
+                            let title: Cow<'a, str> = match heading_cow {
+                                Cow::Borrowed(s) => {
+                                    Cow::Borrowed(s.trim())
+                                }
+                                Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
+                            };
+                            split_points.push((abs_pos, title));
+                        }
                     }
                 }
             }
-
-            search_from = abs_pos + open_tag.len();
         }
+
+        search_from = abs_pos + 1;
     }
 
-    // Sort by position.
+    // Sort by position (needed because h1 and h2 are found interleaved).
     split_points.sort_by_key(|(pos, _)| *pos);
 
     if split_points.is_empty() {
@@ -119,6 +134,31 @@ pub(crate) fn split_into_chapters<'a>(body: &'a str) -> Vec<(Option<Cow<'a, str>
     chapters
 }
 
+/// Finds the byte offset of a closing `</hN>` tag (case-insensitive) starting
+/// from `from`, where `level` is `b'1'` or `b'2'`.
+///
+/// Returns the offset into `bytes` where the closing tag starts (i.e., the
+/// position of `<` in `</hN>`), or `None` if not found.
+fn find_closing_heading(bytes: &[u8], from: usize, level: u8) -> Option<usize> {
+    let mut search_from = from;
+    while let Some(lt_offset) = memchr::memchr(b'<', &bytes[search_from..]) {
+        let pos = search_from + lt_offset;
+        // Need at least 5 bytes: </hN>
+        if pos + 5 > bytes.len() {
+            break;
+        }
+        if bytes[pos + 1] == b'/'
+            && (bytes[pos + 2] == b'h' || bytes[pos + 2] == b'H')
+            && bytes[pos + 3] == level
+            && (bytes[pos + 4] == b'>' || bytes[pos + 4] == b' ' || bytes[pos + 4] == b'\t')
+        {
+            return Some(pos);
+        }
+        search_from = pos + 1;
+    }
+    None
+}
+
 /// Generates a complete HTML5 document from title and body content.
 pub(crate) fn build_html_document(title: &str, meta: &Metadata, body: &str) -> String {
     let mut html = String::with_capacity(body.len() + 512);
@@ -126,22 +166,22 @@ pub(crate) fn build_html_document(title: &str, meta: &Metadata, body: &str) -> S
     html.push_str("<!DOCTYPE html>\n<html>\n<head>\n");
     html.push_str("<meta charset=\"UTF-8\">\n");
     html.push_str("<title>");
-    html.push_str(&escape_html(title));
+    push_escape_xml(&mut html, title);
     html.push_str("</title>\n");
 
     for author in &meta.authors {
         html.push_str("<meta name=\"author\" content=\"");
-        html.push_str(&escape_html(author));
+        push_escape_xml(&mut html, author);
         html.push_str("\">\n");
     }
     if let Some(ref desc) = meta.description {
         html.push_str("<meta name=\"description\" content=\"");
-        html.push_str(&escape_html(desc));
+        push_escape_xml(&mut html, desc);
         html.push_str("\">\n");
     }
     if let Some(ref lang) = meta.language {
         html.push_str("<meta name=\"language\" content=\"");
-        html.push_str(&escape_html(lang));
+        push_escape_xml(&mut html, lang);
         html.push_str("\">\n");
     }
 
@@ -198,12 +238,34 @@ fn extract_between<'a>(html: &'a str, open_prefix: &str, close_tag: &str) -> Opt
 }
 
 /// Extracts metadata from `<meta>` tags within head content.
+///
+/// Uses memchr to find `<` positions and checks for `meta` inline,
+/// avoiding an `ascii_lowercase_copy` allocation of the entire head.
 fn extract_meta_tags(head: &str, meta: &mut Metadata) {
     let bytes = head.as_bytes();
+    let len = bytes.len();
     let mut search_from = 0;
 
-    while let Some(pos) = text_utils::find_case_insensitive(&bytes[search_from..], b"<meta") {
-        let abs_pos = search_from + pos;
+    while let Some(lt_offset) = memchr::memchr(b'<', &bytes[search_from..]) {
+        let abs_pos = search_from + lt_offset;
+
+        // Need at least 5 bytes: <meta
+        if abs_pos + 5 > len {
+            break;
+        }
+
+        // Check for <meta case-insensitively.
+        let is_meta = (bytes[abs_pos + 1] | 0x20) == b'm'
+            && (bytes[abs_pos + 2] | 0x20) == b'e'
+            && (bytes[abs_pos + 3] | 0x20) == b't'
+            && (bytes[abs_pos + 4] | 0x20) == b'a'
+            && (abs_pos + 5 >= len || matches!(bytes[abs_pos + 5], b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/'));
+
+        if !is_meta {
+            search_from = abs_pos + 1;
+            continue;
+        }
+
         let tag_end = match head[abs_pos..].find('>') {
             Some(e) => abs_pos + e,
             None => break,

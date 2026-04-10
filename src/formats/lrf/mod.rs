@@ -99,9 +99,9 @@ impl FormatReader for LrfReader {
             }
         }
 
-        // Add extracted images as book resources.
-        for img in &all_images {
-            book.add_resource(&img.id, &img.href, img.data.clone(), img.media_type);
+        // Add extracted images as book resources (consume to move data, avoiding clone).
+        for img in all_images {
+            book.add_resource(&img.id, &img.href, img.data, img.media_type);
         }
 
         Ok(book)
@@ -208,7 +208,9 @@ fn extract_page_html(
                         },
                         ObjType::Image => {
                             if let Some(img_ref) = extract_image(linked_obj, objects) {
-                                html.push_str(&format!("<img src=\"{}\" />", img_ref.href));
+                                html.push_str("<img src=\"");
+                                html.push_str(&img_ref.href);
+                                html.push_str("\" />");
                                 images.push(img_ref);
                             }
                         },

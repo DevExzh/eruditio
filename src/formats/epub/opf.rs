@@ -133,7 +133,7 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
             Ok(Event::Text(ref e)) => {
                 if section == Section::Metadata && !current_dc_tag.is_empty() {
                     current_text.clear();
-                    current_text.push_str(&xml_utils::bytes_to_string(e.as_ref()));
+                    xml_utils::push_text_bytes(&mut current_text, e.as_ref());
                 }
             },
             Ok(Event::End(ref e)) => {
@@ -142,13 +142,6 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                 match tag {
                     "metadata" | "manifest" | "spine" | "guide" => section = Section::None,
                     _ if section == Section::Metadata && !current_dc_tag.is_empty() => {
-                        // Store every dc:date element for roundtrip preservation,
-                        // regardless of the event attribute.
-                        if current_dc_tag == "date" && !current_text.is_empty() {
-                            data.metadata
-                                .additional_dates
-                                .push((current_date_event.clone(), current_text.clone()));
-                        }
                         // Skip dc:date elements with opf:event="conversion";
                         // don't overwrite an already-set publication_date unless
                         // the new date explicitly has event="publication".
@@ -166,12 +159,20 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                         if !skip {
                             apply_dc_metadata(&current_dc_tag, &current_text, &mut data.metadata);
                         }
-                        // Capture opf:file-as from the first creator
+                        // Store every dc:date element for roundtrip preservation,
+                        // regardless of the event attribute.
+                        // Use take() instead of clone() — values are cleared below.
+                        if current_dc_tag == "date" && !current_text.is_empty() {
+                            data.metadata.additional_dates.push((
+                                current_date_event.take(),
+                                std::mem::take(&mut current_text),
+                            ));
+                        }
+                        // Capture opf:file-as from the first creator (take avoids clone).
                         if current_dc_tag == "creator"
                             && data.metadata.author_sort.is_none()
-                            && let Some(ref fa) = current_file_as
                         {
-                            data.metadata.author_sort = Some(fa.clone());
+                            data.metadata.author_sort = current_file_as.take();
                         }
                         // Capture opf:scheme from the primary identifier.
                         // Unconditionally assign so scheme stays in sync with
@@ -224,18 +225,15 @@ enum Section {
 
 /// Reads attributes from a `<spine>` element.
 fn parse_spine_attrs(e: &quick_xml::events::BytesStart<'_>, data: &mut OpfData) {
-    for attr in e.attributes().flatten() {
-        match attr.key.as_ref() {
-            b"toc" => data.ncx_id = Some(xml_utils::bytes_to_string(&attr.value)),
-            b"page-progression-direction" => {
-                data.spine.page_progression_direction = match attr.value.as_ref() {
-                    b"rtl" => Some(PageProgression::Rtl),
-                    b"ltr" => Some(PageProgression::Ltr),
-                    _ => None,
-                };
-            },
-            _ => {},
-        }
+    if let Some(attr) = e.try_get_attribute(b"toc").ok().flatten() {
+        data.ncx_id = Some(xml_utils::bytes_to_string(&attr.value));
+    }
+    if let Some(attr) = e.try_get_attribute(b"page-progression-direction").ok().flatten() {
+        data.spine.page_progression_direction = match attr.value.as_ref() {
+            b"rtl" => Some(PageProgression::Rtl),
+            b"ltr" => Some(PageProgression::Ltr),
+            _ => None,
+        };
     }
 }
 
@@ -276,25 +274,26 @@ fn parse_manifest_item(e: &quick_xml::events::BytesStart<'_>, manifest: &mut Man
 
 /// Parses a `<spine><itemref .../>` element into a `SpineItem`.
 fn parse_spine_itemref(e: &quick_xml::events::BytesStart<'_>, spine: &mut Spine) {
-    let mut idref = String::new();
-    let mut linear = true;
-
-    for attr in e.attributes().flatten() {
-        match attr.key.as_ref() {
-            b"idref" => idref = xml_utils::bytes_to_string(&attr.value),
-            b"linear" => linear = attr.value.as_ref() != b"no",
-            _ => {},
-        }
+    let idref = match e.try_get_attribute(b"idref").ok().flatten() {
+        Some(attr) => xml_utils::bytes_to_string(&attr.value),
+        None => return,
+    };
+    if idref.is_empty() {
+        return;
     }
 
-    if !idref.is_empty() {
-        let item = if linear {
-            SpineItem::new(idref)
-        } else {
-            SpineItem::non_linear(idref)
-        };
-        spine.push(item);
-    }
+    let linear = e
+        .try_get_attribute(b"linear")
+        .ok()
+        .flatten()
+        .map_or(true, |attr| attr.value.as_ref() != b"no");
+
+    let item = if linear {
+        SpineItem::new(idref)
+    } else {
+        SpineItem::non_linear(idref)
+    };
+    spine.push(item);
 }
 
 /// Parses a `<guide><reference .../>` element into a `GuideReference`.
@@ -325,37 +324,49 @@ fn parse_guide_ref(e: &quick_xml::events::BytesStart<'_>, guide: &mut Guide) {
 }
 
 /// Processes an EPUB2 `<meta name="..." content="..."/>` element.
+///
+/// The `name` attribute is compared at the byte level to avoid allocating
+/// a short-lived `String` for every `<meta>` tag.  Only `content` is
+/// converted to an owned `String` (because it must be stored).
 fn parse_meta_element(
     e: &quick_xml::events::BytesStart<'_>,
     metadata: &mut Metadata,
     cover_meta_id: &mut Option<String>,
 ) {
-    let mut name = String::new();
-    let mut content = String::new();
+    // Extract raw attribute byte slices to avoid allocating the `name` String.
+    let mut name_bytes: Option<Vec<u8>> = None;
+    let mut content: Option<String> = None;
 
     for attr in e.attributes().flatten() {
         match attr.key.as_ref() {
-            b"name" => name = xml_utils::bytes_to_string(&attr.value),
-            b"content" => content = xml_utils::bytes_to_string(&attr.value),
+            b"name" => name_bytes = Some(attr.value.to_vec()),
+            b"content" => content = Some(xml_utils::bytes_to_string(&attr.value)),
             _ => {},
         }
     }
 
-    if name.is_empty() || content.is_empty() {
-        return;
-    }
+    let name_bytes = match name_bytes {
+        Some(ref b) if !b.is_empty() => b.as_slice(),
+        _ => return,
+    };
+    let content = match content {
+        Some(c) if !c.is_empty() => c,
+        _ => return,
+    };
 
-    match name.as_str() {
-        "cover" => *cover_meta_id = Some(content),
-        "calibre:series" => metadata.series = Some(content),
-        "calibre:series_index" => {
+    match name_bytes {
+        b"cover" => *cover_meta_id = Some(content),
+        b"calibre:series" => metadata.series = Some(content),
+        b"calibre:series_index" => {
             metadata.series_index = content.parse::<f64>().ok();
         },
-        "calibre:title_sort" => metadata.title_sort = Some(content),
-        "calibre:author_link_map" | "calibre:timestamp" => {
+        b"calibre:title_sort" => metadata.title_sort = Some(content),
+        b"calibre:author_link_map" | b"calibre:timestamp" => {
+            let name = xml_utils::bytes_to_string(name_bytes);
             metadata.extended.insert(name, content);
         },
         _ => {
+            let name = xml_utils::bytes_to_string(name_bytes);
             metadata.extended.insert(name, content);
         },
     }

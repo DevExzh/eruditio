@@ -201,7 +201,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
             },
             Ok(Event::Text(ref e)) => {
                 let text =
-                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
+                    crate::formats::common::text_utils::bytes_to_string(e);
                 if text.trim().is_empty() {
                     continue;
                 }

@@ -24,13 +24,10 @@ pub(crate) fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Resu
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) => {
                 if e.name().as_ref() == b"rootfile" {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"full-path" {
-                            opf_path = Some(crate::formats::common::text_utils::bytes_to_string(
-                                &attr.value,
-                            ));
-                            break;
-                        }
+                    if let Some(attr) = e.try_get_attribute(b"full-path").ok().flatten() {
+                        opf_path = Some(crate::formats::common::text_utils::bytes_to_string(
+                            &attr.value,
+                        ));
                     }
                 }
             },

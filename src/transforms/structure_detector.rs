@@ -96,10 +96,11 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
         };
 
         let inner = &html[content_start..content_end];
-        let text = strip_tags(inner).trim().to_string();
+        let stripped = crate::formats::common::text_utils::strip_tags(inner);
+        let text = stripped.trim();
 
         if !text.is_empty() {
-            headings.push((text, level));
+            headings.push((text.to_string(), level));
         }
 
         search_from = content_end + close_lower.len();
@@ -115,11 +116,6 @@ fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
         haystack.as_bytes(),
         needle.as_bytes(),
     )
-}
-
-/// Strips HTML tags from a string, returning only text content.
-fn strip_tags(html: &str) -> String {
-    crate::formats::common::text_utils::strip_tags(html).into_owned()
 }
 
 #[cfg(test)]

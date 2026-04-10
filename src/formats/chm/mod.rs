@@ -237,11 +237,11 @@ impl ChmContainer {
     }
 
     /// Iterate over all user content file paths (excluding internal `::` paths).
-    fn content_files(&self) -> Vec<String> {
+    fn content_files(&self) -> Vec<&str> {
         self.entries
             .keys()
             .filter(|k| !k.starts_with("::") && !k.starts_with("/#"))
-            .cloned()
+            .map(|s| s.as_str())
             .collect()
     }
 }
@@ -320,13 +320,12 @@ struct HhcEntry {
 /// ```
 fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
     let text = crate::formats::common::text_utils::bytes_to_cow_str(data);
-    let bytes = text.as_bytes();
+    let lowered = text_utils::ascii_lowercase_copy(text.as_bytes());
     let mut entries = Vec::new();
 
     // Find each <object type="text/sitemap"> ... </object> block
     let mut search_pos = 0;
-    while let Some(obj_offset) = text_utils::find_case_insensitive(&bytes[search_pos..], b"<object")
-    {
+    while let Some(obj_offset) = memchr::memmem::find(&lowered[search_pos..], b"<object") {
         let abs_start = search_pos + obj_offset;
         let tag_end = match text[abs_start..].find('>') {
             Some(p) => abs_start + p,
@@ -343,21 +342,20 @@ fn parse_hhc(data: &[u8]) -> Vec<HhcEntry> {
             continue;
         }
 
-        let obj_end = match text_utils::find_case_insensitive(&bytes[tag_end..], b"</object") {
+        let obj_end = match memchr::memmem::find(&lowered[tag_end..], b"</object") {
             Some(p) => tag_end + p,
             None => break,
         };
 
         let block = &text[tag_end + 1..obj_end];
-        let block_bytes = block.as_bytes();
+        let block_lowered = &lowered[tag_end + 1..obj_end];
 
         let mut name = String::new();
         let mut local = String::new();
 
         // Extract <param> values
         let mut param_pos = 0;
-        while let Some(p) = text_utils::find_case_insensitive(&block_bytes[param_pos..], b"<param")
-        {
+        while let Some(p) = memchr::memmem::find(&block_lowered[param_pos..], b"<param") {
             let param_start = param_pos + p;
             let param_end = match block[param_start..].find('>') {
                 Some(pe) => param_start + pe,
@@ -405,16 +403,16 @@ fn extract_attr(tag_lower: &str, tag_orig: &str, attr_name: &str) -> Option<Stri
 
 /// Strip `<script>` tags and their content from HTML.
 fn strip_scripts(html: &str) -> String {
-    let bytes = html.as_bytes();
+    let lowered = text_utils::ascii_lowercase_copy(html.as_bytes());
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
 
-    while let Some(start) = text_utils::find_case_insensitive(&bytes[pos..], b"<script") {
+    while let Some(start) = memchr::memmem::find(&lowered[pos..], b"<script") {
         let abs_start = pos + start;
         result.push_str(&html[pos..abs_start]);
 
         // Find closing </script>
-        if let Some(end) = text_utils::find_case_insensitive(&bytes[abs_start..], b"</script>") {
+        if let Some(end) = memchr::memmem::find(&lowered[abs_start..], b"</script>") {
             pos = abs_start + end + "</script>".len();
         } else {
             // No closing tag — skip to end
@@ -511,6 +509,7 @@ impl FormatReader for ChmReader {
                     let lower = f.to_ascii_lowercase();
                     lower.ends_with(".html") || lower.ends_with(".htm")
                 })
+                .map(String::from)
                 .collect();
             files.sort();
             files
@@ -550,16 +549,23 @@ impl FormatReader for ChmReader {
         let resource_exts = [
             ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".ico", ".css",
         ];
-        for path in container.content_files() {
-            let lower = path.to_ascii_lowercase();
-            if resource_exts.iter().any(|ext| lower.ends_with(ext))
-                && let Ok(data) = container.get_file(&path)
-            {
-                let media_type = mime_guess::from_path(&path)
+        // Clone only matching paths (not all keys) to release the borrow before get_file().
+        let resource_paths: Vec<String> = container
+            .content_files()
+            .into_iter()
+            .filter(|f| {
+                let lower = f.to_ascii_lowercase();
+                resource_exts.iter().any(|ext| lower.ends_with(ext))
+            })
+            .map(String::from)
+            .collect();
+        for path in &resource_paths {
+            if let Ok(data) = container.get_file(path) {
+                let media_type = mime_guess::from_path(path)
                     .first()
                     .map(|m| m.to_string())
                     .unwrap_or_else(|| "application/octet-stream".into());
-                let norm = normalize_path(&path);
+                let norm = normalize_path(path);
                 let res_id = norm.replace('/', "_");
                 book.add_resource(&res_id, &norm, data, &media_type);
             }
@@ -598,6 +604,7 @@ fn find_and_parse_hhc(container: &mut ChmContainer, sys_info: &ChmSystemInfo) ->
         .content_files()
         .into_iter()
         .filter(|f| text_utils::ends_with_ascii_ci(f, ".hhc"))
+        .map(String::from)
         .collect();
 
     for path in &hhc_files {

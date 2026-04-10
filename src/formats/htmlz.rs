@@ -8,8 +8,10 @@
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
-use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
-use crate::formats::common::text_utils::{contains_ascii_ci, ends_with_ascii_ci};
+use crate::formats::common::html_utils::strip_leading_heading;
+use crate::formats::common::text_utils::{
+    contains_ascii_ci, ends_with_ascii_ci, push_escape_html,
+};
 use crate::formats::common::xml_utils;
 use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use crate::formats::html::HtmlReader;
@@ -164,12 +166,14 @@ impl FormatWriter for HtmlzWriter {
                 .map_err(|e| EruditioError::Format(format!("Failed to write style.css: {}", e)))?;
             zip.write_all(css_content.as_bytes())?;
 
-            // 4. Write image resources
+            // 4. Write image resources (Stored — images are already compressed)
+            let stored_options: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(CompressionMethod::Stored);
             for res in &resources {
                 if res.media_type.starts_with("image/") {
                     let filename = res.href.rsplit('/').next().unwrap_or(res.href);
                     let path = format!("images/{}", filename);
-                    zip.start_file(&path, options).map_err(|e| {
+                    zip.start_file(&path, stored_options).map_err(|e| {
                         EruditioError::Format(format!("Failed to write {}: {}", path, e))
                     })?;
                     zip.write_all(res.data)?;
@@ -215,7 +219,7 @@ fn generate_htmlz_content(book: &Book) -> String {
     if let Some(item) = cover_item {
         let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
         body.push_str("<div class=\"cover\"><img src=\"images/");
-        body.push_str(&escape_html(filename));
+        push_escape_html(&mut body, filename);
         body.push_str("\" alt=\"Cover\"/></div>\n");
     }
 
@@ -224,7 +228,9 @@ fn generate_htmlz_content(book: &Book) -> String {
             body.push_str("<hr />\n");
         }
         if let Some(ch_title) = chapter.title {
-            body.push_str(&format!("<h2>{}</h2>\n", escape_html(ch_title)));
+            body.push_str("<h2>");
+            push_escape_html(&mut body, ch_title);
+            body.push_str("</h2>\n");
         }
         let content = match chapter.title {
             Some(t) => strip_leading_heading(chapter.content, t),
@@ -321,14 +327,14 @@ fn generate_htmlz_opf(book: &Book) -> String {
 
     if let Some(ref title) = m.title {
         xml.push_str("    <dc:title>");
-        xml.push_str(&escape_html(title));
+        push_escape_html(&mut xml, title);
         xml.push_str("</dc:title>\n");
     }
     for (i, author) in m.authors.iter().enumerate() {
         if i == 0 {
             if let Some(ref sort) = m.author_sort {
                 xml.push_str("    <dc:creator opf:file-as=\"");
-                xml.push_str(&escape_html(sort));
+                push_escape_html(&mut xml, sort);
                 xml.push_str("\" opf:role=\"aut\">");
             } else {
                 xml.push_str("    <dc:creator opf:role=\"aut\">");
@@ -336,42 +342,42 @@ fn generate_htmlz_opf(book: &Book) -> String {
         } else {
             xml.push_str("    <dc:creator>");
         }
-        xml.push_str(&escape_html(author));
+        push_escape_html(&mut xml, author);
         xml.push_str("</dc:creator>\n");
     }
     if let Some(ref lang) = m.language {
         xml.push_str("    <dc:language>");
-        xml.push_str(&escape_html(lang));
+        push_escape_html(&mut xml, lang);
         xml.push_str("</dc:language>\n");
     }
     if let Some(ref publisher) = m.publisher {
         xml.push_str("    <dc:publisher>");
-        xml.push_str(&escape_html(publisher));
+        push_escape_html(&mut xml, publisher);
         xml.push_str("</dc:publisher>\n");
     }
     if let Some(ref identifier) = m.identifier {
         xml.push_str("    <dc:identifier>");
-        xml.push_str(&escape_html(identifier));
+        push_escape_html(&mut xml, identifier);
         xml.push_str("</dc:identifier>\n");
     }
     if let Some(ref isbn) = m.isbn {
         xml.push_str("    <dc:identifier opf:scheme=\"ISBN\">");
-        xml.push_str(&escape_html(isbn));
+        push_escape_html(&mut xml, isbn);
         xml.push_str("</dc:identifier>\n");
     }
     if let Some(ref desc) = m.description {
         xml.push_str("    <dc:description>");
-        xml.push_str(&escape_html(desc));
+        push_escape_html(&mut xml, desc);
         xml.push_str("</dc:description>\n");
     }
     for subject in &m.subjects {
         xml.push_str("    <dc:subject>");
-        xml.push_str(&escape_html(subject));
+        push_escape_html(&mut xml, subject);
         xml.push_str("</dc:subject>\n");
     }
     if let Some(ref rights) = m.rights {
         xml.push_str("    <dc:rights>");
-        xml.push_str(&escape_html(rights));
+        push_escape_html(&mut xml, rights);
         xml.push_str("</dc:rights>\n");
     }
     if let Some(ref date) = m.publication_date {
@@ -382,7 +388,7 @@ fn generate_htmlz_opf(book: &Book) -> String {
     }
     if let Some(ref series) = m.series {
         xml.push_str("    <meta name=\"calibre:series\" content=\"");
-        xml.push_str(&escape_html(series));
+        push_escape_html(&mut xml, series);
         xml.push_str("\"/>\n");
     }
     if let Some(idx) = m.series_index {
@@ -393,7 +399,7 @@ fn generate_htmlz_opf(book: &Book) -> String {
     }
     if let Some(ref cover_id) = m.cover_image_id {
         xml.push_str("    <meta name=\"cover\" content=\"");
-        xml.push_str(&escape_html(cover_id));
+        push_escape_html(&mut xml, cover_id);
         xml.push_str("\"/>\n");
     }
 
@@ -404,9 +410,9 @@ fn generate_htmlz_opf(book: &Book) -> String {
         xml.push_str("  <guide>\n");
         for r in &book.guide.references {
             xml.push_str("    <reference type=\"");
-            xml.push_str(&escape_html(r.ref_type.as_str()));
+            push_escape_html(&mut xml, r.ref_type.as_str());
             xml.push_str("\" title=\"");
-            xml.push_str(&escape_html(&r.title));
+            push_escape_html(&mut xml, &r.title);
             xml.push_str("\" href=\"");
             xml.push_str("index.html");
             xml.push_str("\"/>\n");
@@ -518,7 +524,11 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
                 if tag == "metadata" {
                     in_metadata = false;
                 } else if in_metadata && !current_tag.is_empty() {
-                    let text = current_text.trim().to_string();
+                    let text = if current_text.trim().len() == current_text.len() {
+                        std::mem::take(&mut current_text)
+                    } else {
+                        current_text.trim().to_string()
+                    };
                     if !text.is_empty() {
                         match current_tag.as_str() {
                             "title" => {
@@ -638,7 +648,20 @@ fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
         return Cow::Borrowed(&content[inner_start..inner_end]);
     }
 
-    // No <body> found — strip individual wrapper elements as fallback.
+    // No <body> found — check if any wrapper elements exist before allocating.
+    let has_wrapper = memchr::memmem::find(bytes, b"<?xml").is_some()
+        || memchr::memmem::find(bytes, b"<!DOCTYPE").is_some()
+        || memchr::memmem::find(bytes, b"<!doctype").is_some()
+        || memchr::memmem::find(bytes, b"<html").is_some()
+        || memchr::memmem::find(bytes, b"<HTML").is_some()
+        || memchr::memmem::find(bytes, b"<head").is_some()
+        || memchr::memmem::find(bytes, b"<HEAD").is_some();
+
+    if !has_wrapper {
+        return Cow::Borrowed(content);
+    }
+
+    // Strip individual wrapper elements as fallback.
     let mut s = content.to_string();
 
     // Remove <?xml ...?> processing instructions.
@@ -761,7 +784,11 @@ fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
 /// `<link rel="stylesheet" href="pgepub.css">`). In the original EPUB
 /// chapters they reference CSS files that don't exist in the HTMLZ archive.
 /// The HTMLZ archive has its own `style.css` linked from the outer document.
-fn strip_link_tags(content: &str) -> String {
+fn strip_link_tags(content: &str) -> Cow<'_, str> {
+    // Fast path: no link tags to strip
+    if !content.contains("<link") && !content.contains("<LINK") {
+        return Cow::Borrowed(content);
+    }
     let mut s = content.to_string();
 
     // Search for "<link" followed by whitespace or ">", to avoid false matches.
@@ -803,7 +830,7 @@ fn strip_link_tags(content: &str) -> String {
         }
     }
 
-    s
+    Cow::Owned(s)
 }
 
 /// Returns a minimal default stylesheet matching calibre's HTMLZ output behavior.
@@ -828,20 +855,26 @@ p { margin: 0.5em 0; text-indent: 1.5em; }
 
 /// Guesses MIME type from a filename extension.
 fn guess_media_type(filename: &str) -> &'static str {
-    match filename
-        .rsplit('.')
-        .next()
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("svg") => "image/svg+xml",
-        Some("webp") => "image/webp",
-        Some("bmp") => "image/bmp",
-        Some("css") => "text/css",
-        _ => "application/octet-stream",
+    let ext = match filename.rsplit('.').next() {
+        Some(e) => e,
+        None => return "application/octet-stream",
+    };
+    if ext.eq_ignore_ascii_case("png") {
+        "image/png"
+    } else if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg") {
+        "image/jpeg"
+    } else if ext.eq_ignore_ascii_case("gif") {
+        "image/gif"
+    } else if ext.eq_ignore_ascii_case("svg") {
+        "image/svg+xml"
+    } else if ext.eq_ignore_ascii_case("webp") {
+        "image/webp"
+    } else if ext.eq_ignore_ascii_case("bmp") {
+        "image/bmp"
+    } else if ext.eq_ignore_ascii_case("css") {
+        "text/css"
+    } else {
+        "application/octet-stream"
     }
 }
 

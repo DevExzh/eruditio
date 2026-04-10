@@ -4,6 +4,8 @@
 //! formatting tags (2-byte `XX F5` markers). This module scans the raw
 //! stream, splits it into text segments and tag commands, and produces HTML.
 
+use std::fmt::Write;
+
 use super::header::read_u16_le;
 use super::tags::*;
 
@@ -84,7 +86,7 @@ pub(crate) fn tokens_to_html(tokens: &[TextToken]) -> String {
     for token in tokens {
         match token {
             TextToken::Text(text) => {
-                html.push_str(&html_escape(text));
+                crate::formats::common::text_utils::push_escape_html(&mut html, text);
             },
             TextToken::Tag(tag) => {
                 match tag.id {
@@ -117,7 +119,9 @@ pub(crate) fn tokens_to_html(tokens: &[TextToken]) -> String {
                     TAG_TEXT_CHAR_BUTTON => {
                         // Link: 4-byte refobj ID in payload.
                         let refobj = tag.as_u32();
-                        html.push_str(&format!("<a href=\"#obj_{}\">", refobj));
+                        html.push_str("<a href=\"#obj_");
+                        let _ = write!(html, "{}", refobj);
+                        html.push_str("\">");
                     },
                     TAG_TEXT_CHAR_BUTTON_END => html.push_str("</a>"),
                     TAG_TEXT_PLOT => {
@@ -131,13 +135,15 @@ pub(crate) fn tokens_to_html(tokens: &[TextToken]) -> String {
                                 tag.contents[6],
                                 tag.contents[7],
                             ]);
-                            html.push_str(&format!("<img src=\"#obj_{}\" />", refobj));
+                            html.push_str("<img src=\"#obj_");
+                            let _ = write!(html, "{}", refobj);
+                            html.push_str("\" />");
                         }
                     },
                     TAG_TEXT_CR_GRAPH => {
                         // Inline text block: u16 length, then UTF-16LE.
                         let text = tag.as_string();
-                        html.push_str(&html_escape(&text));
+                        crate::formats::common::text_utils::push_escape_html(&mut html, &text);
                     },
                     TAG_TEXT_SPACE => {
                         html.push(' ');
@@ -145,10 +151,8 @@ pub(crate) fn tokens_to_html(tokens: &[TextToken]) -> String {
                     // Style span tags — apply inline styles.
                     TAG_FONT_SIZE | TAG_FONT_WEIGHT | TAG_FONT_FACE | TAG_TEXT_COLOR
                     | TAG_TEXT_BG_COLOR | TAG_LINE_SPACE | TAG_PAR_INDENT | TAG_ALIGN => {
-                        // Emit a span with the style attribute.
-                        if let Some(css) = tag_to_css(tag) {
-                            html.push_str(&format!("<span style=\"{}\">", css));
-                        }
+                        // Write <span style="..."> directly to avoid intermediate String.
+                        push_style_span(&mut html, tag);
                     },
                     _ => {
                         // Unknown tag — ignore silently.
@@ -170,34 +174,43 @@ pub(crate) fn tokens_to_html(tokens: &[TextToken]) -> String {
     html
 }
 
-/// Converts a style tag to a CSS property string.
-fn tag_to_css(tag: &Tag) -> Option<String> {
+/// Writes a `<span style="...">` directly into the HTML buffer, avoiding
+/// the intermediate `String` allocation that the old `tag_to_css` pattern
+/// required.
+fn push_style_span(html: &mut String, tag: &Tag) {
+    use std::fmt::Write;
     match tag.id {
         TAG_FONT_SIZE => {
-            let size = tag.as_i16();
-            // LRF font sizes are in 1/10 pt.
-            let pt = size as f32 / 10.0;
-            Some(format!("font-size: {:.1}pt", pt))
+            let pt = tag.as_i16() as f32 / 10.0;
+            html.push_str("<span style=\"font-size: ");
+            let _ = write!(html, "{:.1}", pt);
+            html.push_str("pt\">");
         },
         TAG_FONT_WEIGHT => {
             let weight = tag.as_u16();
             if weight >= 700 {
-                Some("font-weight: bold".into())
+                html.push_str("<span style=\"font-weight: bold\">");
             } else {
-                Some("font-weight: normal".into())
+                html.push_str("<span style=\"font-weight: normal\">");
             }
         },
         TAG_FONT_FACE => {
             let face = tag.as_string();
-            Some(format!("font-family: '{}'", face))
+            html.push_str("<span style=\"font-family: '");
+            html.push_str(&face);
+            html.push_str("'\">");
         },
         TAG_TEXT_COLOR => {
             let (r, g, b) = decode_lrf_color(tag.as_u32());
-            Some(format!("color: rgb({},{},{})", r, g, b))
+            html.push_str("<span style=\"color: rgb(");
+            let _ = write!(html, "{},{},{}", r, g, b);
+            html.push_str(")\">");
         },
         TAG_TEXT_BG_COLOR => {
             let (r, g, b) = decode_lrf_color(tag.as_u32());
-            Some(format!("background-color: rgb({},{},{})", r, g, b))
+            html.push_str("<span style=\"background-color: rgb(");
+            let _ = write!(html, "{},{},{}", r, g, b);
+            html.push_str(")\">");
         },
         TAG_ALIGN => {
             let align = tag.as_u16();
@@ -207,14 +220,17 @@ fn tag_to_css(tag: &Tag) -> Option<String> {
                 8 => "right",
                 _ => "left",
             };
-            Some(format!("text-align: {}", name))
+            html.push_str("<span style=\"text-align: ");
+            html.push_str(name);
+            html.push_str("\">");
         },
         TAG_PAR_INDENT => {
-            let indent = tag.as_i16();
-            let pt = indent as f32 / 10.0;
-            Some(format!("text-indent: {:.1}pt", pt))
+            let pt = tag.as_i16() as f32 / 10.0;
+            html.push_str("<span style=\"text-indent: ");
+            let _ = write!(html, "{:.1}", pt);
+            html.push_str("pt\">");
         },
-        _ => None,
+        _ => {},
     }
 }
 
@@ -225,11 +241,6 @@ fn decode_lrf_color(val: u32) -> (u8, u8, u8) {
     let g = ((val >> 16) & 0xFF) as u8;
     let b = ((val >> 24) & 0xFF) as u8;
     (r, g, b)
-}
-
-/// Escapes HTML special characters.
-fn html_escape(text: &str) -> String {
-    crate::formats::common::text_utils::escape_html(text).into_owned()
 }
 
 #[cfg(test)]
@@ -268,7 +279,9 @@ mod tests {
 
     #[test]
     fn html_escapes_special_chars() {
-        assert_eq!(html_escape("A & B < C > D"), "A &amp; B &lt; C &gt; D");
+        let mut buf = String::new();
+        crate::formats::common::text_utils::push_escape_html(&mut buf, "A & B < C > D");
+        assert_eq!(buf, "A &amp; B &lt; C &gt; D");
     }
 
     #[test]

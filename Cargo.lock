@@ -517,6 +517,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "clap",
+ "crc32fast",
  "criterion",
  "dhat",
  "encoding_rs",

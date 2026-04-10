@@ -191,10 +191,15 @@ fn parse_single_object(data: &[u8], offset: usize, size: usize, xor_key: u16) ->
     let mut stream_size: u32 = 0;
     let mut stream_data: Option<Vec<u8>> = None;
     let mut non_stream_tags = Vec::new();
+    let mut in_stream = false;
 
-    let mut i = 0;
-    while i < all_tags.len() {
-        let tag = &all_tags[i];
+    for tag in all_tags {
+        if in_stream {
+            if tag.id == TAG_STREAM_END {
+                in_stream = false;
+            }
+            continue;
+        }
         match tag.id {
             TAG_STREAM_FLAGS => stream_flags = tag.as_u16(),
             TAG_STREAM_SIZE => stream_size = tag.as_u32(),
@@ -210,15 +215,11 @@ fn parse_single_object(data: &[u8], offset: usize, size: usize, xor_key: u16) ->
                         obj_type.is_media(),
                     )?);
                 }
-                // Skip to StreamEnd.
-                while i < all_tags.len() && all_tags[i].id != TAG_STREAM_END {
-                    i += 1;
-                }
+                in_stream = true;
             },
             TAG_STREAM_END => {},
-            _ => non_stream_tags.push(tag.clone()),
+            _ => non_stream_tags.push(tag),
         }
-        i += 1;
     }
 
     Ok(LrfObject {

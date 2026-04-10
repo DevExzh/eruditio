@@ -37,7 +37,7 @@ struct LitManifestItem {
     internal: String,
     path: String,
     mime_type: String,
-    state: String,
+    state: &'static str,
 }
 
 // ---------------------------------------------------------------------------
@@ -386,9 +386,7 @@ impl LitContainer {
                     EruditioError::Format("LIT: negative manifest file count".into())
                 })?;
                 pos += 4;
-                // Hoist to_string() out of inner loop — state_name is constant
-                // per iteration of the outer loop.
-                let state_owned = (*state_name).to_string();
+                let state_str: &'static str = state_name;
                 for _ in 0..num_files {
                     if pos + 4 > raw.len() {
                         break;
@@ -407,7 +405,7 @@ impl LitContainer {
                         internal,
                         path,
                         mime_type: mime_type.to_ascii_lowercase(),
-                        state: state_owned.clone(),
+                        state: state_str,
                     });
                 }
             }
@@ -893,25 +891,32 @@ impl FormatReader for LitReader {
         }
 
         // --- Non-spine resources ---
-        let resource_items: Vec<LitManifestItem> = container
+        // Collect indices to avoid holding a borrow on `container.manifest_items`
+        // across the mutable `container.get_file()` call, eliminating the need
+        // to clone each LitManifestItem.
+        let resource_indices: Vec<usize> = container
             .manifest_items
             .iter()
-            .filter(|i| i.state != "spine")
-            .cloned()
+            .enumerate()
+            .filter(|(_, i)| i.state != "spine")
+            .map(|(idx, _)| idx)
             .collect();
 
-        for item in &resource_items {
-            let data_path = format!("/data/{}", item.internal);
+        for &idx in &resource_indices {
+            let data_path = format!("/data/{}", container.manifest_items[idx].internal);
+            let internal = container.manifest_items[idx].internal.clone();
+            let path = container.manifest_items[idx].path.clone();
+            let mime_type = container.manifest_items[idx].mime_type.clone();
             if let Ok(data) = container.get_file(&data_path) {
-                let media = if item.mime_type.is_empty() {
-                    mime_guess::from_path(&item.path)
+                let media = if mime_type.is_empty() {
+                    mime_guess::from_path(&path)
                         .first()
                         .map(|m| m.to_string())
                         .unwrap_or_else(|| "application/octet-stream".into())
                 } else {
-                    item.mime_type.clone()
+                    mime_type
                 };
-                book.add_resource(&item.internal, &item.path, data, &media);
+                book.add_resource(&internal, &path, data, &media);
             }
         }
 
@@ -995,13 +1000,13 @@ mod tests {
                 internal: "a".into(),
                 path: "content/ch1.html".into(),
                 mime_type: "text/html".into(),
-                state: "spine".into(),
+                state: "spine",
             },
             LitManifestItem {
                 internal: "b".into(),
                 path: "content/ch2.html".into(),
                 mime_type: "text/html".into(),
-                state: "spine".into(),
+                state: "spine",
             },
         ];
         strip_common_prefix(&mut items);

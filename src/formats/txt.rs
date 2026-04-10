@@ -1,6 +1,5 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::Result;
-use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::{strip_tags, unescape_basic_entities};
 use std::io::{Read, Write};
 
@@ -16,15 +15,12 @@ impl TxtReader {
 
 impl FormatReader for TxtReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut contents = String::new();
-        (&mut *reader)
-            .take(MAX_INPUT_SIZE)
-            .read_to_string(&mut contents)?;
+        let contents = crate::formats::common::read_string_capped(reader)?;
 
         let mut book = Book::new();
 
         // Simple plain text to HTML conversion
-        let mut html_content = String::new();
+        let mut html_content = String::with_capacity(contents.len() + contents.len() / 4);
         let mut blank_count = 0;
 
         for line in contents.lines() {
@@ -37,14 +33,7 @@ impl FormatReader for TxtReader {
             } else {
                 blank_count = 0;
                 html_content.push_str("<p>");
-
-                // Basic XML escaping
-                let escaped = trimmed
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;");
-
-                html_content.push_str(&escaped);
+                crate::formats::common::text_utils::push_escape_html(&mut html_content, trimmed);
                 html_content.push_str("</p>\n");
             }
         }

@@ -5,9 +5,12 @@
 //! PageAttr, Pages, Blocks, TextBlocks, ImageStreams, Images, PageTree),
 //! and the object index.
 
+use ahash::AHashMap;
+use std::borrow::Cow;
+
 use crate::domain::Book;
 use crate::error::{EruditioError, Result};
-use crate::formats::common::text_utils::escape_xml;
+use crate::formats::common::text_utils::push_escape_xml;
 use flate2::write::ZlibEncoder;
 use std::io::Write;
 
@@ -279,7 +282,7 @@ const HEADING_SIZES: [i16; 6] = [220, 180, 150, 130, 110, 100];
 /// `<img>` (via Plot tag), and plain text.
 fn html_to_text_stream(
     html: &str,
-    image_obj_map: &std::collections::HashMap<String, u32>,
+    image_obj_map: &AHashMap<String, u32>,
 ) -> Vec<u8> {
     let mut stream = Vec::with_capacity(html.len() * 2);
     let mut pos = 0;
@@ -399,7 +402,7 @@ fn html_to_text_stream(
                 .unwrap_or(len);
             let text = &html[pos..text_end];
             let decoded = decode_html_entities(text);
-            let trimmed = decoded.as_str();
+            let trimmed: &str = &decoded;
             if !trimmed.is_empty() {
                 if !in_para {
                     emit_p_start(&mut stream);
@@ -447,18 +450,58 @@ fn extract_attr(tag_body: &str, attr: &str) -> Option<String> {
     }
 }
 
-/// Decodes common HTML entities.
-fn decode_html_entities(text: &str) -> String {
+/// Decodes common HTML entities in a single pass (avoids 7 intermediate String allocations
+/// from chained `.replace()` calls).
+fn decode_html_entities(text: &str) -> Cow<'_, str> {
     if !text.contains('&') {
-        return text.to_string();
+        return Cow::Borrowed(text);
     }
-    text.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len);
+    let mut pos = 0;
+
+    while pos < len {
+        if bytes[pos] == b'&' {
+            let remaining = &text[pos..];
+            if remaining.starts_with("&amp;") {
+                out.push('&');
+                pos += 5;
+            } else if remaining.starts_with("&lt;") {
+                out.push('<');
+                pos += 4;
+            } else if remaining.starts_with("&gt;") {
+                out.push('>');
+                pos += 4;
+            } else if remaining.starts_with("&quot;") {
+                out.push('"');
+                pos += 6;
+            } else if remaining.starts_with("&apos;") {
+                out.push('\'');
+                pos += 6;
+            } else if remaining.starts_with("&#39;") {
+                out.push('\'');
+                pos += 5;
+            } else if remaining.starts_with("&nbsp;") {
+                out.push(' ');
+                pos += 6;
+            } else {
+                out.push('&');
+                pos += 1;
+            }
+        } else {
+            // Bulk-copy non-entity bytes.
+            let start = pos;
+            pos += 1;
+            while pos < len && bytes[pos] != b'&' {
+                pos += 1;
+            }
+            out.push_str(&text[start..pos]);
+        }
+    }
+
+    Cow::Owned(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -467,8 +510,6 @@ fn decode_html_entities(text: &str) -> String {
 
 /// Builds the metadata XML string from the Book's metadata.
 fn build_metadata_xml(book: &Book) -> String {
-    use std::fmt::Write as FmtWrite;
-
     let title = book.metadata.title.as_deref().unwrap_or("Untitled");
     let author = book
         .metadata
@@ -483,17 +524,27 @@ fn build_metadata_xml(book: &Book) -> String {
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<Info version=\"1.1\">\n");
     xml.push_str("  <BookInfo>\n");
-    let _ = writeln!(xml, "    <Title>{}</Title>", escape_xml(title));
-    let _ = writeln!(xml, "    <Author>{}</Author>", escape_xml(author));
+    xml.push_str("    <Title>");
+    push_escape_xml(&mut xml, title);
+    xml.push_str("</Title>\n");
+    xml.push_str("    <Author>");
+    push_escape_xml(&mut xml, author);
+    xml.push_str("</Author>\n");
     if !publisher.is_empty() {
-        let _ = writeln!(xml, "    <Publisher>{}</Publisher>", escape_xml(publisher));
+        xml.push_str("    <Publisher>");
+        push_escape_xml(&mut xml, publisher);
+        xml.push_str("</Publisher>\n");
     }
     if let Some(ref desc) = book.metadata.description {
-        let _ = writeln!(xml, "    <FreeText>{}</FreeText>", escape_xml(desc));
+        xml.push_str("    <FreeText>");
+        push_escape_xml(&mut xml, desc);
+        xml.push_str("</FreeText>\n");
     }
     xml.push_str("  </BookInfo>\n");
     xml.push_str("  <DocInfo>\n");
-    let _ = writeln!(xml, "    <Language>{}</Language>", escape_xml(language));
+    xml.push_str("    <Language>");
+    push_escape_xml(&mut xml, language);
+    xml.push_str("</Language>\n");
     xml.push_str("  </DocInfo>\n");
     xml.push_str("</Info>");
 
@@ -506,7 +557,7 @@ fn build_metadata_xml(book: &Book) -> String {
 
 /// Zlib-compresses data.
 fn zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     encoder
         .write_all(data)
         .map_err(|e| EruditioError::Compression(format!("zlib write: {e}")))?;
@@ -584,7 +635,7 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // ---------------------------------------------------------------
     let mut image_objects: Vec<LrfWriteObject> = Vec::new();
     // Map from resource href -> Image object ID (for Plot tags).
-    let mut image_obj_map = std::collections::HashMap::new();
+    let mut image_obj_map = AHashMap::new();
 
     for resource in &book.resources() {
         if !resource.media_type.starts_with("image/") {
@@ -595,9 +646,10 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
         let image_id = alloc_id();
 
         // ImageStream object: raw image data, uncompressed.
+        // Note: We build the stream manually below (custom flags for image type),
+        // so we skip setting .stream here — it would be wasteful to clone the data
+        // only to discard it when we set .stream = None after manual serialization.
         let mut img_stream_obj = LrfWriteObject::new(stream_id, OBJ_TYPE_IMAGE_STREAM);
-        img_stream_obj.stream = Some(resource.data.to_vec());
-        img_stream_obj.compress_stream = false;
 
         // Override StreamFlags with the image type in the low byte.
         // We do this by not using the compress_stream path; instead
@@ -633,7 +685,6 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
         is_bytes.push(0xF5);
 
         // Use a special sentinel so we emit raw bytes instead of calling serialize().
-        img_stream_obj.stream = None;
         img_stream_obj.tags = is_bytes; // HACK: we'll handle this in emission.
 
         // Image object: RefStream tag pointing to ImageStream.
@@ -1040,7 +1091,7 @@ mod tests {
 
     #[test]
     fn html_to_text_stream_basic() {
-        let map = std::collections::HashMap::new();
+        let map = AHashMap::new();
         let stream = html_to_text_stream("<p>Hello</p>", &map);
         // Should contain P_START, TextString, P_END tags.
         // P_START: 0xA1 0xF5 + 6 zeros = 8 bytes

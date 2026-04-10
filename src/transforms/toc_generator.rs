@@ -1,5 +1,6 @@
 //! Generates or rebuilds the table of contents from spine content.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use crate::domain::Book;
@@ -29,7 +30,7 @@ impl Transform for TocGenerator {
         let mut new_entries = Vec::new();
         for spine_item in result.spine.iter() {
             if let Some(item) = result.manifest.get(&spine_item.manifest_id) {
-                if existing_hrefs.contains(&item.href) {
+                if existing_hrefs.contains(item.href.as_str()) {
                     continue;
                 }
 
@@ -101,11 +102,11 @@ fn extract_first_heading(html: &str) -> Option<String> {
 }
 
 /// Strips HTML tags from inner content using `memchr` for fast scanning.
-fn strip_inner_tags(html: &str) -> String {
+fn strip_inner_tags(html: &str) -> Cow<'_, str> {
     let bytes = html.as_bytes();
     // Fast path: no tags at all.
     if memchr::memchr(b'<', bytes).is_none() {
-        return html.to_string();
+        return Cow::Borrowed(html);
     }
 
     let mut result = String::with_capacity(html.len());
@@ -133,17 +134,17 @@ fn strip_inner_tags(html: &str) -> String {
             },
         }
     }
-    result
+    Cow::Owned(result)
 }
 
 /// Recursively collects all hrefs from a TOC tree into a set for O(1) lookup.
-fn collect_toc_hrefs(items: &[TocItem]) -> HashSet<String> {
+fn collect_toc_hrefs(items: &[TocItem]) -> HashSet<&str> {
     let mut hrefs = HashSet::new();
     collect_toc_hrefs_into(items, &mut hrefs);
     hrefs
 }
 
-fn collect_toc_hrefs_into(items: &[TocItem], out: &mut HashSet<String>) {
+fn collect_toc_hrefs_into<'a>(items: &'a [TocItem], out: &mut HashSet<&'a str>) {
     let mut stack: Vec<&[TocItem]> = vec![items];
     while let Some(current) = stack.pop() {
         for item in current {
@@ -159,10 +160,10 @@ fn collect_toc_hrefs_into(items: &[TocItem], out: &mut HashSet<String>) {
 }
 
 /// Returns the href with any `#fragment` removed.
-fn strip_fragment(href: &str) -> String {
+fn strip_fragment(href: &str) -> &str {
     match href.find('#') {
-        Some(pos) => href[..pos].to_string(),
-        None => href.to_string(),
+        Some(pos) => &href[..pos],
+        None => href,
     }
 }
 

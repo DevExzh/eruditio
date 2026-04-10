@@ -182,19 +182,21 @@ impl HuffCdicReader {
 
     /// Decompresses a single text record.
     pub fn unpack(&mut self, data: &[u8]) -> Result<Vec<u8>> {
-        self.unpack_inner(data, 0)
+        let mut result = Vec::with_capacity(data.len().saturating_mul(2).min(MAX_UNPACK_OUTPUT));
+        self.unpack_to(data, 0, &mut result)?;
+        Ok(result)
     }
 
-    /// Decompresses a single text record and appends the result to the provided
-    /// output buffer, avoiding a separate allocation at the call site.
+    /// Decompresses a single text record and appends the result directly to the
+    /// provided output buffer, avoiding the intermediate Vec that the old
+    /// `unpack_inner` + copy pattern required.
     pub fn unpack_into(&mut self, data: &[u8], output: &mut Vec<u8>) -> Result<()> {
-        let decompressed = self.unpack_inner(data, 0)?;
-        output.extend_from_slice(&decompressed);
-        Ok(())
+        self.unpack_to(data, 0, output)
     }
 
-    /// Inner decompression with depth tracking to prevent infinite recursion.
-    fn unpack_inner(&mut self, data: &[u8], depth: usize) -> Result<Vec<u8>> {
+    /// Inner decompression that writes directly into `output`, with depth
+    /// tracking to prevent infinite recursion.
+    fn unpack_to(&mut self, data: &[u8], depth: usize, output: &mut Vec<u8>) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(EruditioError::Compression(
                 "HUFF/CDIC recursion depth exceeded".into(),
@@ -207,11 +209,8 @@ impl HuffCdicReader {
         let mut x = read_u64_be_padded(data, pos);
         let mut n: i32 = 32; // Number of usable bits in the current window.
 
-        // Pre-allocate result: decompressed text is typically ~2x the compressed size.
-        let mut result = Vec::with_capacity(data.len().saturating_mul(2).min(MAX_UNPACK_OUTPUT));
-
         loop {
-            if result.len() > MAX_UNPACK_OUTPUT {
+            if output.len() > MAX_UNPACK_OUTPUT {
                 return Err(EruditioError::Compression(
                     "HUFF/CDIC decompressed output exceeds size limit".into(),
                 ));
@@ -262,7 +261,7 @@ impl HuffCdicReader {
             // Resolve the dictionary entry, decompressing if needed.
             match &self.dictionary[r] {
                 DictEntry::Decompressed(slice) => {
-                    result.extend_from_slice(slice);
+                    output.extend_from_slice(slice);
                 },
                 DictEntry::Compressed(_) => {
                     // Take the compressed data out, decompress it, and cache the result.
@@ -277,16 +276,17 @@ impl HuffCdicReader {
                             ));
                         },
                     };
-                    let decompressed = self.unpack_inner(&compressed, depth + 1)?;
-                    self.dictionary[r] = DictEntry::Decompressed(decompressed);
-                    if let DictEntry::Decompressed(ref cached) = self.dictionary[r] {
-                        result.extend_from_slice(cached);
-                    }
+                    // Decompress into a temp buffer for dictionary caching
+                    // (entries are small — typically a few bytes).
+                    let mut temp = Vec::new();
+                    self.unpack_to(&compressed, depth + 1, &mut temp)?;
+                    output.extend_from_slice(&temp);
+                    self.dictionary[r] = DictEntry::Decompressed(temp);
                 },
             }
         }
 
-        Ok(result)
+        Ok(())
     }
 }
 

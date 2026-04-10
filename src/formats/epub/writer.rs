@@ -2,6 +2,7 @@ use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::push_escape_xml;
 use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
+use flate2::{Compress, Compression, FlushCompress};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
@@ -216,25 +217,58 @@ fn write_epub_parallel<W: Write + Seek>(
     }
 
     // -----------------------------------------------------------------------
-    // Parallel compression via per-entry mini-ZIP archives.
+    // Parallel compression via direct flate2 + reusable compressor.
+    //
+    // Instead of creating a per-entry mini-ZIP (which allocates a new
+    // deflate compressor and inflate decompressor each time), we:
+    //   1. Pre-compress with a per-thread `flate2::Compress` (reused via reset)
+    //   2. Build minimal ZIP bytes containing the pre-compressed data
+    //   3. Open with ZipArchive and raw_copy_file_rename into the final ZIP
+    // This eliminates ~66% of EPUB writer allocations (all per-entry
+    // deflate::init and inflate::init calls).
     // -----------------------------------------------------------------------
+    let level = ZIP_DEFLATE_LEVEL.unwrap_or(1) as u32;
     let mini_zips: Vec<std::result::Result<(String, Vec<u8>), EruditioError>> = deflate_entries
         .into_par_iter()
-        .map(|entry| {
-            let buf = Cursor::new(Vec::with_capacity(entry.data.len()));
-            let mut mini = ZipWriter::new(buf);
-            let opts: FileOptions<'_, ()> =
-                FileOptions::default()
-                    .compression_method(CompressionMethod::Deflated)
-                    .compression_level(ZIP_DEFLATE_LEVEL);
-            mini.start_file("entry", opts)
-                .map_err(|e| EruditioError::Format(format!("mini zip start: {}", e)))?;
-            mini.write_all(&entry.data)
-                .map_err(EruditioError::Io)?;
-            let cursor = mini.finish()
-                .map_err(|e| EruditioError::Format(format!("mini zip finish: {}", e)))?;
-            Ok((entry.zip_path, cursor.into_inner()))
-        })
+        .map_init(
+            || {
+                (
+                    Compress::new(Compression::new(level), false),
+                    Vec::with_capacity(8192),
+                )
+            },
+            |(compressor, compress_buf), entry| {
+                let crc = crc32fast::hash(&entry.data);
+                let uncompressed_size = entry.data.len();
+
+                // Compress the entry data, reusing the compressor state.
+                compressor.reset();
+                compress_buf.clear();
+                // Worst case: deflate output can be slightly larger than input.
+                let max_out = uncompressed_size + 64;
+                compress_buf.resize(max_out, 0);
+                let status = compressor.compress(
+                    &entry.data,
+                    compress_buf,
+                    FlushCompress::Finish,
+                ).map_err(|e| EruditioError::Format(format!("deflate compress: {}", e)))?;
+                if status != flate2::Status::StreamEnd {
+                    return Err(EruditioError::Format("deflate did not complete in one pass".into()));
+                }
+                let compressed_size = compressor.total_out() as usize;
+                compress_buf.truncate(compressed_size);
+
+                // Build a minimal ZIP archive containing the pre-compressed entry.
+                let mini = build_deflate_mini_zip(
+                    compress_buf,
+                    crc,
+                    compressed_size as u32,
+                    uncompressed_size as u32,
+                );
+
+                Ok((entry.zip_path, mini))
+            },
+        )
         .collect();
 
     // Write pre-compressed entries via raw_copy_file_rename.
@@ -243,7 +277,8 @@ fn write_epub_parallel<W: Write + Seek>(
         let cursor = Cursor::new(mini_bytes);
         let mut archive = zip::ZipArchive::new(cursor)
             .map_err(|e| EruditioError::Format(format!("mini zip read: {}", e)))?;
-        let file = archive.by_index(0)
+        // Use by_index_raw to avoid allocating an inflate decompressor.
+        let file = archive.by_index_raw(0)
             .map_err(|e| EruditioError::Format(format!("mini zip entry: {}", e)))?;
         zip.raw_copy_file_rename(file, &zip_path)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
@@ -259,6 +294,78 @@ fn write_epub_parallel<W: Write + Seek>(
     zip.finish()
         .map_err(|e| EruditioError::Format(format!("Failed to finalize EPUB: {}", e)))?;
     Ok(())
+}
+
+/// Builds a minimal valid ZIP archive containing a single deflated entry named "e".
+///
+/// This avoids the overhead of creating a `ZipWriter` (which allocates a new
+/// deflate compressor) and a `ZipArchive` reader (inflate state). The caller
+/// pre-compresses with a reusable `flate2::Compress`.
+fn build_deflate_mini_zip(
+    compressed: &[u8],
+    crc32: u32,
+    compressed_size: u32,
+    uncompressed_size: u32,
+) -> Vec<u8> {
+    const FNAME: &[u8] = b"e"; // minimal filename
+    const FNAME_LEN: u16 = 1;
+    const LOCAL_HEADER_SIZE: usize = 30 + FNAME_LEN as usize; // 31
+    const CENTRAL_HEADER_SIZE: usize = 46 + FNAME_LEN as usize; // 47
+    const EOCD_SIZE: usize = 22;
+
+    let total = LOCAL_HEADER_SIZE + compressed.len() + CENTRAL_HEADER_SIZE + EOCD_SIZE;
+    let mut buf = Vec::with_capacity(total);
+
+    // --- Local File Header ---
+    buf.extend_from_slice(&0x04034b50u32.to_le_bytes()); // signature
+    buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    buf.extend_from_slice(&0u16.to_le_bytes()); // GP flag
+    buf.extend_from_slice(&8u16.to_le_bytes()); // compression = Deflated
+    buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
+    buf.extend_from_slice(&0u16.to_le_bytes()); // mod date
+    buf.extend_from_slice(&crc32.to_le_bytes());
+    buf.extend_from_slice(&compressed_size.to_le_bytes());
+    buf.extend_from_slice(&uncompressed_size.to_le_bytes());
+    buf.extend_from_slice(&FNAME_LEN.to_le_bytes()); // filename length
+    buf.extend_from_slice(&0u16.to_le_bytes()); // extra field length
+    buf.extend_from_slice(FNAME);
+
+    // --- Compressed Data ---
+    buf.extend_from_slice(compressed);
+
+    // --- Central Directory Header ---
+    let cd_offset = buf.len();
+    buf.extend_from_slice(&0x02014b50u32.to_le_bytes()); // signature
+    buf.extend_from_slice(&20u16.to_le_bytes()); // version made by
+    buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    buf.extend_from_slice(&0u16.to_le_bytes()); // GP flag
+    buf.extend_from_slice(&8u16.to_le_bytes()); // compression = Deflated
+    buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
+    buf.extend_from_slice(&0u16.to_le_bytes()); // mod date
+    buf.extend_from_slice(&crc32.to_le_bytes());
+    buf.extend_from_slice(&compressed_size.to_le_bytes());
+    buf.extend_from_slice(&uncompressed_size.to_le_bytes());
+    buf.extend_from_slice(&FNAME_LEN.to_le_bytes()); // filename length
+    buf.extend_from_slice(&0u16.to_le_bytes()); // extra field length
+    buf.extend_from_slice(&0u16.to_le_bytes()); // comment length
+    buf.extend_from_slice(&0u16.to_le_bytes()); // disk number
+    buf.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+    buf.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+    buf.extend_from_slice(&0u32.to_le_bytes()); // local header offset
+    buf.extend_from_slice(FNAME);
+
+    // --- End of Central Directory ---
+    let cd_size = (buf.len() - cd_offset) as u32;
+    buf.extend_from_slice(&0x06054b50u32.to_le_bytes()); // signature
+    buf.extend_from_slice(&0u16.to_le_bytes()); // disk number
+    buf.extend_from_slice(&0u16.to_le_bytes()); // central dir start disk
+    buf.extend_from_slice(&1u16.to_le_bytes()); // entries on this disk
+    buf.extend_from_slice(&1u16.to_le_bytes()); // total entries
+    buf.extend_from_slice(&cd_size.to_le_bytes());
+    buf.extend_from_slice(&(cd_offset as u32).to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes()); // comment length
+
+    buf
 }
 
 fn generate_container_xml() -> &'static str {
@@ -551,11 +658,11 @@ fn write_ncx_navpoint_depth(
     let pad_len = (indent * 2).min(INDENT_BUF.len());
     let pad = &INDENT_BUF[..pad_len];
 
-    let id = item
+    let id: std::borrow::Cow<'_, str> = item
         .id
         .as_deref()
-        .map(String::from)
-        .unwrap_or_else(|| format!("navpoint-{}", *play_order));
+        .map(std::borrow::Cow::Borrowed)
+        .unwrap_or_else(|| std::borrow::Cow::Owned(format!("navpoint-{}", *play_order)));
 
     xml.push_str(pad);
     xml.push_str("<navPoint id=\"");

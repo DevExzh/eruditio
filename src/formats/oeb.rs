@@ -7,8 +7,10 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils;
-use crate::formats::common::text_utils::escape_xml;
+use crate::formats::common::text_utils::push_escape_xml;
 use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
+use std::borrow::Cow;
+use std::fmt::Write as FmtWrite;
 use std::io::{Cursor, Read, Write};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -76,15 +78,21 @@ impl FormatReader for OebReader {
                 .collect()
         };
 
+        let mut full_path = String::with_capacity(opf_base.len() + 64);
         for (i, href) in ordered_hrefs.iter().enumerate() {
-            let full_path = format!("{}{}", opf_base, href);
+            full_path.clear();
+            full_path.push_str(opf_base);
+            full_path.push_str(href);
             match read_zip_entry(&mut archive, &full_path) {
                 Ok(content_bytes) => {
-                    let content =
-                        crate::formats::common::text_utils::bytes_to_string(&content_bytes);
-                    // Extract <body> content if present, else use full content.
-                    let body = extract_body(&content).unwrap_or(&content).to_string();
+                    let content = String::from_utf8(content_bytes)
+                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
                     let title = extract_title(&content);
+                    // Extract <body> content if present, else use full content.
+                    let body = match extract_body(&content) {
+                        Some(b) => b.to_string(),
+                        None => content, // move, no copy
+                    };
 
                     book.add_chapter(Chapter {
                         title,
@@ -108,8 +116,12 @@ impl FormatReader for OebReader {
                     || text_utils::ends_with_ascii_ci(&name, ".xhtml"))
                     && let Ok(bytes) = read_zip_entry(&mut archive, &name)
                 {
-                    let content = crate::formats::common::text_utils::bytes_to_string(&bytes);
-                    let body = extract_body(&content).unwrap_or(&content).to_string();
+                    let content = String::from_utf8(bytes)
+                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+                    let body = match extract_body(&content) {
+                        Some(b) => b.to_string(),
+                        None => content,
+                    };
                     book.add_chapter(Chapter {
                         title: None,
                         content: body,
@@ -179,7 +191,7 @@ impl FormatWriter for OebWriter {
                 .compression_method(CompressionMethod::Deflated)
                 .compression_level(ZIP_DEFLATE_LEVEL);
 
-            let chapters = book.chapters();
+            let chapters = book.chapter_views();
             let resources = book.resources();
 
             // Generate XHTML files for each chapter.
@@ -191,16 +203,17 @@ impl FormatWriter for OebWriter {
                 let fallback_title = format!("Chapter {}", i + 1);
                 let title = chapter.title.as_deref().unwrap_or(&fallback_title);
 
-                let xhtml = format!(
-                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                let mut xhtml = String::with_capacity(256 + chapter.content.len());
+                xhtml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
                      <!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \
                      \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">\n\
                      <html xmlns=\"http://www.w3.org/1999/xhtml\">\n\
-                     <head><title>{}</title></head>\n\
-                     <body>\n{}\n</body>\n</html>",
-                    escape_xml(title),
-                    &chapter.content
-                );
+                     <head><title>");
+                push_escape_xml(&mut xhtml, title);
+                xhtml.push_str("</title></head>\n\
+                     <body>\n");
+                xhtml.push_str(&chapter.content);
+                xhtml.push_str("\n</body>\n</html>");
 
                 zip.start_file(&filename, options)?;
                 zip.write_all(xhtml.as_bytes())?;
@@ -256,29 +269,29 @@ fn build_opf(
     // Metadata.
     opf.push_str("  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n");
     opf.push_str("    <dc:title>");
-    opf.push_str(&escape_xml(title));
+    push_escape_xml(&mut opf, title);
     opf.push_str("</dc:title>\n");
     opf.push_str("    <dc:language>");
-    opf.push_str(&escape_xml(language));
+    push_escape_xml(&mut opf, language);
     opf.push_str("</dc:language>\n");
     for author in &book.metadata.authors {
         opf.push_str("    <dc:creator>");
-        opf.push_str(&escape_xml(author));
+        push_escape_xml(&mut opf, author);
         opf.push_str("</dc:creator>\n");
     }
     if let Some(ref desc) = book.metadata.description {
         opf.push_str("    <dc:description>");
-        opf.push_str(&escape_xml(desc));
+        push_escape_xml(&mut opf, desc);
         opf.push_str("</dc:description>\n");
     }
     if let Some(ref publisher) = book.metadata.publisher {
         opf.push_str("    <dc:publisher>");
-        opf.push_str(&escape_xml(publisher));
+        push_escape_xml(&mut opf, publisher);
         opf.push_str("</dc:publisher>\n");
     }
     if let Some(ref isbn) = book.metadata.isbn {
         opf.push_str("    <dc:identifier id=\"uid\">");
-        opf.push_str(&escape_xml(isbn));
+        push_escape_xml(&mut opf, isbn);
         opf.push_str("</dc:identifier>\n");
     } else {
         opf.push_str("    <dc:identifier id=\"uid\">eruditio-oeb-export</dc:identifier>\n");
@@ -289,18 +302,18 @@ fn build_opf(
     opf.push_str("  <manifest>\n");
     for (id, filename) in content_items {
         opf.push_str("    <item id=\"");
-        opf.push_str(&escape_xml(id));
+        push_escape_xml(&mut opf, id);
         opf.push_str("\" href=\"");
-        opf.push_str(&escape_xml(filename));
+        push_escape_xml(&mut opf, filename);
         opf.push_str("\" media-type=\"application/xhtml+xml\" />\n");
     }
     for (id, filename, media_type) in resource_items {
         opf.push_str("    <item id=\"");
-        opf.push_str(&escape_xml(id));
+        push_escape_xml(&mut opf, id);
         opf.push_str("\" href=\"");
-        opf.push_str(&escape_xml(filename));
+        push_escape_xml(&mut opf, filename);
         opf.push_str("\" media-type=\"");
-        opf.push_str(&escape_xml(media_type));
+        push_escape_xml(&mut opf, media_type);
         opf.push_str("\" />\n");
     }
     opf.push_str("  </manifest>\n");
@@ -309,7 +322,7 @@ fn build_opf(
     opf.push_str("  <spine>\n");
     for (id, _) in content_items {
         opf.push_str("    <itemref idref=\"");
-        opf.push_str(&escape_xml(id));
+        push_escape_xml(&mut opf, id);
         opf.push_str("\" />\n");
     }
     opf.push_str("  </spine>\n");
@@ -438,8 +451,10 @@ fn parse_opf_spine(opf: &str) -> Vec<String> {
 
 /// Extracts text content of the first occurrence of `<tag>...</tag>`.
 fn extract_tag_content(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{}", tag);
-    let close = format!("</{}>", tag);
+    let mut open = String::with_capacity(1 + tag.len());
+    let _ = write!(open, "<{}", tag);
+    let mut close = String::with_capacity(3 + tag.len());
+    let _ = write!(close, "</{}>", tag);
 
     let start = xml.find(&open)?;
     let content_start = xml[start..].find('>')? + start + 1;
@@ -449,15 +464,17 @@ fn extract_tag_content(xml: &str, tag: &str) -> Option<String> {
     if text.is_empty() {
         None
     } else {
-        Some(unescape_xml(text))
+        Some(unescape_xml(text).into_owned())
     }
 }
 
 /// Extracts text content of all occurrences of `<tag>...</tag>`.
 fn extract_all_tag_contents(xml: &str, tag: &str) -> Vec<String> {
     let mut results = Vec::new();
-    let open = format!("<{}", tag);
-    let close = format!("</{}>", tag);
+    let mut open = String::with_capacity(1 + tag.len());
+    let _ = write!(open, "<{}", tag);
+    let mut close = String::with_capacity(3 + tag.len());
+    let _ = write!(close, "</{}>", tag);
 
     let mut search_from = 0;
     while let Some(start) = xml[search_from..].find(&open) {
@@ -473,7 +490,7 @@ fn extract_all_tag_contents(xml: &str, tag: &str) -> Vec<String> {
 
         let text = xml[content_start..content_end].trim();
         if !text.is_empty() {
-            results.push(unescape_xml(text));
+            results.push(unescape_xml(text).into_owned());
         }
 
         search_from = content_end + close.len();
@@ -484,8 +501,10 @@ fn extract_all_tag_contents(xml: &str, tag: &str) -> Vec<String> {
 
 /// Extracts a section between `<tag...>` and `</tag>`.
 fn extract_section<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{}", tag);
-    let close = format!("</{}>", tag);
+    let mut open = String::with_capacity(1 + tag.len());
+    let _ = write!(open, "<{}", tag);
+    let mut close = String::with_capacity(3 + tag.len());
+    let _ = write!(close, "</{}>", tag);
 
     let start = xml.find(&open)?;
     let content_start = xml[start..].find('>')? + start + 1;
@@ -503,7 +522,7 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
             let value_start = start + pat.len();
             let quote = tag.as_bytes()[start + pat.len() - 1] as char;
             if let Some(end) = tag[value_start..].find(quote) {
-                return Some(unescape_xml(&tag[value_start..value_start + end]));
+                return Some(unescape_xml(&tag[value_start..value_start + end]).into_owned());
             }
         }
     }
@@ -576,12 +595,12 @@ fn guess_media_type(filename: &str) -> &'static str {
     }
 }
 
-fn unescape_xml(s: &str) -> String {
+fn unescape_xml(s: &str) -> Cow<'_, str> {
     let bytes = s.as_bytes();
-    // Fast path: if no ampersand, return clone
+    // Fast path: if no ampersand, borrow — zero allocation.
     let first_amp = match memchr::memchr(b'&', bytes) {
         Some(pos) => pos,
-        None => return s.to_string(),
+        None => return Cow::Borrowed(s),
     };
 
     let mut result = String::with_capacity(s.len());
@@ -619,7 +638,7 @@ fn unescape_xml(s: &str) -> String {
             i = next_amp;
         }
     }
-    result
+    Cow::Owned(result)
 }
 
 #[cfg(test)]

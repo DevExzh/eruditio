@@ -2,10 +2,11 @@ use std::fmt::Write as FmtWrite;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive, push_escape_html};
+use crate::formats::common::xml_utils;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
+use rayon::prelude::*;
 use std::io::{Read, Write};
 
 /// FB2 format reader.
@@ -20,13 +21,20 @@ impl Fb2Reader {
 
 impl FormatReader for Fb2Reader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut contents = String::new();
-        (&mut *reader)
-            .take(MAX_INPUT_SIZE)
-            .read_to_string(&mut contents)?;
+        let contents = crate::formats::common::read_string_capped(reader)?;
 
         if contents.trim().is_empty() {
             return Err(EruditioError::Format("Empty FB2 input".into()));
+        }
+
+        // Reject non-XML input early (e.g. binary garbage).
+        // FB2 must contain `<FictionBook` or at minimum look like XML.
+        let trimmed = contents.trim_start();
+        if !trimmed.starts_with("<?xml")
+            && !trimmed.starts_with("<FictionBook")
+            && !trimmed.starts_with("<fictionbook")
+        {
+            return Err(EruditioError::Format("Not a valid FB2 document".into()));
         }
 
         let mut xml_reader = XmlReader::from_str(&contents);
@@ -40,7 +48,10 @@ impl FormatReader for Fb2Reader {
         let mut current_text = String::with_capacity(256);
         let mut in_body = false;
         let mut current_section_title = None;
-        let mut current_section_content = String::with_capacity(4096);
+        // Scale section buffer with input — a typical chapter is 1/8 to 1/4 of
+        // the total input.  Clamped to [4096, 512K] to avoid extreme cases.
+        let section_cap = (contents.len() / 8).clamp(4096, 512 * 1024);
+        let mut current_section_content = String::with_capacity(section_cap);
         let mut section_counter: u32 = 0;
         // Reusable buffer for small format strings (section IDs, image hrefs).
         let mut fmt_buf = String::with_capacity(32);
@@ -60,23 +71,20 @@ impl FormatReader for Fb2Reader {
                     if tag_bytes == b"body" {
                         in_body = true;
                     } else if tag_bytes == b"binary" {
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"id" => {
-                                    current_binary_id =
-                                        Some(crate::formats::common::text_utils::bytes_to_string(
-                                            &attr.value,
-                                        ));
-                                },
-                                b"content-type" => {
-                                    current_binary_ctype =
-                                        Some(crate::formats::common::text_utils::bytes_to_string(
-                                            &attr.value,
-                                        ));
-                                },
-                                _ => {},
-                            }
-                        }
+                        current_binary_id = e
+                            .try_get_attribute(b"id")
+                            .ok()
+                            .flatten()
+                            .map(|a| {
+                                crate::formats::common::text_utils::bytes_to_string(&a.value)
+                            });
+                        current_binary_ctype = e
+                            .try_get_attribute(b"content-type")
+                            .ok()
+                            .flatten()
+                            .map(|a| {
+                                crate::formats::common::text_utils::bytes_to_string(&a.value)
+                            });
                     } else if tag_bytes == b"section" && in_body {
                         // Entering a (possibly nested) section. If there is
                         // already accumulated content from the parent section,
@@ -114,10 +122,7 @@ impl FormatReader for Fb2Reader {
                 Ok(Event::Text(ref e)) => {
                     // Reuse the buffer instead of allocating a new String per event.
                     current_text.clear();
-                    match std::str::from_utf8(e.as_ref()) {
-                        Ok(s) => current_text.push_str(s),
-                        Err(_) => current_text.push_str(&String::from_utf8_lossy(e.as_ref())),
-                    }
+                    xml_utils::push_text_bytes(&mut current_text, e.as_ref());
                 },
                 Ok(Event::End(ref e)) => {
                     let name_raw = e.name();
@@ -125,9 +130,15 @@ impl FormatReader for Fb2Reader {
 
                     if tag_bytes == b"binary" {
                         if let Some(id) = current_binary_id.take() {
-                            // Strip newlines in-place to avoid allocating a copy
-                            // of potentially large (100KB+) base64 blocks.
-                            current_text.retain(|c| c != '\n' && c != '\r');
+                            // Strip newlines at the byte level — base64 is pure
+                            // ASCII so this is safe and avoids the per-char
+                            // UTF-8 boundary overhead of `String::retain`.
+                            // SAFETY: removing ASCII bytes (0x0A, 0x0D) from a
+                            // valid UTF-8 string keeps the string valid UTF-8.
+                            unsafe {
+                                let bytes = current_text.as_mut_vec();
+                                bytes.retain(|&b| b != b'\n' && b != b'\r');
+                            }
                             let decoded = base64_simd::STANDARD
                                 .decode_to_vec(current_text.trim())
                                 .unwrap_or_default();
@@ -377,7 +388,13 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
             // Parse the tag
             if let Some(gt) = memchr::memchr(b'>', &bytes[pos..]) {
                 let tag_bytes = &bytes[pos..pos + gt + 1];
-                let tag_str = std::str::from_utf8(tag_bytes).unwrap_or("");
+                // HTML tags are ASCII — skip full UTF-8 validation.
+                let tag_str = if tag_bytes.is_ascii() {
+                    // SAFETY: all bytes < 0x80, which is valid UTF-8.
+                    unsafe { std::str::from_utf8_unchecked(tag_bytes) }
+                } else {
+                    std::str::from_utf8(tag_bytes).unwrap_or("")
+                };
 
                 // --- <head> / </head>: skip everything in the HTML head ---
                 if starts_with_ci(tag_str, "<head")
@@ -995,9 +1012,15 @@ fn generate_fb2(book: &Book) -> String {
     // Calibre's use of <empty-line/> for section separation).
     let mut section_written = false;
 
-    for chapter in &book.chapter_views() {
+    let chapters = book.chapter_views();
+    // Pre-compute FB2 paragraph conversions in parallel.
+    let fb2_contents: Vec<String> = chapters
+        .par_iter()
+        .map(|ch| html_to_fb2_paragraphs(ch.content))
+        .collect();
+
+    for (chapter, fb2_content) in chapters.iter().zip(fb2_contents.iter()) {
         // Convert HTML content to FB2 paragraphs.
-        let fb2_content = html_to_fb2_paragraphs(chapter.content);
 
         // Skip chapters that produce no visible content after conversion
         // (e.g. the cover page wrapper whose only content is an <img> tag,

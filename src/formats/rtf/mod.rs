@@ -9,7 +9,6 @@ pub mod writer;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 use tokenizer::{RtfToken, tokenize};
 
@@ -28,8 +27,7 @@ impl RtfReader {
 
 impl FormatReader for RtfReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut data = Vec::new();
-        (&mut *reader).take(MAX_INPUT_SIZE).read_to_end(&mut data)?;
+        let data = crate::formats::common::read_capped(reader)?;
 
         // Verify RTF magic.
         if !data.starts_with(b"{\\rtf") {
@@ -118,14 +116,14 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
         title: None,
         author: None,
         subject: None,
-        html_content: String::new(),
+        html_content: String::with_capacity(tokens.len() * 8),
         images: Vec::new(),
     };
 
     let mut group_depth = 0i32;
     let mut in_info = false;
     let mut info_depth = 0i32;
-    let mut current_info_field: Option<String> = None;
+    let mut current_info_field: u8 = 0; // 0=none, 1=title, 2=author, 3=subject
     let mut info_text = String::new();
 
     // Formatting state.
@@ -135,7 +133,6 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
 
     // Track ignorable destinations (groups starting with \*).
     let mut skip_depth: Option<i32> = None;
-    let mut saw_star = false;
 
     // Image extraction state.
     let mut in_pict = false;
@@ -145,22 +142,28 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
     let mut pict_count: usize = 0;
 
     // Known destination keywords to skip.
-    let skip_destinations = [
-        "fonttbl",
-        "colortbl",
-        "stylesheet",
-        "header",
-        "footer",
-        "footnote",
-        "field",
-        "fldinst",
-        "fldrslt",
-        "datafield",
-        "listtable",
-        "listoverridetable",
-        "revtbl",
-        "rsidtbl",
-    ];
+    // Using a function with match (trie-compiled) instead of array .contains()
+    // to eliminate O(14) linear string scan per ControlWord token.
+    #[inline]
+    fn is_skip_destination(name: &str) -> bool {
+        matches!(
+            name,
+            "fonttbl"
+                | "colortbl"
+                | "stylesheet"
+                | "header"
+                | "footer"
+                | "footnote"
+                | "field"
+                | "fldinst"
+                | "fldrslt"
+                | "datafield"
+                | "listtable"
+                | "listoverridetable"
+                | "revtbl"
+                | "rsidtbl"
+        )
+    }
 
     for token in tokens {
         // Handle skip mode — skip everything in ignorable destinations.
@@ -187,7 +190,6 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                 if in_info {
                     info_depth += 1;
                 }
-                saw_star = false;
             },
             RtfToken::GroupEnd => {
                 // Finalize image if closing a pict group.
@@ -208,9 +210,9 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                             let id = format!("rtf_img_{}", pict_count);
                             let href = format!("images/{}.{}", id, ext);
                             // Add image reference to HTML.
-                            state
-                                .html_content
-                                .push_str(&format!("<img src=\"{}\" />", href));
+                            state.html_content.push_str("<img src=\"");
+                            state.html_content.push_str(&href);
+                            state.html_content.push_str("\" />");
                             state.images.push((id, bytes, media_type.to_string()));
                             pict_count += 1;
                         }
@@ -219,14 +221,15 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                 }
 
                 // Flush info field if we're closing one.
-                if in_info && let Some(field) = current_info_field.take() {
+                if in_info && current_info_field != 0 {
                     let text = info_text.trim().to_string();
-                    match field.as_str() {
-                        "title" => state.title = Some(text),
-                        "author" => state.author = Some(text),
-                        "subject" => state.subject = Some(text),
+                    match current_info_field {
+                        1 => state.title = Some(text),
+                        2 => state.author = Some(text),
+                        3 => state.subject = Some(text),
                         _ => {},
                     }
+                    current_info_field = 0;
                     info_text.clear();
                 }
 
@@ -248,30 +251,38 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                 }
 
                 group_depth -= 1;
-                saw_star = false;
             },
             RtfToken::ControlSymbol('*') => {
-                saw_star = true;
+                // \* marks ignorable destination — currently handled by
+                // is_skip_destination which covers all known destinations.
             },
             RtfToken::ControlWord { name, param } => {
                 // Check if this starts a known skip destination.
-                if (saw_star || skip_destinations.contains(name))
-                    && group_depth > 0
-                    && skip_destinations.contains(name)
-                {
+                if group_depth > 0 && is_skip_destination(name) {
                     skip_depth = Some(1);
-                    saw_star = false;
                     continue;
                 }
-                saw_star = false;
 
                 match *name {
                     "info" => {
                         in_info = true;
                         info_depth = 1;
                     },
-                    "title" | "author" | "subject" | "keywords" if in_info => {
-                        current_info_field = Some(name.to_string());
+                    "title" if in_info => {
+                        current_info_field = 1;
+                        info_text.clear();
+                    },
+                    "author" if in_info => {
+                        current_info_field = 2;
+                        info_text.clear();
+                    },
+                    "subject" if in_info => {
+                        current_info_field = 3;
+                        info_text.clear();
+                    },
+                    "keywords" if in_info => {
+                        // keywords: consume but ignore (no field code)
+                        current_info_field = 0;
                         info_text.clear();
                     },
                     "par" | "pard" if !in_info => {
@@ -344,7 +355,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     }
                     continue; // don't add to HTML
                 }
-                if in_info && current_info_field.is_some() {
+                if in_info && current_info_field != 0 {
                     info_text.push_str(text);
                 } else if !in_info {
                     // Ensure we're in a paragraph.
@@ -353,12 +364,11 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                         in_paragraph = true;
                     }
                     // Escape for HTML.
-                    let escaped = crate::formats::common::text_utils::escape_html(text);
-                    state.html_content.push_str(&escaped);
+                    crate::formats::common::text_utils::push_escape_html(&mut state.html_content, text);
                 }
             },
             RtfToken::Unicode(code) => {
-                if in_info && current_info_field.is_some() {
+                if in_info && current_info_field != 0 {
                     if let Some(ch) = i32_to_char(*code) {
                         info_text.push(ch);
                     }
@@ -382,7 +392,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                 }
                 // Treat as Windows-1252 (the default RTF encoding).
                 let ch = cp1252_to_char(*byte);
-                if in_info && current_info_field.is_some() {
+                if in_info && current_info_field != 0 {
                     info_text.push(ch);
                 } else if !in_info {
                     if !in_paragraph {
@@ -399,7 +409,7 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                     '_' => '\u{2011}', // non-breaking hyphen
                     c => *c,
                 };
-                if in_info && current_info_field.is_some() {
+                if in_info && current_info_field != 0 {
                     info_text.push(ch);
                 } else if !in_info {
                     if !in_paragraph {
@@ -422,11 +432,22 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
 
 /// Splits HTML content at pagebreak markers into separate chapters.
 fn split_rtf_content(html: &str) -> Vec<(Option<String>, String)> {
-    let parts: Vec<&str> = html.split("<!-- pagebreak -->").collect();
+    // Use memchr::memmem for SIMD-accelerated pattern search instead of
+    // std's TwoWaySearcher which dominated this function at 11.92% of RTF Ir.
+    let needle = b"<!-- pagebreak -->";
+    let positions: Vec<usize> = memchr::memmem::find_iter(html.as_bytes(), needle).collect();
 
-    if parts.len() <= 1 {
+    if positions.is_empty() {
         return Vec::new();
     }
+
+    let mut parts = Vec::with_capacity(positions.len() + 1);
+    let mut last = 0;
+    for &pos in &positions {
+        parts.push(&html[last..pos]);
+        last = pos + needle.len();
+    }
+    parts.push(&html[last..]);
 
     parts
         .into_iter()

@@ -43,6 +43,21 @@ impl ManifestData {
         }
     }
 
+    /// Takes the text content out of this value, leaving `Empty` in its place.
+    ///
+    /// Returns `None` if this is not a `Text` variant. This avoids cloning the
+    /// inner `String` when the caller needs ownership and the original slot will
+    /// be overwritten anyway.
+    pub fn take_text(&mut self) -> Option<String> {
+        match self {
+            ManifestData::Text(_) => match std::mem::replace(self, ManifestData::Empty) {
+                ManifestData::Text(s) => Some(s),
+                _ => unreachable!(),
+            },
+            _ => None,
+        }
+    }
+
     /// Returns `true` if the data has not been loaded.
     pub fn is_empty(&self) -> bool {
         matches!(self, ManifestData::Empty)

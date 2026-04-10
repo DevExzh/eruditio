@@ -1,6 +1,5 @@
 use crate::domain::{Book, FormatReader, FormatWriter, TocItem};
 use crate::error::Result;
-use crate::formats::common::MAX_INPUT_SIZE;
 use std::io::{Read, Write};
 use zip::ZipArchive;
 
@@ -24,10 +23,7 @@ impl EpubReader {
 
 impl FormatReader for EpubReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut buffer = Vec::new();
-        (&mut *reader)
-            .take(MAX_INPUT_SIZE)
-            .read_to_end(&mut buffer)?;
+        let buffer = crate::formats::common::read_capped(reader)?;
         let cursor = std::io::Cursor::new(buffer);
 
         let mut archive = ZipArchive::new(cursor)?;
@@ -41,10 +37,10 @@ impl FormatReader for EpubReader {
         // 3. Parse the full OPF (metadata, manifest, spine, guide)
         let opf_data = opf::parse_opf(&mut archive, &opf_path)?;
 
-        // 4. Load all manifest item data from the ZIP
+        // 4. Load all manifest item data from the ZIP (parallel decompression)
         let opf_dir = content::opf_directory(&opf_path);
         let mut manifest = opf_data.manifest;
-        content::load_manifest_data(&mut archive, &mut manifest, &opf_dir)?;
+        content::load_manifest_data_parallel(archive, &mut manifest, &opf_dir)?;
 
         // 5. Parse TOC (prefer EPUB3 nav, fall back to NCX)
         let toc = parse_toc(&manifest, &opf_data.ncx_id);

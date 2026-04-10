@@ -9,6 +9,7 @@ use crate::domain::manifest::{Manifest, ManifestItem};
 use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::Result;
 use crate::formats::epub::{EpubReader, EpubWriter};
+use rayon::prelude::*;
 use std::io::{Read, Write};
 
 /// Kepub format reader.
@@ -66,22 +67,29 @@ impl FormatWriter for KepubWriter {
 /// that need Kobo spans are transformed directly from the original (avoiding
 /// the clone-then-replace pattern). Binary items get a cheap `Arc` bump.
 fn add_kobo_spans(book: &Book) -> Book {
+    // Process manifest items in parallel — insert_kobo_spans is CPU-intensive.
+    let items: Vec<_> = book.manifest.iter().collect();
+    let processed: Vec<ManifestItem> = items
+        .into_par_iter()
+        .map(|item| {
+            if (item.media_type.contains("html") || item.media_type.contains("xml"))
+                && let Some(text) = item.data.as_text()
+            {
+                let mut modified =
+                    ManifestItem::new(&item.id, &item.href, &item.media_type)
+                        .with_text(insert_kobo_spans(text));
+                modified.fallback.clone_from(&item.fallback);
+                modified.properties.clone_from(&item.properties);
+                modified
+            } else {
+                item.clone()
+            }
+        })
+        .collect();
+
     let mut manifest = Manifest::new();
-    for item in book.manifest.iter() {
-        if (item.media_type.contains("html") || item.media_type.contains("xml"))
-            && let Some(text) = item.data.as_text()
-        {
-            // Build the item directly with wrapped text, avoiding a clone of
-            // the original text content that would be immediately discarded.
-            let mut modified =
-                ManifestItem::new(&item.id, &item.href, &item.media_type)
-                    .with_text(insert_kobo_spans(text));
-            modified.fallback.clone_from(&item.fallback);
-            modified.properties.clone_from(&item.properties);
-            manifest.insert(modified);
-        } else {
-            manifest.insert(item.clone());
-        }
+    for item in processed {
+        manifest.insert(item);
     }
 
     Book {

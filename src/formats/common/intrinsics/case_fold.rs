@@ -107,12 +107,32 @@ mod x86 {
             i += 16;
         }
 
-        // --- scalar tail ---
-        while i < len {
-            if !a[i].eq_ignore_ascii_case(&b[i]) {
-                return false;
+        // --- overlapping SSE2 tail (branchless) ---
+        // Instead of a per-byte scalar loop for the remaining 0-15 bytes,
+        // re-check the last 16 bytes with a single SSE2 load.  The overlap
+        // with already-verified bytes is harmless.
+        if i < len {
+            if len >= 16 {
+                unsafe {
+                    let va = _mm_loadu_si128(a.as_ptr().add(len - 16) as *const __m128i);
+                    let vb = _mm_loadu_si128(b.as_ptr().add(len - 16) as *const __m128i);
+                    let la = to_lower_sse2(va);
+                    let lb = to_lower_sse2(vb);
+                    let cmp = _mm_cmpeq_epi8(la, lb);
+                    let mask = _mm_movemask_epi8(cmp) as u32;
+                    if mask != 0xFFFF {
+                        return false;
+                    }
+                }
+            } else {
+                // Input shorter than 16 bytes total: scalar fallback.
+                while i < len {
+                    if !a[i].eq_ignore_ascii_case(&b[i]) {
+                        return false;
+                    }
+                    i += 1;
+                }
             }
-            i += 1;
         }
         true
     }
@@ -144,12 +164,26 @@ mod x86 {
             i += 16;
         }
 
-        // --- scalar tail ---
-        while i < len {
-            if !a[i].eq_ignore_ascii_case(&b[i]) {
-                return false;
+        // --- overlapping SSE2 tail ---
+        if i < len && len >= 16 {
+            unsafe {
+                let va = _mm_loadu_si128(a.as_ptr().add(len - 16) as *const __m128i);
+                let vb = _mm_loadu_si128(b.as_ptr().add(len - 16) as *const __m128i);
+                let la = to_lower_sse2(va);
+                let lb = to_lower_sse2(vb);
+                let cmp = _mm_cmpeq_epi8(la, lb);
+                let mask = _mm_movemask_epi8(cmp) as u32;
+                if mask != 0xFFFF {
+                    return false;
+                }
             }
-            i += 1;
+        } else {
+            while i < len {
+                if !a[i].eq_ignore_ascii_case(&b[i]) {
+                    return false;
+                }
+                i += 1;
+            }
         }
         true
     }

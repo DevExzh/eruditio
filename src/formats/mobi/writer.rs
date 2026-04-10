@@ -104,7 +104,7 @@ fn encode_vwi(value: u32) -> ([u8; 5], usize) {
 /// the position of the chapter start within the uncompressed HTML text.
 ///
 /// Returns `(indx_header_record, indx_data_record, cncx_record)`.
-fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn build_ncx_indx(chapters: &[(Cow<'_, str>, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     // Cap entries to prevent u16 overflow in IDXT offsets.
     // Each entry is ~18 bytes; with 192-byte header, u16 fits ~3600 entries.
     let max_entries = 3000;
@@ -909,10 +909,10 @@ fn find_id_positions(content: &str) -> AHashMap<&str, usize> {
 ///
 /// Returns the modified content and a map from fragment_id to its byte offset
 /// (relative to the content string, AFTER pagebreak insertion).
-fn insert_pagebreaks_for_fragments<'a>(
+fn insert_pagebreaks_for_fragments<'a, 'b>(
     content: &'a str,
-    fragment_ids: &AHashSet<&str>,
-) -> (Cow<'a, str>, AHashMap<String, usize>) {
+    fragment_ids: &AHashSet<&'b str>,
+) -> (Cow<'a, str>, AHashMap<&'b str, usize>) {
     if fragment_ids.is_empty() {
         return (Cow::Borrowed(content), AHashMap::new());
     }
@@ -955,7 +955,7 @@ fn insert_pagebreaks_for_fragments<'a>(
     for &frag_id in fragment_ids {
         if let Some(&orig_pos) = id_positions.get(frag_id) {
             let shift = insertions.partition_point(|(pos, _)| *pos <= orig_pos) * pb_len;
-            offsets.insert(frag_id.to_string(), orig_pos + shift);
+            offsets.insert(frag_id, orig_pos + shift);
         }
     }
 
@@ -976,7 +976,7 @@ fn insert_pagebreaks_for_fragments<'a>(
 ///
 /// Returns `(html, all_entries)` where `all_entries` is a `Vec<(title, byte_offset)>`
 /// for every TOC entry (at all depth levels) in the generated HTML.
-fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
+fn book_to_mobi_html<'a>(book: &'a Book) -> (String, Vec<(Cow<'a, str>, usize)>) {
     // Collect chapter info: (spine_index, toc_title_if_any).
     let mut chapter_info: Vec<(usize, Option<&str>)> = Vec::new();
     let toc = &book.toc;
@@ -1246,22 +1246,23 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
 
     // Build the navigation entries vector: (title, byte_offset) for ALL TOC entries.
     // These are used for INDX record generation.
-    let mut all_entries: Vec<(String, usize)> = Vec::with_capacity(all_toc_entries.len());
+    let mut all_entries: Vec<(Cow<'a, str>, usize)> = Vec::with_capacity(all_toc_entries.len());
     // Track seen offsets to avoid duplicate INDX entries at the same position.
     let mut seen_offsets = AHashSet::new();
     for (i, (_depth, entry_title, _href)) in all_toc_entries.iter().enumerate() {
         let offset = toc_target_offsets[i];
         if seen_offsets.insert(offset) {
-            all_entries.push((entry_title.to_string(), offset));
+            all_entries.push((Cow::Borrowed(*entry_title), offset));
         }
     }
 
     // If the TOC tree was empty but chapters had titles, fall back to chapter-level entries.
     if all_entries.is_empty() {
         for (info_idx, (_spine_idx, ch_title)) in chapter_info.iter().enumerate() {
-            let title = ch_title
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("Chapter {}", info_idx + 1));
+            let title: Cow<'a, str> = match ch_title {
+                Some(s) => Cow::Borrowed(*s),
+                None => Cow::Owned(format!("Chapter {}", info_idx + 1)),
+            };
             let offset = chapter_start_offsets[info_idx];
             all_entries.push((title, offset));
         }
@@ -1313,7 +1314,7 @@ impl<'a> TocTitleMap<'a> {
     }
 
     /// Look up a title for the given manifest href.
-    fn get(&self, href: &str) -> Option<&str> {
+    fn get(&self, href: &str) -> Option<&'a str> {
         if let Some(title) = self.map.get(href) {
             return Some(title);
         }
@@ -1360,7 +1361,18 @@ fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
         return Cow::Borrowed(&content[inner_start..inner_end]);
     }
 
-    // No <body> found — strip individual wrapper elements as fallback.
+    // No <body> found — check if any wrapper elements exist before allocating.
+    let has_wrapper = memchr::memmem::find(bytes, b"<?xml").is_some()
+        || memchr::memmem::find(bytes, b"<!DOCTYPE").is_some()
+        || memchr::memmem::find(bytes, b"<!doctype").is_some()
+        || memchr::memmem::find(bytes, b"<html").is_some()
+        || memchr::memmem::find(bytes, b"<HTML").is_some();
+
+    if !has_wrapper {
+        return Cow::Borrowed(content);
+    }
+
+    // Strip individual wrapper elements as fallback.
     let mut s = content.to_string();
 
     // Remove <?xml ...?> processing instructions.
@@ -2580,10 +2592,10 @@ mod tests {
 
     #[test]
     fn build_ncx_indx_produces_three_records() {
-        let chapters = vec![
-            ("Chapter 1".to_string(), 100),
-            ("Chapter 2".to_string(), 5000),
-            ("Chapter 3".to_string(), 12000),
+        let chapters: Vec<(Cow<str>, usize)> = vec![
+            (Cow::Borrowed("Chapter 1"), 100),
+            (Cow::Borrowed("Chapter 2"), 5000),
+            (Cow::Borrowed("Chapter 3"), 12000),
         ];
         let (indx_header, indx_data, cncx) = build_ncx_indx(&chapters);
 
@@ -2601,7 +2613,7 @@ mod tests {
 
     #[test]
     fn indx_header_starts_with_magic_and_contains_tagx() {
-        let chapters = vec![("Ch1".to_string(), 0), ("Ch2".to_string(), 1000)];
+        let chapters: Vec<(Cow<str>, usize)> = vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
         let (indx_header, _, _) = build_ncx_indx(&chapters);
 
         // Starts with "INDX" magic.
@@ -2618,7 +2630,7 @@ mod tests {
 
     #[test]
     fn indx_data_starts_with_magic_and_contains_idxt() {
-        let chapters = vec![("Ch1".to_string(), 0), ("Ch2".to_string(), 1000)];
+        let chapters: Vec<(Cow<str>, usize)> = vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
         let (_, indx_data, _) = build_ncx_indx(&chapters);
 
         // Starts with "INDX" magic.
@@ -2635,9 +2647,9 @@ mod tests {
 
     #[test]
     fn cncx_record_contains_chapter_titles() {
-        let chapters = vec![
-            ("Introduction".to_string(), 0),
-            ("The Adventure Begins".to_string(), 5000),
+        let chapters: Vec<(Cow<str>, usize)> = vec![
+            (Cow::Borrowed("Introduction"), 0),
+            (Cow::Borrowed("The Adventure Begins"), 5000),
         ];
         let (_, _, cncx) = build_ncx_indx(&chapters);
 
@@ -2796,7 +2808,7 @@ mod tests {
     fn indx_header_has_correct_cncx_count() {
         use crate::formats::common::palm_db::read_u32_be;
 
-        let chapters = vec![("Ch1".to_string(), 0), ("Ch2".to_string(), 1000)];
+        let chapters: Vec<(Cow<str>, usize)> = vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
         let (indx_header, _, _) = build_ncx_indx(&chapters);
 
         // CNCX record count at header offset 52 should be 1.

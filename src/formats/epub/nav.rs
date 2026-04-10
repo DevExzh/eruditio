@@ -52,10 +52,8 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
                         current_href.clear();
                         has_current_item = false;
                         item_pushed = false;
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"href" {
-                                current_href = xml_utils::bytes_to_string(&attr.value);
-                            }
+                        if let Some(attr) = e.try_get_attribute(b"href").ok().flatten() {
+                            xml_utils::push_text_bytes(&mut current_href, &attr.value);
                         }
                     },
                     _ => {},
@@ -63,10 +61,7 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
             },
             Ok(Event::Text(ref e)) => {
                 if in_anchor {
-                    match std::str::from_utf8(e.as_ref()) {
-                        Ok(s) => current_title.push_str(s),
-                        Err(_) => current_title.push_str(&String::from_utf8_lossy(e.as_ref())),
-                    }
+                    xml_utils::push_text_bytes(&mut current_title, e.as_ref());
                 }
             },
             Ok(Event::End(ref e)) => {
@@ -129,12 +124,15 @@ pub fn parse_nav(xhtml: &str) -> Result<Vec<TocItem>> {
 
 /// Checks if a `<nav>` element has `epub:type="toc"`.
 fn is_toc_nav(e: &quick_xml::events::BytesStart<'_>) -> bool {
+    // Try the standard epub:type attribute first, then fall back to
+    // iterating attributes to handle arbitrary namespace prefixes.
+    if let Some(attr) = e.try_get_attribute(b"epub:type").ok().flatten() {
+        return attr.value.as_ref().windows(3).any(|w| w == b"toc");
+    }
+    // Fallback: scan for any `*:type` attribute.
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
-        // Match both "epub:type" and any namespaced ":type" suffix.
-        if (key == b"epub:type" || key.ends_with(b":type"))
-            && attr.value.as_ref().windows(3).any(|w| w == b"toc")
-        {
+        if key.ends_with(b":type") && attr.value.as_ref().windows(3).any(|w| w == b"toc") {
             return true;
         }
     }

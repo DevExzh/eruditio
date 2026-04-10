@@ -8,6 +8,7 @@ use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use flate2::{Compress, Decompress};
 use ahash::AHashMap as HashMap;
+use std::fmt::Write as FmtWrite;
 use std::io::{Read, Write};
 
 /// RB ebook format reader.
@@ -101,10 +102,14 @@ impl FormatReader for RbReader {
             b_is_body.cmp(&a_is_body)
         });
 
+        let mut id_buf = String::with_capacity(16);
         for (idx, entry) in html_entries.iter().enumerate() {
             let content = decompress_entry(&data, entry)?;
-            let html = crate::formats::common::text_utils::bytes_to_string(&content);
+            let html = String::from_utf8(content)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
 
+            id_buf.clear();
+            let _ = write!(id_buf, "rb_page_{}", idx);
             book.add_chapter(Chapter {
                 title: if entry.name == body_name {
                     book.metadata.title.clone()
@@ -112,7 +117,7 @@ impl FormatReader for RbReader {
                     Some(entry.name.clone())
                 },
                 content: html,
-                id: Some(format!("rb_page_{}", idx)),
+                id: Some(id_buf.clone()),
             });
         }
 
@@ -315,7 +320,7 @@ fn compress_chunked(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Compresses data with raw deflate (wbits=13, no zlib/gzip wrapper).
 fn deflate_wbits13(data: &[u8]) -> Result<Vec<u8>> {
-    let mut compress = Compress::new_with_window_bits(flate2::Compression::default(), false, 13);
+    let mut compress = Compress::new_with_window_bits(flate2::Compression::fast(), false, 13);
     let mut output = vec![0u8; data.len() + 256];
 
     let status = compress

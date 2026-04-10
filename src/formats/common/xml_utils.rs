@@ -4,13 +4,14 @@ use quick_xml::events::BytesStart;
 /// Extracts the value of an attribute from a quick-xml `BytesStart` element.
 /// Returns `None` if the attribute is not present.
 ///
-/// Compares attribute keys at the byte level (XML names are always ASCII),
-/// avoiding a `from_utf8_lossy` conversion per key.
+/// Uses `try_get_attribute` for a single targeted lookup instead of
+/// iterating all attributes, avoiding temporary `Vec<u8>` allocations
+/// for attributes we don't need.
 pub(crate) fn get_attribute(element: &BytesStart<'_>, name: &str) -> Option<String> {
     element
-        .attributes()
+        .try_get_attribute(name.as_bytes())
+        .ok()
         .flatten()
-        .find(|attr| attr.key.as_ref() == name.as_bytes())
         .map(|attr| bytes_to_string(&attr.value))
 }
 
@@ -73,6 +74,28 @@ pub(crate) fn local_tag_name(raw: &[u8]) -> &str {
 /// Escapes special XML characters in text content.
 pub(crate) fn escape_xml(text: &str) -> std::borrow::Cow<'_, str> {
     super::text_utils::escape_xml(text)
+}
+
+/// Pushes XML text event bytes into a `String` buffer with an ASCII fast path.
+///
+/// Three tiers, matching [`bytes_to_string`]:
+/// 1. ASCII-only → `from_utf8_unchecked` (SIMD-accelerated check, no allocation)
+/// 2. Valid non-ASCII UTF-8 → `push_str` directly
+/// 3. Malformed → lossy replacement
+///
+/// This is the zero-allocation counterpart of `bytes_to_string` for hot loops
+/// that accumulate text into a pre-existing buffer.
+#[inline]
+pub(crate) fn push_text_bytes(buf: &mut String, bytes: &[u8]) {
+    if super::intrinsics::is_ascii::is_all_ascii(bytes) {
+        // SAFETY: all bytes are < 0x80, which is valid UTF-8.
+        buf.push_str(unsafe { std::str::from_utf8_unchecked(bytes) });
+    } else {
+        match std::str::from_utf8(bytes) {
+            Ok(s) => buf.push_str(s),
+            Err(_) => buf.push_str(&String::from_utf8_lossy(bytes)),
+        }
+    }
 }
 
 #[cfg(test)]

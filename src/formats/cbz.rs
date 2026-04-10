@@ -117,7 +117,7 @@ fn parse_comic_info(xml: &str, book: &mut Book) {
             },
             Ok(Event::Text(ref e)) => {
                 let text =
-                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
+                    crate::formats::common::text_utils::bytes_to_string(e);
                 if text.trim().is_empty() {
                     continue;
                 }

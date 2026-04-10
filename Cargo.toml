@@ -24,6 +24,7 @@ encoding_rs = "0.8"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp"] }
 clap = { version = "4", features = ["derive"], optional = true }
 base64-simd = "0.8.0"
+crc32fast = "1"
 rayon = "1.11.0"
 
 [features]
@@ -50,6 +51,11 @@ required-features = ["cli"]
 [[bin]]
 name = "memory_profile"
 path = "src/bin/memory_profile.rs"
+required-features = []
+
+[[bin]]
+name = "dhat_profile"
+path = "src/bin/dhat_profile.rs"
 required-features = []
 
 [[bin]]
@@ -84,6 +90,10 @@ harness = false
 [[bench]]
 name = "conversion"
 harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
 
 [profile.bench]
 debug = true       # Required for meaningful flamegraphs

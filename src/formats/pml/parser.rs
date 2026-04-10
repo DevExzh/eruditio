@@ -6,7 +6,11 @@
 use crate::domain::Book;
 use crate::formats::common::html_utils::strip_tags;
 use crate::formats::common::text_utils;
-use crate::formats::common::text_utils::escape_html;
+use crate::formats::common::text_utils::push_escape_html;
+
+/// Pre-computed heading open/close tags to avoid `format!` in the parsing loop.
+const H_OPEN: [&str; 7] = ["", "<h1>", "<h2>", "<h3>", "<h4>", "<h5>", "<h6>"];
+const H_CLOSE: [&str; 7] = ["", "</h1>\n", "</h2>\n", "</h3>\n", "</h4>\n", "</h5>\n", "</h6>\n"];
 
 /// Converts PML markup to HTML.
 pub(crate) fn pml_to_html(pml: &str) -> String {
@@ -60,7 +64,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                     }
                     let title = &pml[title_start..pos];
                     html.push_str("<h1>");
-                    html.push_str(&escape_html(title));
+                    push_escape_html(&mut html, title);
                     html.push_str("</h1>\n");
                 },
                 // Extended headings: \X0 through \X4 → h2 through h6.
@@ -86,9 +90,9 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         pos += 1;
                     }
                     let title = &pml[title_start..pos];
-                    html.push_str(&format!("<h{level}>"));
-                    html.push_str(&escape_html(title));
-                    html.push_str(&format!("</h{level}>\n"));
+                    html.push_str(H_OPEN[level as usize]);
+                    push_escape_html(&mut html, title);
+                    html.push_str(H_CLOSE[level as usize]);
                 },
                 // Bold toggle.
                 b'b' | b'B' => {
@@ -194,7 +198,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         }
                         pos += 1;
                     }
-                    html.push_str(&escape_html(&pml[content_start..pos]));
+                    push_escape_html(&mut html, &pml[content_start..pos]);
                     html.push_str("</div>\n");
                     // Skip the closing \c if present.
                     if pos < len && bytes[pos] == b'\\' {
@@ -216,7 +220,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         }
                         pos += 1;
                     }
-                    html.push_str(&escape_html(&pml[content_start..pos]));
+                    push_escape_html(&mut html, &pml[content_start..pos]);
                     html.push_str("</div>\n");
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 2;
@@ -239,7 +243,9 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                     pos += 1;
                     let target = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!("<a href=\"{}\">", escape_html(&target)));
+                    html.push_str("<a href=\"");
+                    push_escape_html(&mut html, &target);
+                    html.push_str("\">");
                     // Read link text until closing \q.
                     let text_start = pos;
                     while pos < len {
@@ -248,7 +254,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         }
                         pos += 1;
                     }
-                    html.push_str(&escape_html(&pml[text_start..pos]));
+                    push_escape_html(&mut html, &pml[text_start..pos]);
                     html.push_str("</a>");
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 2; // skip closing \q
@@ -259,30 +265,35 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                     pos += 1;
                     let target_id = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!("<a id=\"{}\"></a>", escape_html(&target_id)));
+                    html.push_str("<a id=\"");
+                    push_escape_html(&mut html, &target_id);
+                    html.push_str("\"></a>");
                 },
                 // Image: \m="filename.png"
                 b'm' => {
                     pos += 1;
                     let filename = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!(
-                        "<img src=\"{}\" alt=\"\" />",
-                        escape_html(&filename)
-                    ));
+                    html.push_str("<img src=\"");
+                    push_escape_html(&mut html, &filename);
+                    html.push_str("\" alt=\"\" />");
                 },
                 // Footnote reference: \Fn="id" or sidebar reference: \Sd="id"
                 b'F' if pos + 1 < len && bytes[pos + 1] == b'n' => {
                     pos += 2;
                     let fn_id = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!("<a href=\"#fn-{}\">[*]</a>", escape_html(&fn_id)));
+                    html.push_str("<a href=\"#fn-");
+                    push_escape_html(&mut html, &fn_id);
+                    html.push_str("\">[*]</a>");
                 },
                 b'S' if pos + 1 < len && bytes[pos + 1] == b'd' => {
                     pos += 2;
                     let sb_id = read_quoted_value(pml, &mut pos);
                     ensure_paragraph(&mut html, &mut in_paragraph);
-                    html.push_str(&format!("<a href=\"#sb-{}\">[*]</a>", escape_html(&sb_id)));
+                    html.push_str("<a href=\"#sb-");
+                    push_escape_html(&mut html, &sb_id);
+                    html.push_str("\">[*]</a>");
                 },
                 // Footnote content: \FN="id"...\FN
                 b'F' if pos + 1 < len && bytes[pos + 1] == b'N' => {
@@ -292,7 +303,9 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         html.push_str("</p>\n");
                         in_paragraph = false;
                     }
-                    html.push_str(&format!("<div id=\"fn-{}\"><p>", escape_html(&fn_id)));
+                    html.push_str("<div id=\"fn-");
+                    push_escape_html(&mut html, &fn_id);
+                    html.push_str("\"><p>");
                     // Content until closing \FN.
                     let content_start = pos;
                     loop {
@@ -312,7 +325,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                             },
                         }
                     }
-                    html.push_str(&escape_html(&pml[content_start..pos]));
+                    push_escape_html(&mut html, &pml[content_start..pos]);
                     html.push_str("</p></div>\n");
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 3; // skip \FN
@@ -326,7 +339,9 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         html.push_str("</p>\n");
                         in_paragraph = false;
                     }
-                    html.push_str(&format!("<div id=\"sb-{}\"><p>", escape_html(&sb_id)));
+                    html.push_str("<div id=\"sb-");
+                    push_escape_html(&mut html, &sb_id);
+                    html.push_str("\"><p>");
                     let content_start = pos;
                     loop {
                         match memchr::memchr(b'\\', &bytes[pos..len]) {
@@ -345,7 +360,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                             },
                         }
                     }
-                    html.push_str(&escape_html(&pml[content_start..pos]));
+                    push_escape_html(&mut html, &pml[content_start..pos]);
                     html.push_str("</p></div>\n");
                     if pos < len && bytes[pos] == b'\\' {
                         pos += 3; // skip \SB
@@ -358,12 +373,14 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         in_paragraph = false;
                     }
                     let width = read_quoted_value(pml, &mut pos);
-                    let w = if width.is_empty() {
-                        "100%".to_string()
+                    html.push_str("<hr style=\"width: ");
+                    if width.is_empty() {
+                        html.push_str("100%");
                     } else {
-                        format!("{}%", width)
-                    };
-                    html.push_str(&format!("<hr style=\"width: {};\" />\n", w));
+                        html.push_str(&width);
+                        html.push('%');
+                    }
+                    html.push_str(";\" />\n");
                     pos += 1;
                 },
                 // Em dash.
@@ -441,7 +458,7 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
             let remaining = &bytes[pos..len];
             let skip = memchr::memchr3(b'\\', b'\n', b'\r', remaining).unwrap_or(remaining.len());
             pos += skip;
-            html.push_str(&escape_html(&pml[start..pos]));
+            push_escape_html(&mut html, &pml[start..pos]);
         }
     }
 
@@ -454,56 +471,95 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
 }
 
 /// Splits HTML (converted from PML) into chapters at h1/pagebreak boundaries.
+///
+/// Uses byte-level scanning with `memchr` instead of character-by-character
+/// iteration to avoid O(n) per-char push overhead.
 pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
     let mut chapters = Vec::new();
 
-    // Split on h1 tags or pagebreak markers.
-    let mut current_title: Option<String> = None;
-    let mut current_content = String::new();
-    let mut pos = 0;
     let bytes = html.as_bytes();
+    let pb_needle = b"<!-- pagebreak -->";
 
-    while pos < html.len() {
-        // Check for h1 tag using case-insensitive prefix match.
-        let remaining = &bytes[pos..];
-        if remaining.len() >= 4
-            && remaining[0].eq_ignore_ascii_case(&b'<')
-            && remaining[1].eq_ignore_ascii_case(&b'h')
-            && remaining[2].eq_ignore_ascii_case(&b'1')
-            && (remaining[3] == b'>' || remaining[3] == b' ')
-        {
-            // Save previous chapter if non-empty.
-            if !current_content.trim().is_empty() {
-                chapters.push((current_title.take(), current_content.trim().to_string()));
-                current_content.clear();
-            }
-            // Extract title.
-            let tag_end = html[pos..].find('>').map(|e| pos + e + 1).unwrap_or(pos);
-            let close =
-                text_utils::find_case_insensitive(&bytes[tag_end..], b"</h1>").map(|e| tag_end + e);
-            if let Some(close_pos) = close {
-                current_title = Some(strip_tags(&html[tag_end..close_pos]).trim().to_string());
-                pos = close_pos + 5; // skip </h1>
+    // Pre-lowercase the input once for case-insensitive tag matching.
+    let lowered = text_utils::ascii_lowercase_copy(bytes);
+
+    // Find all split points: h1 opens and pagebreak markers.
+    #[derive(Debug)]
+    enum SplitKind {
+        H1 { title_end: usize },
+        Pagebreak,
+    }
+
+    let mut splits: Vec<(usize, SplitKind)> = Vec::new();
+
+    // Find all <h1 tags.
+    let mut search_from = 0;
+    while let Some(rel) = memchr::memmem::find(&lowered[search_from..], b"<h1") {
+        let abs = search_from + rel;
+        // Verify it's a tag (next byte is > or space).
+        if abs + 3 < bytes.len() && (bytes[abs + 3] == b'>' || bytes[abs + 3] == b' ') {
+            // Find closing </h1>.
+            let tag_end = memchr::memchr(b'>', &bytes[abs..]).map(|e| abs + e + 1).unwrap_or(abs);
+            let close_pos = memchr::memmem::find(&lowered[tag_end..], b"</h1>").map(|e| tag_end + e);
+            let title_end = close_pos.map(|c| c + 5).unwrap_or(tag_end);
+            // Extract title text.
+            if let Some(close) = close_pos {
+                splits.push((abs, SplitKind::H1 { title_end }));
+                // Stash title info — we'll extract it during chapter assembly.
+                let _ = close; // used via title_end
             } else {
-                pos = tag_end;
+                splits.push((abs, SplitKind::H1 { title_end }));
             }
-        } else if html[pos..].starts_with("<!-- pagebreak -->") {
-            if !current_content.trim().is_empty() {
-                chapters.push((current_title.take(), current_content.trim().to_string()));
-                current_content.clear();
-            }
-            pos += "<!-- pagebreak -->".len();
-        } else if let Some(ch) = html[pos..].chars().next() {
-            current_content.push(ch);
-            pos += ch.len_utf8();
-        } else {
-            break;
+        }
+        search_from = abs + 3;
+    }
+
+    // Find all pagebreak markers.
+    search_from = 0;
+    while let Some(rel) = memchr::memmem::find(&bytes[search_from..], pb_needle) {
+        let abs = search_from + rel;
+        splits.push((abs, SplitKind::Pagebreak));
+        search_from = abs + pb_needle.len();
+    }
+
+    if splits.is_empty() {
+        return Vec::new();
+    }
+
+    // Sort by position.
+    splits.sort_by_key(|(pos, _)| *pos);
+
+    // Assemble chapters.
+    let mut current_title: Option<String> = None;
+    let mut last_end = 0;
+
+    for (pos, kind) in &splits {
+        let content_before = html[last_end..*pos].trim();
+        if !content_before.is_empty() {
+            chapters.push((current_title.take(), content_before.to_string()));
+        }
+
+        match kind {
+            SplitKind::H1 { title_end } => {
+                // Extract title from <h1>...</h1>.
+                let tag_end = memchr::memchr(b'>', &bytes[*pos..]).map(|e| *pos + e + 1).unwrap_or(*pos);
+                let close = title_end.saturating_sub(5);
+                if close > tag_end {
+                    let raw_title = &html[tag_end..close];
+                    current_title = Some(strip_tags(raw_title).trim().to_string());
+                }
+                last_end = *title_end;
+            },
+            SplitKind::Pagebreak => {
+                last_end = pos + pb_needle.len();
+            },
         }
     }
 
-    // Save last chapter.
-    if !current_content.trim().is_empty() {
-        chapters.push((current_title.take(), current_content.trim().to_string()));
+    // Remaining content after last split.
+    let trailing = html[last_end..].trim();
+    if !trailing.is_empty() {
+        chapters.push((current_title.take(), trailing.to_string()));
     }
 
     chapters
@@ -624,7 +680,8 @@ fn pml_escape_char(pml: &mut String, ch: char) {
     match ch {
         '\\' => pml.push_str("\\\\"),
         c if (c as u32) > 127 => {
-            pml.push_str(&format!("\\U{:04X}", c as u32));
+            // Write directly into the String, avoiding a format!() allocation.
+            let _ = std::fmt::Write::write_fmt(pml, format_args!("\\U{:04X}", c as u32));
         },
         c => pml.push(c),
     }

@@ -19,8 +19,7 @@ impl MdReader {
 
 impl FormatReader for MdReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
-        let mut input = String::new();
-        reader.read_to_string(&mut input)?;
+        let input = crate::formats::common::read_string_capped(reader)?;
 
         let opts = pulldown_cmark::Options::ENABLE_TABLES
             | pulldown_cmark::Options::ENABLE_FOOTNOTES

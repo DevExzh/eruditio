@@ -6,8 +6,9 @@
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::{
-    ends_with_ascii_ci, escape_html, escape_xml, strip_tags_and_unescape,
+    ends_with_ascii_ci, push_escape_html, push_escape_xml, strip_tags_and_unescape,
 };
+use crate::formats::common::xml_utils;
 use bzip2::Compression as BzCompression;
 use bzip2::read::BzDecoder;
 use bzip2::write::BzEncoder;
@@ -99,28 +100,6 @@ impl FormatReader for SnbReader {
         // Parse metadata.
         let mut book = Book::new();
 
-        // Add image resources from the archive to the book.
-        for (name, content) in &files {
-            let is_image = ends_with_ascii_ci(name, ".jpg")
-                || ends_with_ascii_ci(name, ".jpeg")
-                || ends_with_ascii_ci(name, ".png")
-                || ends_with_ascii_ci(name, ".gif")
-                || ends_with_ascii_ci(name, ".bmp");
-            if is_image {
-                let media_type = if ends_with_ascii_ci(name, ".png") {
-                    "image/png"
-                } else if ends_with_ascii_ci(name, ".gif") {
-                    "image/gif"
-                } else if ends_with_ascii_ci(name, ".bmp") {
-                    "image/bmp"
-                } else {
-                    "image/jpeg"
-                };
-                // Use the bare filename as both ID and href so <img src="..."> tags match.
-                let basename = name.rsplit('/').next().unwrap_or(name);
-                book.add_resource(basename, basename, content.clone(), media_type);
-            }
-        }
         if let Some(meta_xml) = files.get("snbf/book.snbf") {
             parse_book_metadata(
                 &crate::formats::common::text_utils::bytes_to_cow_str(meta_xml),
@@ -164,7 +143,13 @@ impl FormatReader for SnbReader {
                     Some(data) => {
                         snbc_to_html(&crate::formats::common::text_utils::bytes_to_cow_str(data))
                     },
-                    None => format!("<p>{}</p>", escape_html(&ch.title)),
+                    None => {
+                        let mut s = String::with_capacity(7 + ch.title.len());
+                        s.push_str("<p>");
+                        push_escape_html(&mut s, &ch.title);
+                        s.push_str("</p>");
+                        s
+                    },
                 };
 
                 book.add_chapter(Chapter {
@@ -181,6 +166,28 @@ impl FormatReader for SnbReader {
                 content: "<p></p>".into(),
                 id: Some("snb_empty".into()),
             });
+        }
+
+        // Add image resources last — consume the HashMap to move data, avoiding clone.
+        for (name, content) in files {
+            let is_image = ends_with_ascii_ci(&name, ".jpg")
+                || ends_with_ascii_ci(&name, ".jpeg")
+                || ends_with_ascii_ci(&name, ".png")
+                || ends_with_ascii_ci(&name, ".gif")
+                || ends_with_ascii_ci(&name, ".bmp");
+            if is_image {
+                let media_type = if ends_with_ascii_ci(&name, ".png") {
+                    "image/png"
+                } else if ends_with_ascii_ci(&name, ".gif") {
+                    "image/gif"
+                } else if ends_with_ascii_ci(&name, ".bmp") {
+                    "image/bmp"
+                } else {
+                    "image/jpeg"
+                };
+                let basename = name.rsplit('/').next().unwrap_or(&name);
+                book.add_resource(basename, basename, content, media_type);
+            }
         }
 
         Ok(book)
@@ -466,30 +473,40 @@ fn extract_plain_file(
 /// Parses the book.snbf metadata XML.
 fn parse_book_metadata(xml: &str, book: &mut Book) {
     let mut reader = Reader::from_str(xml);
-    let mut current_tag = String::new();
+    let mut current_tag: &[u8] = b"";
+    let mut text_buf = String::new();
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                current_tag =
-                    crate::formats::common::text_utils::bytes_to_string(e.name().as_ref());
+                current_tag = match e.name().as_ref() {
+                    b"name" => b"name",
+                    b"author" => b"author",
+                    b"language" => b"language",
+                    b"publisher" => b"publisher",
+                    b"abstract" => b"abstract",
+                    _ => b"",
+                };
             },
             Ok(Event::Text(ref e)) => {
-                let text =
-                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
-                if text.trim().is_empty() {
+                if current_tag.is_empty() {
                     continue;
                 }
-                match current_tag.as_str() {
-                    "name" => book.metadata.title = Some(text),
-                    "author" => book.metadata.authors = vec![text],
-                    "language" => book.metadata.language = Some(text),
-                    "publisher" => book.metadata.publisher = Some(text),
-                    "abstract" => book.metadata.description = Some(text),
+                text_buf.clear();
+                xml_utils::push_text_bytes(&mut text_buf, e.as_ref());
+                if text_buf.trim().is_empty() {
+                    continue;
+                }
+                match current_tag {
+                    b"name" => book.metadata.title = Some(text_buf.trim().to_string()),
+                    b"author" => book.metadata.authors = vec![text_buf.trim().to_string()],
+                    b"language" => book.metadata.language = Some(text_buf.trim().to_string()),
+                    b"publisher" => book.metadata.publisher = Some(text_buf.trim().to_string()),
+                    b"abstract" => book.metadata.description = Some(text_buf.trim().to_string()),
                     _ => {},
                 }
             },
-            Ok(Event::End(_)) => current_tag.clear(),
+            Ok(Event::End(_)) => current_tag = b"",
             Ok(Event::Eof) => break,
             Err(_) => break,
             _ => {},
@@ -503,27 +520,26 @@ fn parse_toc(xml: &str) -> Vec<TocChapter> {
     let mut chapters = Vec::new();
     let mut current_src = String::new();
     let mut in_chapter = false;
+    let mut text_buf = String::new();
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
                 if e.name().as_ref() == b"chapter" {
                     in_chapter = true;
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"src" {
-                            current_src =
-                                crate::formats::common::text_utils::bytes_to_string(&attr.value);
-                        }
+                    if let Some(attr) = e.try_get_attribute(b"src").ok().flatten() {
+                        current_src.clear();
+                        xml_utils::push_text_bytes(&mut current_src, &attr.value);
                     }
                 }
             },
             Ok(Event::Text(ref e)) if in_chapter => {
-                let title =
-                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
-                if !title.trim().is_empty() {
+                text_buf.clear();
+                xml_utils::push_text_bytes(&mut text_buf, e.as_ref());
+                if !text_buf.trim().is_empty() {
                     chapters.push(TocChapter {
                         src: current_src.clone(),
-                        title: title.trim().to_string(),
+                        title: text_buf.trim().to_string(),
                     });
                 }
             },
@@ -556,33 +572,42 @@ fn parse_toc(xml: &str) -> Vec<TocChapter> {
 /// ```
 fn snbc_to_html(xml: &str) -> String {
     let mut reader = Reader::from_str(xml);
-    let mut html = String::new();
-    let mut current_tag = String::new();
+    let mut html = String::with_capacity(xml.len());
+    let mut current_tag: &[u8] = b"";
     let mut in_body = false;
+    let mut text_buf = String::new();
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                if e.name().as_ref() == b"body" {
+                let name = e.name();
+                let tag = name.as_ref();
+                if tag == b"body" {
                     in_body = true;
                 }
-                current_tag =
-                    crate::formats::common::text_utils::bytes_to_string(e.name().as_ref());
+                current_tag = match tag {
+                    b"text" => b"text",
+                    b"img" => b"img",
+                    b"body" => b"body",
+                    _ => b"",
+                };
             },
             Ok(Event::Text(ref e)) if in_body => {
-                let text =
-                    crate::formats::common::text_utils::bytes_to_string(&e.clone().into_inner());
-                if text.trim().is_empty() {
+                text_buf.clear();
+                xml_utils::push_text_bytes(&mut text_buf, e.as_ref());
+                if text_buf.trim().is_empty() {
                     continue;
                 }
-                match current_tag.as_str() {
-                    "text" => {
+                match current_tag {
+                    b"text" => {
                         html.push_str("<p>");
-                        html.push_str(&escape_html(text.trim()));
+                        push_escape_html(&mut html, text_buf.trim());
                         html.push_str("</p>\n");
                     },
-                    "img" => {
-                        html.push_str(&format!("<img src=\"{}\" />\n", escape_html(text.trim())));
+                    b"img" => {
+                        html.push_str("<img src=\"");
+                        push_escape_html(&mut html, text_buf.trim());
+                        html.push_str("\" />\n");
                     },
                     _ => {},
                 }
@@ -591,7 +616,7 @@ fn snbc_to_html(xml: &str) -> String {
                 if e.name().as_ref() == b"body" {
                     in_body = false;
                 }
-                current_tag.clear();
+                current_tag = b"";
             },
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -635,19 +660,22 @@ impl FormatWriter for SnbWriter {
         let language = book.metadata.language.as_deref().unwrap_or("en");
         let publisher = book.metadata.publisher.as_deref().unwrap_or("");
 
-        let meta_xml = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+        let mut meta_xml = String::with_capacity(256);
+        meta_xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
              <book-snbf version=\"1.0\">\n  <head>\n\
-             \x20   <name>{}</name>\n\
-             \x20   <author>{}</author>\n\
-             \x20   <language>{}</language>\n\
-             \x20   <publisher>{}</publisher>\n\
-             \x20 </head>\n</book-snbf>",
-            escape_xml(title),
-            escape_xml(author),
-            escape_xml(language),
-            escape_xml(publisher)
-        );
+             \x20   <name>");
+        push_escape_xml(&mut meta_xml, title);
+        meta_xml.push_str("</name>\n\
+             \x20   <author>");
+        push_escape_xml(&mut meta_xml, author);
+        meta_xml.push_str("</author>\n\
+             \x20   <language>");
+        push_escape_xml(&mut meta_xml, language);
+        meta_xml.push_str("</language>\n\
+             \x20   <publisher>");
+        push_escape_xml(&mut meta_xml, publisher);
+        meta_xml.push_str("</publisher>\n\
+             \x20 </head>\n</book-snbf>");
         plain_files.push(("snbf/book.snbf".into(), meta_xml.into_bytes()));
 
         // 2. Build TOC and chapter SNBC files.
@@ -659,18 +687,20 @@ impl FormatWriter for SnbWriter {
             let default_title = format!("Chapter {}", i + 1);
             let ch_title = chapter.title.unwrap_or(default_title.as_str());
 
-            toc_xml.push_str(&format!(
-                "  <chapter src=\"{}\">{}</chapter>\n",
-                escape_xml(&ch_filename),
-                escape_xml(ch_title)
-            ));
+            toc_xml.push_str("  <chapter src=\"");
+            push_escape_xml(&mut toc_xml, &ch_filename);
+            toc_xml.push_str("\">");
+            push_escape_xml(&mut toc_xml, ch_title);
+            toc_xml.push_str("</chapter>\n");
 
             // Build SNBC chapter XML.
-            let snbc = format!(
-                "<snbc><head><title>{}</title></head><body><text>{}</text></body></snbc>",
-                escape_xml(ch_title),
-                escape_xml(&strip_tags_and_unescape(chapter.content))
-            );
+            let stripped = strip_tags_and_unescape(chapter.content);
+            let mut snbc = String::with_capacity(80 + ch_title.len() + stripped.len());
+            snbc.push_str("<snbc><head><title>");
+            push_escape_xml(&mut snbc, ch_title);
+            snbc.push_str("</title></head><body><text>");
+            push_escape_xml(&mut snbc, &stripped);
+            snbc.push_str("</text></body></snbc>");
             plain_files.push((format!("snbc/{}", ch_filename), snbc.into_bytes()));
         }
 
@@ -870,7 +900,7 @@ fn snb_i32(value: usize) -> Result<i32> {
 
 /// Compresses data with zlib.
 fn snb_zlib_compress(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder
         .write_all(data)
         .map_err(|e| EruditioError::Compression(format!("SNB zlib compression error: {}", e)))?;

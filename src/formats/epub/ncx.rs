@@ -30,20 +30,11 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                 match tag {
                     "navMap" => in_nav_map = true,
                     "navPoint" if in_nav_map => {
-                        let mut id = None;
-                        let mut play_order = None;
-
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"id" => id = Some(xml_utils::bytes_to_string(&attr.value)),
-                                b"playOrder" => {
-                                    play_order = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse::<u32>().ok());
-                                },
-                                _ => {},
-                            }
-                        }
+                        let id = e.try_get_attribute(b"id").ok().flatten()
+                            .map(|a| xml_utils::bytes_to_string(&a.value));
+                        let play_order = e.try_get_attribute(b"playOrder").ok().flatten()
+                            .and_then(|a| std::str::from_utf8(&a.value).ok()
+                                .and_then(|s| s.parse::<u32>().ok()));
 
                         let mut item = TocItem::new("", "");
                         if let Some(id) = id {
@@ -60,12 +51,9 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                         current_text.clear();
                     },
                     "content" if in_nav_map && !stack.is_empty() => {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"src" {
-                                let src = xml_utils::bytes_to_string(&attr.value);
-                                if let Some(item) = stack.last_mut() {
-                                    item.href = src;
-                                }
+                        if let Some(attr) = e.try_get_attribute(b"src").ok().flatten() {
+                            if let Some(item) = stack.last_mut() {
+                                item.href = xml_utils::bytes_to_string(&attr.value);
                             }
                         }
                     },
@@ -76,22 +64,16 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                 let name = e.name();
                 let tag = xml_utils::local_tag_name(name.as_ref());
                 if tag == "content" && in_nav_map && !stack.is_empty() {
-                    for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"src" {
-                            let src = xml_utils::bytes_to_string(&attr.value);
-                            if let Some(item) = stack.last_mut() {
-                                item.href = src;
-                            }
+                    if let Some(attr) = e.try_get_attribute(b"src").ok().flatten() {
+                        if let Some(item) = stack.last_mut() {
+                            item.href = xml_utils::bytes_to_string(&attr.value);
                         }
                     }
                 }
             },
             Ok(Event::Text(ref e)) => {
                 if collecting_text {
-                    match std::str::from_utf8(e.as_ref()) {
-                        Ok(s) => current_text.push_str(s),
-                        Err(_) => current_text.push_str(&String::from_utf8_lossy(e.as_ref())),
-                    }
+                    xml_utils::push_text_bytes(&mut current_text, e.as_ref());
                 }
             },
             Ok(Event::End(ref e)) => {
