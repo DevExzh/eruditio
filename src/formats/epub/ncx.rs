@@ -33,8 +33,11 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                         let id = e.try_get_attribute(b"id").ok().flatten()
                             .map(|a| xml_utils::bytes_to_string(&a.value));
                         let play_order = e.try_get_attribute(b"playOrder").ok().flatten()
-                            .and_then(|a| std::str::from_utf8(&a.value).ok()
-                                .and_then(|s| s.parse::<u32>().ok()));
+                            .and_then(|a| {
+                                // SAFETY: quick-xml validates UTF-8 on input; attribute values are guaranteed valid UTF-8.
+                                let s = unsafe { std::str::from_utf8_unchecked(&a.value) };
+                                s.parse::<u32>().ok()
+                            });
 
                         let mut item = TocItem::new("", "");
                         if let Some(id) = id {

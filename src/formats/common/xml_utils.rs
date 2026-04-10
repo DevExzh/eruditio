@@ -57,17 +57,11 @@ pub(crate) fn local_name(tag: &str) -> &str {
 
 /// Extracts the local tag name from a raw XML byte slice, zero-allocation.
 ///
-/// XML tag names are always valid UTF-8 in well-formed documents. Falls back
-/// to an empty string for invalid UTF-8 (should never happen in practice).
+/// XML tag names are always valid UTF-8 in well-formed documents parsed by
+/// quick-xml (which validates UTF-8 on input by default).
 pub(crate) fn local_tag_name(raw: &[u8]) -> &str {
-    // XML tag names are always ASCII in well-formed documents, so skip
-    // full UTF-8 validation when every byte is < 0x80.
-    let s = if super::intrinsics::is_ascii::is_all_ascii(raw) {
-        // SAFETY: all bytes are < 0x80, which is valid UTF-8.
-        unsafe { std::str::from_utf8_unchecked(raw) }
-    } else {
-        std::str::from_utf8(raw).unwrap_or("")
-    };
+    // SAFETY: quick-xml validates UTF-8 on input; tag names are guaranteed valid UTF-8.
+    let s = unsafe { std::str::from_utf8_unchecked(raw) };
     local_name(s)
 }
 
@@ -76,26 +70,15 @@ pub(crate) fn escape_xml(text: &str) -> std::borrow::Cow<'_, str> {
     super::text_utils::escape_xml(text)
 }
 
-/// Pushes XML text event bytes into a `String` buffer with an ASCII fast path.
-///
-/// Three tiers, matching [`bytes_to_string`]:
-/// 1. ASCII-only → `from_utf8_unchecked` (SIMD-accelerated check, no allocation)
-/// 2. Valid non-ASCII UTF-8 → `push_str` directly
-/// 3. Malformed → lossy replacement
+/// Pushes XML text event bytes into a `String` buffer, bypassing UTF-8
+/// validation since quick-xml guarantees valid UTF-8 on input.
 ///
 /// This is the zero-allocation counterpart of `bytes_to_string` for hot loops
 /// that accumulate text into a pre-existing buffer.
 #[inline]
 pub(crate) fn push_text_bytes(buf: &mut String, bytes: &[u8]) {
-    if super::intrinsics::is_ascii::is_all_ascii(bytes) {
-        // SAFETY: all bytes are < 0x80, which is valid UTF-8.
-        buf.push_str(unsafe { std::str::from_utf8_unchecked(bytes) });
-    } else {
-        match std::str::from_utf8(bytes) {
-            Ok(s) => buf.push_str(s),
-            Err(_) => buf.push_str(&String::from_utf8_lossy(bytes)),
-        }
-    }
+    // SAFETY: quick-xml validates UTF-8 on input; text event bytes are guaranteed valid UTF-8.
+    buf.push_str(unsafe { std::str::from_utf8_unchecked(bytes) });
 }
 
 #[cfg(test)]

@@ -110,12 +110,8 @@ impl FormatReader for Fb2Reader {
                         path_buf.push('/');
                     }
                     // Convert to str lazily — only needed for path_buf.
-                    // SAFETY: XML tag names are ASCII by spec; we verify with is_ascii() first.
-                    let tag_str = if tag_bytes.is_ascii() {
-                        unsafe { std::str::from_utf8_unchecked(tag_bytes) }
-                    } else {
-                        std::str::from_utf8(tag_bytes).unwrap_or("")
-                    };
+                    // SAFETY: quick-xml validates UTF-8 on input; tag names are guaranteed valid UTF-8.
+                    let tag_str = unsafe { std::str::from_utf8_unchecked(tag_bytes) };
                     path_buf.push_str(tag_str);
                     current_text.clear();
                 },
@@ -388,13 +384,9 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
             // Parse the tag
             if let Some(gt) = memchr::memchr(b'>', &bytes[pos..]) {
                 let tag_bytes = &bytes[pos..pos + gt + 1];
-                // HTML tags are ASCII — skip full UTF-8 validation.
-                let tag_str = if tag_bytes.is_ascii() {
-                    // SAFETY: all bytes < 0x80, which is valid UTF-8.
-                    unsafe { std::str::from_utf8_unchecked(tag_bytes) }
-                } else {
-                    std::str::from_utf8(tag_bytes).unwrap_or("")
-                };
+                // SAFETY: `bytes` is derived from `html.as_bytes()` where `html: &str`,
+                // so every subslice is guaranteed valid UTF-8.
+                let tag_str = unsafe { std::str::from_utf8_unchecked(tag_bytes) };
 
                 // --- <head> / </head>: skip everything in the HTML head ---
                 if starts_with_ci(tag_str, "<head")
