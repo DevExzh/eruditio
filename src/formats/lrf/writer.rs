@@ -782,12 +782,12 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     let mut object_entries: Vec<ObjectEntry> = Vec::with_capacity(all_objects.len());
     let mut current_offset = objects_start_offset;
 
-    for obj in &all_objects {
+    for obj in all_objects {
         // Check if this is a manually-serialized ImageStream (HACK: tags hold raw bytes
         // and the obj_type is ImageStream with no stream set).
         let bytes = if obj.obj_type == OBJ_TYPE_IMAGE_STREAM && obj.stream.is_none() {
-            // Tags field holds the complete raw object bytes.
-            obj.tags.clone()
+            // Tags field holds the complete raw object bytes; consume to avoid clone.
+            obj.tags
         } else {
             obj.serialize()?
         };
@@ -812,7 +812,7 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     let _uncompressed_info_size = xml_bytes.len() as u32;
 
     // Total file size.
-    let object_index_size = all_objects.len() * 16;
+    let object_index_size = number_of_objects as usize * 16;
     let total_size = current_offset + object_index_size;
     let mut file = Vec::with_capacity(total_size);
 

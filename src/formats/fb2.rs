@@ -37,10 +37,10 @@ impl FormatReader for Fb2Reader {
 
         // State tracking -- incremental path buffer avoids join("/") allocation per element.
         let mut path_buf = String::with_capacity(128);
-        let mut current_text = String::new();
+        let mut current_text = String::with_capacity(256);
         let mut in_body = false;
         let mut current_section_title = None;
-        let mut current_section_content = String::new();
+        let mut current_section_content = String::with_capacity(4096);
         let mut section_counter: u32 = 0;
         // Reusable buffer for small format strings (section IDs, image hrefs).
         let mut fmt_buf = String::with_capacity(32);
@@ -101,8 +101,13 @@ impl FormatReader for Fb2Reader {
                     if !path_buf.is_empty() {
                         path_buf.push('/');
                     }
-                    // Convert to str lazily — only needed for path_buf
-                    let tag_str = std::str::from_utf8(tag_bytes).unwrap_or("");
+                    // Convert to str lazily — only needed for path_buf.
+                    // SAFETY: XML tag names are ASCII by spec; we verify with is_ascii() first.
+                    let tag_str = if tag_bytes.is_ascii() {
+                        unsafe { std::str::from_utf8_unchecked(tag_bytes) }
+                    } else {
+                        std::str::from_utf8(tag_bytes).unwrap_or("")
+                    };
                     path_buf.push_str(tag_str);
                     current_text.clear();
                 },

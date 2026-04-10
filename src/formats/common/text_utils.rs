@@ -29,15 +29,6 @@ pub fn escape_xml(text: &str) -> Cow<'_, str> {
     escape_impl(text, true)
 }
 
-static ESCAPE_TABLE: [&str; 256] = {
-    let mut table = [""; 256];
-    table[b'&' as usize] = "&amp;";
-    table[b'<' as usize] = "&lt;";
-    table[b'>' as usize] = "&gt;";
-    table[b'"' as usize] = "&quot;";
-    table[b'\'' as usize] = "&apos;";
-    table
-};
 
 fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     let bytes = text.as_bytes();
@@ -81,10 +72,7 @@ fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
         // special chars with a tight scalar loop to avoid SIMD dispatch overhead
         // when specials are clustered.
         while pos < len && is_html_special(bytes[pos], xml_mode) {
-            let escape = ESCAPE_TABLE[bytes[pos] as usize];
-            if !escape.is_empty() {
-                result.push_str(escape);
-            }
+            push_escape_byte(&mut result, bytes[pos]);
             pos += 1;
         }
 
@@ -152,10 +140,7 @@ fn push_escape_impl(buf: &mut String, text: &str, xml_mode: bool) {
 
     loop {
         while pos < len && is_html_special(bytes[pos], xml_mode) {
-            let escape = ESCAPE_TABLE[bytes[pos] as usize];
-            if !escape.is_empty() {
-                buf.push_str(escape);
-            }
+            push_escape_byte(buf, bytes[pos]);
             pos += 1;
         }
 
@@ -183,6 +168,25 @@ fn is_html_special(b: u8, xml_mode: bool) -> bool {
         b'&' | b'<' | b'>' => true,
         b'"' | b'\'' => xml_mode,
         _ => false,
+    }
+}
+
+/// Push the escape sequence for a known-special byte using conditional branches
+/// instead of a match/jump-table. Conditional branches are independently predicted
+/// by the CPU's branch predictor, avoiding the indirect-branch misprediction storm
+/// that a match-based jump table causes on mixed character sequences.
+#[inline(always)]
+fn push_escape_byte(buf: &mut String, b: u8) {
+    if b == b'&' {
+        buf.push_str("&amp;");
+    } else if b == b'<' {
+        buf.push_str("&lt;");
+    } else if b == b'>' {
+        buf.push_str("&gt;");
+    } else if b == b'"' {
+        buf.push_str("&quot;");
+    } else {
+        buf.push_str("&apos;");
     }
 }
 

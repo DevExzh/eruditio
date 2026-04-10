@@ -6,6 +6,7 @@
 use std::borrow::Cow;
 
 use ahash::{AHashMap, AHashSet};
+use rayon::prelude::*;
 
 use crate::domain::Book;
 use crate::error::Result;
@@ -179,9 +180,20 @@ fn build_ncx_indx(chapters: &[(String, usize)]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let entry_start = INDX_HEADER_LEN + entry_data.len();
         entry_offsets.push(entry_start as u16);
 
-        // Text key: zero-padded 5-digit string.
-        let key = format!("{:05}", i);
-        let key_bytes = key.as_bytes();
+        // Text key: zero-padded 5-digit string (stack-allocated to avoid heap alloc).
+        let key_bytes = {
+            let mut buf = [b'0'; 5];
+            let mut n = i;
+            let mut j = 4usize;
+            loop {
+                buf[j] = b'0' + (n % 10) as u8;
+                n /= 10;
+                if j == 0 { break; }
+                j -= 1;
+            }
+            buf
+        };
+        let key_bytes = &key_bytes[..];
 
         // Key length byte.
         entry_data.push(key_bytes.len() as u8);
@@ -544,9 +556,34 @@ pub(crate) fn write_mobi(book: &Book) -> Result<Vec<u8>> {
 /// Uses a reusable `PalmDocCompressor` to amortise the 16 KB hash-chain
 /// initialisation cost across all records (instead of re-creating it per record).
 /// Also reuses a single output buffer to reduce allocations.
+///
+/// For large inputs (>= 64 records / 256 KB), uses rayon to compress records
+/// in parallel. Each rayon thread gets its own `PalmDocCompressor` via
+/// `map_init`, so the hash-chain allocation happens once per thread,
+/// not per record.
 fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
+    if text.is_empty() {
+        return vec![Vec::new()];
+    }
+
     let num_records = (text.len() + RECORD_SIZE - 1) / RECORD_SIZE.max(1);
-    let mut records = Vec::with_capacity(num_records.max(1));
+
+    // Parallel path: each 4 KB record is independently compressible.
+    // PalmDoc compression is fast (~5 µs/record), so we need many records
+    // to overcome rayon's per-invocation overhead (~50-200 µs).
+    // Threshold: >= 64 records (256 KB uncompressed text).
+    if num_records >= 64 {
+        return text
+            .par_chunks(RECORD_SIZE)
+            .map_init(
+                palmdoc::PalmDocCompressor::new,
+                |compressor, chunk| compressor.compress_record(chunk),
+            )
+            .collect();
+    }
+
+    // Sequential path for small inputs (< 256 KB).
+    let mut records = Vec::with_capacity(num_records);
     let mut compressor = palmdoc::PalmDocCompressor::new();
     let mut offset = 0;
 
@@ -555,10 +592,6 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
         let chunk = &text[offset..end];
         records.push(compressor.compress_record(chunk));
         offset = end;
-    }
-
-    if records.is_empty() {
-        records.push(Vec::new());
     }
 
     records
@@ -1062,6 +1095,7 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
     let mut fragment_offsets: AHashMap<String, usize> =
         AHashMap::new();
 
+    let empty_frag_set = AHashSet::new();
     for (content_idx, (spine_idx, ch_title)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
         let manifest_item = book.manifest.get(&spine_item.manifest_id).unwrap();
@@ -1109,15 +1143,14 @@ fn book_to_mobi_html(book: &Book) -> (String, Vec<(String, usize)>) {
         // Check if this chapter has any sub-chapter fragment references.
         let fragment_ids = fragments_by_chapter
             .get(manifest_href.as_str())
-            .cloned()
-            .unwrap_or_default();
+            .unwrap_or(&empty_frag_set);
 
         // Chapter body — with pagebreaks inserted before fragment anchors.
         if let Some(cleaned) = cleaned_content {
             if !fragment_ids.is_empty() {
                 let base_offset = html.len();
                 let (modified, frag_offsets) =
-                    insert_pagebreaks_for_fragments(&cleaned, &fragment_ids);
+                    insert_pagebreaks_for_fragments(&cleaned, fragment_ids);
                 html.push_str(&modified);
 
                 // Record absolute offsets for each fragment.
@@ -1310,12 +1343,18 @@ fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
     let bytes = content.as_bytes();
     // Fast path: extract <body> inner content as a borrowed slice — zero allocation.
     if let Some(body_start) = memchr::memmem::find(bytes, b"<body")
+        .or_else(|| memchr::memmem::find(bytes, b"<BODY"))
         && let Some(gt) = memchr::memchr(b'>', &bytes[body_start..])
     {
         let inner_start = body_start + gt + 1;
-        let inner_end = memchr::memmem::find(&bytes[inner_start..], b"</body>")
-            .map(|pos| inner_start + pos)
-            .unwrap_or(content.len());
+        let rest = &bytes[inner_start..];
+        let lower = memchr::memmem::find(rest, b"</body>");
+        let upper = memchr::memmem::find(rest, b"</BODY>");
+        let inner_end = match (lower, upper) {
+            (Some(a), Some(b)) => inner_start + a.min(b),
+            (Some(a), None) | (None, Some(a)) => inner_start + a,
+            (None, None) => content.len(),
+        };
         return Cow::Borrowed(&content[inner_start..inner_end]);
     }
 

@@ -40,7 +40,7 @@ pub(crate) fn bytes_to_string(bytes: &[u8]) -> String {
     // Tier 1: SIMD ASCII check -- skips UTF-8 validation entirely.
     if super::intrinsics::is_ascii::is_all_ascii(bytes) {
         // SAFETY: all bytes are < 0x80, which is valid UTF-8.
-        return unsafe { String::from_utf8_unchecked(bytes.to_vec()) };
+        return unsafe { std::str::from_utf8_unchecked(bytes) }.to_owned();
     }
     // Tier 2: full UTF-8 validation (still cheaper than lossy for valid input).
     match std::str::from_utf8(bytes) {

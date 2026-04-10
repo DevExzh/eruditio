@@ -1,6 +1,7 @@
 use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::push_escape_xml;
+use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
@@ -35,7 +36,9 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     let stored: FileOptions<'_, ()> =
         FileOptions::default().compression_method(CompressionMethod::Stored);
     let deflated: FileOptions<'_, ()> =
-        FileOptions::default().compression_method(CompressionMethod::Deflated);
+        FileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(ZIP_DEFLATE_LEVEL);
 
     // Structural data generated once.
     let opf_xml = generate_opf(book);
@@ -221,7 +224,9 @@ fn write_epub_parallel<W: Write + Seek>(
             let buf = Cursor::new(Vec::with_capacity(entry.data.len()));
             let mut mini = ZipWriter::new(buf);
             let opts: FileOptions<'_, ()> =
-                FileOptions::default().compression_method(CompressionMethod::Deflated);
+                FileOptions::default()
+                    .compression_method(CompressionMethod::Deflated)
+                    .compression_level(ZIP_DEFLATE_LEVEL);
             mini.start_file("entry", opts)
                 .map_err(|e| EruditioError::Format(format!("mini zip start: {}", e)))?;
             mini.write_all(&entry.data)

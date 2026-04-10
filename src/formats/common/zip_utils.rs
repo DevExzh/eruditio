@@ -5,6 +5,14 @@ use zip::ZipArchive;
 /// Maximum decompressed size for a single ZIP entry (256 MB).
 const MAX_ZIP_ENTRY: u64 = 256 * 1024 * 1024;
 
+/// Default ZIP deflate compression level for all ebook writers.
+///
+/// Level 1 (fastest) is ~2-3× faster than level 6 (default) with only 5-10%
+/// larger output on text-heavy ebook content (XHTML, CSS, NCX).  Since ebook
+/// archives are typically < 5 MB and images use `Stored`, the absolute size
+/// difference is negligible (a few KB).
+pub(crate) const ZIP_DEFLATE_LEVEL: Option<i64> = Some(1);
+
 /// Reads a file from a ZIP archive by name, returning its contents as a `String`.
 pub fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, name: &str) -> Result<String> {
     let file = archive

@@ -11,9 +11,11 @@ use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::{escape_html, strip_leading_heading};
 use crate::formats::common::text_utils::{contains_ascii_ci, ends_with_ascii_ci};
 use crate::formats::common::xml_utils;
+use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use crate::formats::html::HtmlReader;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
+use std::borrow::Cow;
 use std::io::{Cursor, Read, Seek, Write};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -113,7 +115,9 @@ impl FormatWriter for HtmlzWriter {
         {
             let mut zip = ZipWriter::new(&mut zip_buf);
             let options: FileOptions<'_, ()> =
-                FileOptions::default().compression_method(CompressionMethod::Deflated);
+                FileOptions::default()
+                    .compression_method(CompressionMethod::Deflated)
+                    .compression_level(ZIP_DEFLATE_LEVEL);
 
             // Collect CSS content: use manifest CSS resources, or generate a default
             let resources = book.resources();
@@ -615,7 +619,26 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
 /// are present in EPUB XHTML source files.
 ///
 /// Similar to the `strip_xhtml_wrapper` in the MOBI writer, adapted for HTMLZ.
-fn strip_xhtml_wrapper(content: &str) -> String {
+fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
+    let bytes = content.as_bytes();
+    // Fast path: extract <body> inner content as a borrowed slice — zero allocation.
+    if let Some(body_start) = memchr::memmem::find(bytes, b"<body")
+        .or_else(|| memchr::memmem::find(bytes, b"<BODY"))
+        && let Some(gt) = memchr::memchr(b'>', &bytes[body_start..])
+    {
+        let inner_start = body_start + gt + 1;
+        let rest = &bytes[inner_start..];
+        let lower = memchr::memmem::find(rest, b"</body>");
+        let upper = memchr::memmem::find(rest, b"</BODY>");
+        let inner_end = match (lower, upper) {
+            (Some(a), Some(b)) => inner_start + a.min(b),
+            (Some(a), None) | (None, Some(a)) => inner_start + a,
+            (None, None) => content.len(),
+        };
+        return Cow::Borrowed(&content[inner_start..inner_end]);
+    }
+
+    // No <body> found — strip individual wrapper elements as fallback.
     let mut s = content.to_string();
 
     // Remove <?xml ...?> processing instructions.
@@ -729,7 +752,7 @@ fn strip_xhtml_wrapper(content: &str) -> String {
         s.replace_range(start..start + 7, "");
     }
 
-    s
+    Cow::Owned(s)
 }
 
 /// Strips `<link ...>` tags from HTML content.

@@ -479,7 +479,7 @@ impl LitContainer {
             .ok_or_else(|| EruditioError::Parse(format!("Missing {path}/ControlData")))?;
 
         let mut content = Self::read_raw(&self.data, self.content_offset, content_entry)?;
-        let mut control = Self::read_raw(&self.data, self.content_offset, control_entry)?;
+        let control = Self::read_raw(&self.data, self.content_offset, control_entry)?;
 
         let transform = match transform_entry {
             Some(e) => Self::read_raw(&self.data, self.content_offset, e)?,
@@ -487,12 +487,14 @@ impl LitContainer {
         };
 
         let mut t_pos = 0;
+        let mut control_offset = 0;
         while t_pos + 16 <= transform.len() {
             let guid = itss::format_guid(&transform[t_pos..])?;
+            let remaining = control.len() - control_offset;
             // Compute control block size with checked arithmetic to avoid
             // signed overflow when the i32 field contains crafted values.
-            let csize = if control.len() >= 4 {
-                let raw = itss::i32_le(&control);
+            let csize = if remaining >= 4 {
+                let raw = itss::i32_le(&control[control_offset..]);
                 raw.checked_add(1)
                     .and_then(|v| v.checked_mul(4))
                     .and_then(|v| usize::try_from(v).ok())
@@ -509,8 +511,8 @@ impl LitContainer {
                         "DRM-protected LIT file (no book key)".into(),
                     ));
                 }
-                if csize <= control.len() {
-                    control = control[csize..].to_vec();
+                if csize <= remaining {
+                    control_offset += csize;
                 }
             } else if guid == LZXCOMPRESS_GUID {
                 let rt_path = format!(
@@ -520,9 +522,10 @@ impl LitContainer {
                     EruditioError::Parse(format!("Missing reset table: {rt_path}"))
                 })?;
                 let reset_table = Self::read_raw(&self.data, self.content_offset, rt_entry)?;
-                content = lit_lzx_decompress(&content, &control, &reset_table)?;
-                if csize <= control.len() {
-                    control = control[csize..].to_vec();
+                content =
+                    lit_lzx_decompress(&content, &control[control_offset..], &reset_table)?;
+                if csize <= remaining {
+                    control_offset += csize;
                 }
             } else {
                 return Err(EruditioError::Format(format!(
