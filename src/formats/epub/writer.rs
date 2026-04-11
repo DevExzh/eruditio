@@ -259,7 +259,7 @@ fn write_epub_parallel<W: Write + Seek>(
         if is_already_compressed(&item.media_type) {
             match &item.data {
                 crate::domain::ManifestData::Inline(bytes) => {
-                    stored_entries.push(StoredEntry { zip_path, data: bytes });
+                    stored_entries.push(StoredEntry { zip_path, data: &**bytes });
                 },
                 crate::domain::ManifestData::Text(text) => {
                     stored_entries.push(StoredEntry { zip_path, data: text.as_bytes() });
@@ -282,11 +282,11 @@ fn write_epub_parallel<W: Write + Seek>(
                 },
                 crate::domain::ManifestData::Inline(bytes) => {
                     if bytes.len() < MIN_DEFLATE_SIZE {
-                        stored_entries.push(StoredEntry { zip_path, data: bytes });
+                        stored_entries.push(StoredEntry { zip_path, data: &**bytes });
                     } else {
                         deflate_entries.push(DeflateEntry {
                             zip_path,
-                            data: Cow::Borrowed(bytes.as_slice()),
+                            data: Cow::Borrowed(&**bytes),
                         });
                     }
                 },

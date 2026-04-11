@@ -279,7 +279,7 @@ impl FormatWriter for RbWriter {
 ///         compressed_chunks...
 fn compress_chunked(data: &[u8]) -> Result<Vec<u8>> {
     let chunk_size = 4096usize;
-    let mut chunks: Vec<Vec<u8>> = Vec::new();
+    let mut chunks: Vec<Vec<u8>> = Vec::with_capacity((data.len() / chunk_size) + 1);
     let mut offset = 0;
 
     while offset < data.len() {

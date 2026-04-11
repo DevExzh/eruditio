@@ -554,7 +554,7 @@ impl<'a> BinaryEncoder<'a> {
 /// manifest binary data, avoiding a full copy.
 enum VfsData {
     Owned(Vec<u8>),
-    Shared(Arc<Vec<u8>>),
+    Shared(Arc<[u8]>),
 }
 
 impl std::ops::Deref for VfsData {

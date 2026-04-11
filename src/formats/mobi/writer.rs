@@ -112,7 +112,7 @@ fn build_ncx_indx(chapters: &[(Cow<'_, str>, usize)]) -> (Vec<u8>, Vec<u8>, Vec<
     let entry_count = chapters.len();
 
     // --- Build CNCX record (chapter title strings) ---
-    let mut cncx = Vec::new();
+    let mut cncx = Vec::with_capacity(entry_count * 32);
     let mut cncx_offsets: Vec<usize> = Vec::with_capacity(entry_count);
     for (title, _) in chapters {
         cncx_offsets.push(cncx.len());
@@ -589,25 +589,40 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
     // PalmDoc compression is fast (~5 µs/record), so we need many records
     // to overcome rayon's per-invocation overhead (~50-200 µs).
     // Threshold: >= 64 records (256 KB uncompressed text).
+    //
+    // `compress_record_into` reuses a per-thread output buffer so we only
+    // allocate once per rayon thread instead of once per record.  The final
+    // `buf[..].to_vec()` produces a right-sized copy (no wasted capacity).
     if num_records >= 64 {
         return text
             .par_chunks(RECORD_SIZE)
             .map_init(
-                palmdoc::PalmDocCompressor::new,
-                |compressor, chunk| compressor.compress_record(chunk),
+                || {
+                    (
+                        palmdoc::PalmDocCompressor::new(),
+                        Vec::with_capacity(RECORD_SIZE),
+                    )
+                },
+                |(compressor, buf), chunk| {
+                    compressor.compress_record_into(chunk, buf);
+                    buf[..].to_vec()
+                },
             )
             .collect();
     }
 
     // Sequential path for small inputs (< 256 KB).
+    // Reuse a single output buffer across all records.
     let mut records = Vec::with_capacity(num_records);
     let mut compressor = palmdoc::PalmDocCompressor::new();
+    let mut buf = Vec::with_capacity(RECORD_SIZE);
     let mut offset = 0;
 
     while offset < text.len() {
         let end = (offset + RECORD_SIZE).min(text.len());
         let chunk = &text[offset..end];
-        records.push(compressor.compress_record(chunk));
+        compressor.compress_record_into(chunk, &mut buf);
+        records.push(buf[..].to_vec());
         offset = end;
     }
 
@@ -937,7 +952,7 @@ fn insert_pagebreaks_for_fragments<'a, 'b>(
     let id_positions = find_id_positions(content);
 
     // Collect positions where we need to insert pagebreaks, sorted.
-    let mut insertions: Vec<(usize, &str)> = Vec::new();
+    let mut insertions: Vec<(usize, &str)> = Vec::with_capacity(fragment_ids.len());
     for &frag_id in fragment_ids {
         if let Some(&pos) = id_positions.get(frag_id) {
             insertions.push((pos, frag_id));
@@ -995,7 +1010,7 @@ fn insert_pagebreaks_for_fragments<'a, 'b>(
 /// for every TOC entry (at all depth levels) in the generated HTML.
 fn book_to_mobi_html<'a>(book: &'a Book) -> (String, Vec<(Cow<'a, str>, usize)>) {
     // Collect chapter info: (spine_index, toc_title_if_any).
-    let mut chapter_info: Vec<(usize, Option<&str>)> = Vec::new();
+    let mut chapter_info: Vec<(usize, Option<&str>)> = Vec::with_capacity(book.spine.len());
     let toc = &book.toc;
 
     let toc_title_map = TocTitleMap::build(toc);

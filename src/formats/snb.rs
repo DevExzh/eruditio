@@ -736,8 +736,8 @@ impl FormatWriter for SnbWriter {
         let file_count = all_files.len();
 
         // Build VFAT.
-        let mut vfat_entries = Vec::new();
-        let mut name_table = Vec::new();
+        let mut vfat_entries = Vec::with_capacity(file_count * 12);
+        let mut name_table = Vec::with_capacity(file_count * 32);
         for (name, data, attr) in &all_files {
             let name_offset = name_table.len() as u32;
             vfat_entries.extend_from_slice(&attr.to_be_bytes());
@@ -752,7 +752,7 @@ impl FormatWriter for SnbWriter {
 
         // Build binary stream (raw concatenation).
         let mut bin_stream = Vec::new();
-        let mut bin_file_offsets: Vec<usize> = Vec::new();
+        let mut bin_file_offsets: Vec<usize> = Vec::with_capacity(all_files.len());
         for (_, data, attr) in &all_files {
             if *attr == ATTR_BINARY {
                 bin_file_offsets.push(bin_stream.len());
@@ -763,7 +763,7 @@ impl FormatWriter for SnbWriter {
         // Build plain stream (bz2-compressed in blocks).
         // Concatenate all plain file data, tracking file start offsets.
         let mut plain_concat = Vec::new();
-        let mut plain_file_offsets: Vec<usize> = Vec::new();
+        let mut plain_file_offsets: Vec<usize> = Vec::with_capacity(all_files.len());
         for (_, data, attr) in &all_files {
             if *attr == ATTR_PLAIN {
                 plain_file_offsets.push(plain_concat.len());
@@ -786,7 +786,7 @@ impl FormatWriter for SnbWriter {
         // Binary blocks: one "block" at offset 0 for the entire binary stream.
         let bin_block_count = if bin_stream.is_empty() { 0 } else { 1 };
 
-        let mut block_offsets: Vec<i32> = Vec::new();
+        let mut block_offsets: Vec<i32> = Vec::with_capacity(bin_block_count + plain_blocks.len());
         if bin_block_count > 0 {
             block_offsets.push(0); // binary stream starts at offset 0
         }
@@ -797,7 +797,7 @@ impl FormatWriter for SnbWriter {
         }
 
         // Build file records for tail.
-        let mut file_records: Vec<(i32, i32)> = Vec::new();
+        let mut file_records: Vec<(i32, i32)> = Vec::with_capacity(file_count);
         let mut bin_idx = 0;
         let mut plain_idx = 0;
         for (_, _, attr) in &all_files {

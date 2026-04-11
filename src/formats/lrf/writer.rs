@@ -707,8 +707,8 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // 4. Build text objects from chapters.
     // ---------------------------------------------------------------
     let chapters = book.chapter_views();
-    let mut text_block_pairs: Vec<(u32, u32)> = Vec::new(); // (block_id, text_id)
-    let mut chapter_objects: Vec<LrfWriteObject> = Vec::new();
+    let mut text_block_pairs: Vec<(u32, u32)> = Vec::with_capacity(chapters.len()); // (block_id, text_id)
+    let mut chapter_objects: Vec<LrfWriteObject> = Vec::with_capacity(chapters.len() * 2);
 
     for chapter in &chapters {
         let text_id = alloc_id();
@@ -741,8 +741,8 @@ pub(crate) fn write_lrf(book: &Book) -> Result<Vec<u8>> {
     // 5. Build page objects. Group blocks into pages (one page per
     //    chapter for simplicity).
     // ---------------------------------------------------------------
-    let mut page_ids: Vec<u32> = Vec::new();
-    let mut page_objects: Vec<LrfWriteObject> = Vec::new();
+    let mut page_ids: Vec<u32> = Vec::with_capacity(text_block_pairs.len());
+    let mut page_objects: Vec<LrfWriteObject> = Vec::with_capacity(text_block_pairs.len());
 
     for &(block_id, _) in &text_block_pairs {
         let page_id = alloc_id();

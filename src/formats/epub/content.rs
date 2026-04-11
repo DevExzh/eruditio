@@ -78,7 +78,7 @@ fn read_from_archive<R: Read + Seek>(
         let size_hint = (file.size() as usize).min(256 * 1024 * 1024);
         let mut data = Vec::with_capacity(size_hint);
         file.read_to_end(&mut data)?;
-        Ok(ManifestData::Inline(Arc::new(data)))
+        Ok(ManifestData::Inline(Arc::from(data)))
     }
 }
 
@@ -169,7 +169,7 @@ fn bytes_to_manifest_data(bytes: Vec<u8>, as_text: bool) -> Result<ManifestData>
         };
         Ok(ManifestData::Text(text))
     } else {
-        Ok(ManifestData::Inline(Arc::new(bytes)))
+        Ok(ManifestData::Inline(Arc::from(bytes)))
     }
 }
 

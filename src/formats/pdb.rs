@@ -60,7 +60,7 @@ impl FormatWriter for PdbWriter {
         let max_record_size = 4096usize;
 
         // Split into records and compress (reuse compressor across records).
-        let mut records: Vec<Vec<u8>> = Vec::new();
+        let mut records: Vec<Vec<u8>> = Vec::with_capacity((text_bytes.len() / max_record_size) + 1);
         let mut compressor = palmdoc::PalmDocCompressor::new();
         let mut offset = 0;
         while offset < text_bytes.len() {
@@ -133,7 +133,7 @@ impl FormatWriter for PdbZtxtWriter {
         let max_record_size = 8192usize;
 
         // Split into records and compress with zlib.
-        let mut records: Vec<Vec<u8>> = Vec::new();
+        let mut records: Vec<Vec<u8>> = Vec::with_capacity((text_bytes.len() / max_record_size) + 1);
         let mut offset = 0;
         while offset < text_bytes.len() {
             let end = (offset + max_record_size).min(text_bytes.len());
@@ -201,7 +201,7 @@ impl FormatWriter for PdbEreaderWriter {
         let max_page_size = 4096usize;
 
         // Split PML into pages and compress with zlib (compression type 10).
-        let mut text_records: Vec<Vec<u8>> = Vec::new();
+        let mut text_records: Vec<Vec<u8>> = Vec::with_capacity((pml_bytes.len() / max_page_size) + 1);
         let mut offset = 0;
         while offset < pml_bytes.len() {
             let end = (offset + max_page_size).min(pml_bytes.len());

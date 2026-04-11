@@ -121,7 +121,7 @@ impl Book {
                 // Return binary data from Inline items, or UTF-8 bytes from Text
                 // items (e.g. CSS loaded as text by the EPUB reader).
                 let data = match &item.data {
-                    super::manifest::ManifestData::Inline(b) => Some(b.as_slice()),
+                    super::manifest::ManifestData::Inline(b) => Some(&**b),
                     super::manifest::ManifestData::Text(s) => Some(s.as_bytes()),
                     super::manifest::ManifestData::Empty => None,
                 }?;
@@ -141,7 +141,7 @@ impl Book {
     /// so callers can access CSS and other text-based resources loaded from EPUB.
     pub fn resource_data(&self, id: &str) -> Option<&[u8]> {
         self.manifest.get(id).and_then(|item| match &item.data {
-            super::manifest::ManifestData::Inline(b) => Some(b.as_slice()),
+            super::manifest::ManifestData::Inline(b) => Some(&**b),
             super::manifest::ManifestData::Text(s) => Some(s.as_bytes()),
             super::manifest::ManifestData::Empty => None,
         })
