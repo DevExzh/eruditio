@@ -28,6 +28,21 @@ Eruditio is written in pure Rust with zero-copy parsing, SIMD-accelerated text p
 
 Measured on the same machine, median of 7 runs, using public domain Project Gutenberg ebooks. Calibre version 9.6.0.
 
+### SIMD Intrinsics Throughput
+
+![SIMD intrinsics throughput](media/intrinsics.png)
+
+All text-processing hot paths use hand-tuned AVX-512/AVX2/SSE2/NEON intrinsics with runtime feature detection. On AVX-512BW capable hardware:
+
+| Intrinsic | Throughput | Scalar Baseline | Speedup |
+|---|---:|---:|---:|
+| `is_ascii` (1 KB) | 282 GB/s | 4.2 GB/s | **67x** |
+| `short_pattern` (10 KB) | 96 GB/s | 3.8 GB/s | **25x** |
+| `skip_whitespace` (1 KB) | 76 GB/s | 3.3 GB/s | **23x** |
+| `byte_scan` (10 KB) | 78 GB/s | -- | -- |
+| `cp1252_decode` (10 KB) | 72 GB/s | -- | -- |
+| `case_fold` (1 KB) | 39 GB/s | -- | -- |
+
 ## Supported Formats
 
 ### Reading (31 formats)
@@ -185,7 +200,8 @@ let book = EruditioParser::parse(&mut cursor, Some("fb2"))?;
 src/
 ├── domain/          Core models (Book, Chapter, Metadata, Resource, Format)
 ├── formats/         Format-specific readers and writers
-│   ├── common/      Shared utilities (XML, HTML, ZIP, ITSS container, intrinsics)
+│   ├── common/      Shared utilities (XML, HTML, ZIP, ITSS container)
+│   │   └── intrinsics/  SIMD-accelerated text primitives (AVX-512/AVX2/SSE2/NEON/SIMD128)
 │   ├── epub/        EPUB reader/writer
 │   ├── mobi/        MOBI/KF8 reader/writer
 │   ├── djvu/        DjVu reader (IFF85 parser + BZZ decompressor)
@@ -203,12 +219,12 @@ src/
 └── lib.rs           Public API re-exports
 ```
 
-~50,000 lines of Rust across the library, tests, and benchmarks.
+~51,000 lines of Rust across the library, tests, and benchmarks.
 
 Key design principles:
 
 - **Pure Rust**: No C/C++ dependencies for format parsing. BZZ, LZX, MS DES, MS SHA-1, PalmDOC LZ77, and Huffman/CDIC decoders are all implemented in Rust.
-- **SIMD-accelerated**: Hot paths use `memchr` and hand-tuned byte scanning for whitespace skipping, pattern matching, and HTML entity decoding.
+- **SIMD-accelerated**: Hot paths use hand-tuned AVX-512BW/AVX2/SSE2 (x86), NEON (aarch64), and SIMD128 (wasm32) intrinsics with runtime feature detection for ASCII validation, whitespace skipping, byte scanning, pattern matching, case folding, and CP-1252 decoding.
 - **Stream-oriented**: All readers accept `&mut dyn Read`, enabling parsing from files, network streams, or in-memory buffers.
 - **Trait-based**: `FormatReader` and `FormatWriter` traits allow uniform handling across all formats.
 - **Immutability**: `Book` and all domain types are treated as immutable values. Transforms produce new `Book` instances.
@@ -226,13 +242,17 @@ cargo +nightly test lit
 cargo +nightly test chm
 ```
 
-The test suite includes 1000+ tests covering unit tests within each format module and integration tests in `tests/`.
+The test suite includes 1,070+ tests covering unit tests within each format module and integration tests in `tests/`.
 
 ### Running Benchmarks
 
 ```bash
 # Criterion micro-benchmarks
+cargo +nightly bench --bench intrinsics
 cargo +nightly bench --bench conversion
+
+# Generate benchmark plots (requires matplotlib, numpy)
+python3 scripts/generate_plots.py
 
 # Full comparison against Calibre (requires ebook-convert)
 python3 bench_compare.py
