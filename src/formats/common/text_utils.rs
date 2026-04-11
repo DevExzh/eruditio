@@ -484,7 +484,7 @@ pub fn contains_ascii_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
-    find_case_insensitive(haystack.as_bytes(), needle.as_bytes()).is_some()
+    find_ci(haystack.as_bytes(), needle.as_bytes()).is_some()
 }
 
 // ---------------------------------------------------------------------------

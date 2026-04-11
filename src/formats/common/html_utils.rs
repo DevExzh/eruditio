@@ -75,7 +75,7 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
 
     // Find the closing tag (case-insensitive).
     let rest_str = &content[search_start..];
-    let close_pos = match super::text_utils::find_case_insensitive(rest_str.as_bytes(), &close_tag)
+    let close_pos = match super::text_utils::find_ci(rest_str.as_bytes(), &close_tag)
     {
         Some(pos) => pos,
         None => return content,
@@ -123,7 +123,7 @@ pub fn strip_leading_heading<'a>(content: &'a str, title: &str) -> &'a str {
         // If we're in a full XHTML document, also trim the closing </body>...</html>.
         if body_start > trimmed_start
             && let Some(pos) =
-                super::text_utils::find_case_insensitive(result.as_bytes(), b"</body>")
+                super::text_utils::find_ci(result.as_bytes(), b"</body>")
         {
             return result[..pos].trim_end();
         }
@@ -151,7 +151,7 @@ fn find_body_content_start(content: &str, from: usize) -> Option<usize> {
         return None;
     }
 
-    let pos = super::text_utils::find_case_insensitive(bytes, b"<body")?;
+    let pos = super::text_utils::find_ci(bytes, b"<body")?;
     let abs_pos = from + pos;
     let gt = content[abs_pos..].find('>')?;
     Some(abs_pos + gt + 1)

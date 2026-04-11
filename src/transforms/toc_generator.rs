@@ -85,7 +85,7 @@ fn extract_first_heading(html: &str) -> Option<String> {
             };
             // Build the closing tag and search case-insensitively.
             let close_tag = [b'<', b'/', b'h', b'0' + level, b'>'];
-            let close_pos = match crate::formats::common::text_utils::find_case_insensitive(
+            let close_pos = match crate::formats::common::text_utils::find_ci(
                 &bytes[tag_end..],
                 &close_tag,
             ) {

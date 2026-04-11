@@ -307,7 +307,7 @@ fn extract_html_attr(tag: &str, attr_name: &str) -> Option<String> {
         pattern[attr_bytes.len()] = b'=';
         pattern[attr_bytes.len() + 1] = quote;
 
-        if let Some(start) = text_utils::find_case_insensitive(tag.as_bytes(), &pattern[..pat_len])
+        if let Some(start) = text_utils::find_ci(tag.as_bytes(), &pattern[..pat_len])
         {
             let val_start = start + pat_len;
             if let Some(end) = tag[val_start..].find(quote as char) {

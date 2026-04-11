@@ -539,10 +539,10 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
 /// Extracts the <body> content from an XHTML document.
 fn extract_body(html: &str) -> Option<&str> {
     let bytes = html.as_bytes();
-    let body_start = text_utils::find_case_insensitive(bytes, b"<body")?;
+    let body_start = text_utils::find_ci(bytes, b"<body")?;
     let content_start = html[body_start..].find('>')? + body_start + 1;
     let content_end =
-        text_utils::find_case_insensitive(&bytes[content_start..], b"</body>")? + content_start;
+        text_utils::find_ci(&bytes[content_start..], b"</body>")? + content_start;
 
     let body = html[content_start..content_end].trim();
     if body.is_empty() { None } else { Some(body) }
