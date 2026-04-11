@@ -12,7 +12,7 @@ use eruditio::formats::fb2::Fb2Reader;
 use eruditio::formats::html::HtmlReader;
 use eruditio::formats::mobi::MobiReader;
 use eruditio::formats::rtf::RtfReader;
-use eruditio::{ConversionOptions, Format, Pipeline};
+use eruditio::{ConversionOptions, Format, LoadFilter, Pipeline};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,6 +92,62 @@ fn bench_epub_parsing(c: &mut Criterion) {
                 })
             });
         }
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Format parsing: EPUB (filtered – selective manifest loading)
+// ---------------------------------------------------------------------------
+
+fn bench_epub_filtered_parsing(c: &mut Criterion) {
+    let mut group = c.benchmark_group("epub_filtered_parsing");
+    group.sample_size(100);
+    group.measurement_time(Duration::from_secs(10));
+
+    let reader = EpubReader::new();
+
+    // Use the large EPUB with lots of binary resources
+    if let Some(data) = load_validated("epub/epub30-test-0100.epub", &reader) {
+        // Baseline: load everything (current behavior)
+        group.bench_with_input(BenchmarkId::new("all", "large_1m"), &data, |b, d| {
+            b.iter(|| {
+                let mut cursor = Cursor::new(black_box(d.as_slice()));
+                reader
+                    .read_book_filtered(&mut cursor, LoadFilter::ALL)
+                    .unwrap()
+            })
+        });
+
+        // Text only (EPUB->TXT path)
+        group.bench_with_input(
+            BenchmarkId::new("text_only", "large_1m"),
+            &data,
+            |b, d| {
+                b.iter(|| {
+                    let mut cursor = Cursor::new(black_box(d.as_slice()));
+                    reader
+                        .read_book_filtered(&mut cursor, LoadFilter::TEXT)
+                        .unwrap()
+                })
+            },
+        );
+
+        // Text + images (EPUB->MOBI/FB2 path)
+        let text_images = LoadFilter::TEXT | LoadFilter::IMAGES;
+        group.bench_with_input(
+            BenchmarkId::new("text_images", "large_1m"),
+            &data,
+            |b, d| {
+                b.iter(|| {
+                    let mut cursor = Cursor::new(black_box(d.as_slice()));
+                    reader
+                        .read_book_filtered(&mut cursor, text_images)
+                        .unwrap()
+                })
+            },
+        );
     }
 
     group.finish();
@@ -343,6 +399,88 @@ fn bench_pipeline_conversion(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline conversion: filtered end-to-end (selective manifest loading)
+// ---------------------------------------------------------------------------
+
+fn bench_pipeline_filtered_conversion(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pipeline_filtered_conversion");
+    group.sample_size(100);
+    group.measurement_time(Duration::from_secs(10));
+
+    let pipeline = Pipeline::new();
+    let opts = ConversionOptions::all();
+
+    // EPUB->TXT (text-only filter, should be much faster)
+    if let Some(epub_data) = load_asset("epub/epub30-test-0100.epub") {
+        let try_convert = |from, to| -> bool {
+            let mut input = Cursor::new(epub_data.as_slice());
+            let mut output = Vec::new();
+            pipeline
+                .convert(from, to, &mut input, &mut output, &opts)
+                .is_ok()
+        };
+
+        if try_convert(Format::Epub, Format::Txt) {
+            group.bench_function("epub_to_txt/large_1m", |b| {
+                b.iter(|| {
+                    let mut input = Cursor::new(black_box(epub_data.as_slice()));
+                    let mut output = Vec::with_capacity(epub_data.len());
+                    pipeline
+                        .convert(
+                            Format::Epub,
+                            Format::Txt,
+                            &mut input,
+                            &mut output,
+                            &opts,
+                        )
+                        .unwrap()
+                })
+            });
+        }
+
+        // EPUB->EPUB (ALL filter, should be similar to baseline)
+        if try_convert(Format::Epub, Format::Epub) {
+            group.bench_function("epub_to_epub/large_1m", |b| {
+                b.iter(|| {
+                    let mut input = Cursor::new(black_box(epub_data.as_slice()));
+                    let mut output = Vec::with_capacity(epub_data.len() * 2);
+                    pipeline
+                        .convert(
+                            Format::Epub,
+                            Format::Epub,
+                            &mut input,
+                            &mut output,
+                            &opts,
+                        )
+                        .unwrap()
+                })
+            });
+        }
+
+        // EPUB->MOBI (text+images filter)
+        if try_convert(Format::Epub, Format::Mobi) {
+            group.bench_function("epub_to_mobi/large_1m", |b| {
+                b.iter(|| {
+                    let mut input = Cursor::new(black_box(epub_data.as_slice()));
+                    let mut output = Vec::with_capacity(epub_data.len() * 2);
+                    pipeline
+                        .convert(
+                            Format::Epub,
+                            Format::Mobi,
+                            &mut input,
+                            &mut output,
+                            &opts,
+                        )
+                        .unwrap()
+                })
+            });
+        }
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline: read-only (parse + transform, no write)
 // ---------------------------------------------------------------------------
 
@@ -392,11 +530,13 @@ fn bench_pipeline_read(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_epub_parsing,
+    bench_epub_filtered_parsing,
     bench_html_parsing,
     bench_fb2_parsing,
     bench_mobi_parsing,
     bench_rtf_parsing,
     bench_pipeline_conversion,
+    bench_pipeline_filtered_conversion,
     bench_pipeline_read,
 );
 criterion_main!(benches);
