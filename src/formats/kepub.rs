@@ -6,7 +6,7 @@
 //! before delegating to the EPUB writer.
 
 use crate::domain::manifest::{Manifest, ManifestItem};
-use crate::domain::{Book, FormatReader, FormatWriter};
+use crate::domain::{Book, FormatReader, FormatWriter, LoadFilter};
 use crate::error::Result;
 use crate::formats::epub::{EpubReader, EpubWriter};
 use rayon::prelude::*;
@@ -33,6 +33,10 @@ impl KepubReader {
 impl FormatReader for KepubReader {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book> {
         self.inner.read_book(reader)
+    }
+
+    fn read_book_filtered(&self, reader: &mut dyn Read, filter: LoadFilter) -> Result<Book> {
+        self.inner.read_book_filtered(reader, filter)
     }
 }
 
