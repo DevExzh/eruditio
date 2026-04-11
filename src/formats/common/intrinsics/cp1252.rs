@@ -6,12 +6,12 @@
 //!
 //! The dispatch function selects the best available SIMD backend at runtime:
 //!
-//! | Architecture  | Backend        |
-//! |--------------|----------------|
-//! | x86 / x86_64 | AVX2 (32 B) then SSE2 (16 B) fallback |
-//! | aarch64       | NEON (16 B)    |
-//! | wasm32        | SIMD128 (16 B) |
-//! | *other*       | scalar loop    |
+//! | Architecture  | Backend                                        |
+//! |--------------|------------------------------------------------|
+//! | x86 / x86_64  | AVX512BW (64 B) then AVX2 (32 B) then SSE2 fallback |
+//! | aarch64       | NEON (16 B)                            |
+//! | wasm32        | SIMD128 (16 B)                         |
+//! | *other*       | scalar loop                            |
 
 /// Windows-1252 to Unicode lookup table.  Bytes 0x00-0x7F and 0xA0-0xFF map
 /// directly to the same Unicode code point.  Bytes 0x80-0x9F have special
@@ -91,6 +91,144 @@ mod x86 {
     use core::arch::x86_64::*;
 
     use super::CP1252_TABLE;
+
+    /// AVX512BW implementation -- processes 64 bytes at a time looking for
+    /// all-ASCII runs, falls back to AVX2/SSE2 then scalar for non-ASCII bytes.
+    ///
+    /// Uses `_mm512_movepi8_mask` to extract high bits into a 64-bit mask
+    /// register, doubling throughput over AVX2 for ASCII-heavy text.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn decode_cp1252_avx512bw(data: &[u8]) -> String {
+        let len = data.len();
+        let mut result = String::with_capacity(len);
+        let mut i: usize = 0;
+
+        // --- 64-byte AVX512BW chunks ---
+        while i + 64 <= len {
+            unsafe {
+                let chunk = _mm512_loadu_si512(data.as_ptr().add(i) as *const __m512i);
+                let high_bits = _mm512_movepi8_mask(chunk);
+                if high_bits == 0 {
+                    // All 64 bytes are ASCII (high bit clear) -- bulk copy.
+                    // SAFETY: All bytes in range are 0x00-0x7F, which is valid
+                    // UTF-8.
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 64]);
+                    result.push_str(ascii_slice);
+                    i += 64;
+                    continue;
+                }
+                // Walk the entire 64-bit bitmask: process ALL non-ASCII bytes
+                // in this chunk before advancing, avoiding redundant SIMD reloads.
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    // Copy ASCII bytes between chunk_pos and next_non_ascii.
+                    if next_non_ascii > chunk_pos {
+                        // SAFETY: bytes in [i+chunk_pos .. i+next_non_ascii]
+                        // have their high bit clear (0x00-0x7F), valid UTF-8.
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    // Decode the non-ASCII byte via LUT.
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    // Clear the lowest set bit.
+                    mask &= mask - 1;
+                }
+                // Copy remaining ASCII bytes after the last non-ASCII byte.
+                if chunk_pos < 64 {
+                    // SAFETY: remaining bytes have high bit clear, valid UTF-8.
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 64]);
+                    result.push_str(ascii_slice);
+                }
+                i += 64;
+            }
+        }
+
+        // --- 32-byte AVX2 tail ---
+        while i + 32 <= len {
+            unsafe {
+                let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+                let high_bits = _mm256_movemask_epi8(chunk) as u32;
+                if high_bits == 0 {
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 32]);
+                    result.push_str(ascii_slice);
+                    i += 32;
+                    continue;
+                }
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    if next_non_ascii > chunk_pos {
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    mask &= mask - 1;
+                }
+                if chunk_pos < 32 {
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 32]);
+                    result.push_str(ascii_slice);
+                }
+                i += 32;
+            }
+        }
+
+        // --- 16-byte SSE2 tail ---
+        while i + 16 <= len {
+            unsafe {
+                let chunk = _mm_loadu_si128(data.as_ptr().add(i) as *const __m128i);
+                let high_bits = _mm_movemask_epi8(chunk) as u32;
+                if high_bits == 0 {
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i..i + 16]);
+                    result.push_str(ascii_slice);
+                    i += 16;
+                    continue;
+                }
+                let mut mask = high_bits;
+                let mut chunk_pos = 0usize;
+                while mask != 0 {
+                    let next_non_ascii = mask.trailing_zeros() as usize;
+                    if next_non_ascii > chunk_pos {
+                        let ascii_slice = core::str::from_utf8_unchecked(
+                            &data[i + chunk_pos..i + next_non_ascii],
+                        );
+                        result.push_str(ascii_slice);
+                    }
+                    result.push(CP1252_TABLE[data[i + next_non_ascii] as usize]);
+                    chunk_pos = next_non_ascii + 1;
+                    mask &= mask - 1;
+                }
+                if chunk_pos < 16 {
+                    let ascii_slice =
+                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
+                    result.push_str(ascii_slice);
+                }
+                i += 16;
+            }
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            let b = data[i];
+            if b < 0x80 {
+                result.push(b as char);
+            } else {
+                result.push(CP1252_TABLE[b as usize]);
+            }
+            i += 1;
+        }
+        result
+    }
 
     /// AVX2 implementation -- processes 32 bytes at a time looking for all-ASCII
     /// runs, falls back to SSE2 then scalar for non-ASCII bytes.
@@ -438,6 +576,10 @@ pub(crate) fn decode_cp1252(data: &[u8]) -> String {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::decode_cp1252_avx512bw(data) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::decode_cp1252_avx2(data) };

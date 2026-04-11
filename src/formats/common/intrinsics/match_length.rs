@@ -6,7 +6,7 @@
 //!
 //! | Architecture | Backend        |
 //! |-------------|----------------|
-//! | x86 / x86_64 | AVX2 (32 B) then SSE2 (16 B) fallback |
+//! | x86 / x86_64 | AVX512BW (64 B) then AVX2 (32 B) then SSE2 (16 B) fallback |
 //! | aarch64      | NEON (16 B)    |
 //! | wasm32       | SIMD128 (16 B) |
 //! | *other*      | scalar loop    |
@@ -21,6 +21,72 @@ mod x86 {
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
+
+    /// AVX512BW implementation -- processes 64 bytes at a time, then a 32-byte
+    /// AVX2 tail, then a 16-byte SSE2 tail, then a scalar tail.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn common_prefix_length_avx512bw(
+        a: &[u8],
+        b: &[u8],
+        max_len: usize,
+    ) -> usize {
+        let limit = max_len.min(a.len()).min(b.len());
+        let mut i: usize = 0;
+
+        // --- 64-byte AVX512BW chunks ---
+        while i + 64 <= limit {
+            // SAFETY: `i + 64 <= limit <= a.len()` and `i + 64 <= limit <= b.len()`,
+            // so 64-byte unaligned loads are within bounds. AVX512BW is enabled by
+            // `target_feature`.
+            unsafe {
+                let va = _mm512_loadu_si512(a.as_ptr().add(i) as *const __m512i);
+                let vb = _mm512_loadu_si512(b.as_ptr().add(i) as *const __m512i);
+                let mask = _mm512_cmpeq_epi8_mask(va, vb);
+                if mask != 0xFFFF_FFFF_FFFF_FFFF_u64 {
+                    return i + mask.trailing_ones() as usize;
+                }
+            }
+            i += 64;
+        }
+
+        // --- 32-byte AVX2 tail ---
+        if i + 32 <= limit {
+            // SAFETY: `i + 32 <= limit <= a.len()` and same for `b`. AVX2 is
+            // implied by AVX512BW.
+            unsafe {
+                let va = _mm256_loadu_si256(a.as_ptr().add(i) as *const __m256i);
+                let vb = _mm256_loadu_si256(b.as_ptr().add(i) as *const __m256i);
+                let cmp = _mm256_cmpeq_epi8(va, vb);
+                let mask = _mm256_movemask_epi8(cmp) as u32;
+                if mask != 0xFFFF_FFFF {
+                    return i + mask.trailing_ones() as usize;
+                }
+            }
+            i += 32;
+        }
+
+        // --- 16-byte SSE2 tail ---
+        if i + 16 <= limit {
+            // SAFETY: `i + 16 <= limit <= a.len()` and same for `b`. SSE2 is
+            // implied by AVX512BW.
+            unsafe {
+                let va = _mm_loadu_si128(a.as_ptr().add(i) as *const __m128i);
+                let vb = _mm_loadu_si128(b.as_ptr().add(i) as *const __m128i);
+                let cmp = _mm_cmpeq_epi8(va, vb);
+                let mask = _mm_movemask_epi8(cmp) as u32;
+                if mask != 0xFFFF {
+                    return i + mask.trailing_ones() as usize;
+                }
+            }
+            i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < limit && a[i] == b[i] {
+            i += 1;
+        }
+        i
+    }
 
     /// AVX2 implementation -- processes 32 bytes at a time, then a 16-byte
     /// SSE2 tail, then a scalar tail.
@@ -216,6 +282,10 @@ pub(crate) fn common_prefix_length_scalar(a: &[u8], b: &[u8], max_len: usize) ->
 pub(crate) fn common_prefix_length(a: &[u8], b: &[u8], max_len: usize) -> usize {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::common_prefix_length_avx512bw(a, b, max_len) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::common_prefix_length_avx2(a, b, max_len) };

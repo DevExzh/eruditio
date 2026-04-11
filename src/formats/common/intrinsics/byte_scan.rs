@@ -7,9 +7,9 @@
 //!
 //! The dispatch function selects the best available SIMD backend at runtime:
 //!
-//! | Architecture  | Backend        |
-//! |--------------|----------------|
-//! | x86 / x86_64 | AVX2 (32 B) then SSE2 (16 B) fallback |
+//! | Architecture  | Backend            |
+//! |--------------|---------------------|
+//! | x86 / x86_64 | AVX512BW (64 B) then AVX2 (32 B) then SSE2 (16 B) fallback |
 //! | aarch64       | NEON (16 B)    |
 //! | wasm32        | SIMD128 (16 B) |
 //! | *other*       | scalar loop    |
@@ -48,6 +48,168 @@ mod x86 {
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
+
+    /// AVX512BW implementation -- processes 64 bytes at a time.
+    ///
+    /// Uses `vpcmpeqb` with mask registers for O(set_size) per 64-byte chunk,
+    /// or delegates to a `vpshufb` nibble-split path for sets of 4-8 bytes.
+    /// The mask-register approach avoids the movemask bottleneck entirely.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn find_first_in_set_avx512bw(haystack: &[u8], set: &[u8]) -> Option<usize> {
+        if set.len() >= 4 && set.len() <= 8 {
+            return unsafe { find_first_in_set_avx512bw_pshufb(haystack, set) };
+        }
+
+        let len = haystack.len();
+        let mut i: usize = 0;
+
+        // --- 64-byte AVX512BW chunks ---
+        while i + 64 <= len {
+            unsafe {
+                let chunk = _mm512_loadu_si512(haystack.as_ptr().add(i) as *const __m512i);
+                let mut combined: u64 = 0;
+                for &needle in set {
+                    let splat = _mm512_set1_epi8(needle as i8);
+                    combined |= _mm512_cmpeq_epi8_mask(chunk, splat);
+                }
+                if combined != 0 {
+                    return Some(i + combined.trailing_zeros() as usize);
+                }
+            }
+            i += 64;
+        }
+
+        // --- 32-byte AVX2 tail ---
+        if i + 32 <= len {
+            unsafe {
+                let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
+                let mut combined = _mm256_setzero_si256();
+                for &needle in set {
+                    let splat = _mm256_set1_epi8(needle as i8);
+                    let cmp = _mm256_cmpeq_epi8(chunk, splat);
+                    combined = _mm256_or_si256(combined, cmp);
+                }
+                let mask = _mm256_movemask_epi8(combined) as u32;
+                if mask != 0 {
+                    return Some(i + mask.trailing_zeros() as usize);
+                }
+            }
+            i += 32;
+        }
+
+        // --- 16-byte SSE2 tail ---
+        if i + 16 <= len {
+            unsafe {
+                let chunk = _mm_loadu_si128(haystack.as_ptr().add(i) as *const __m128i);
+                let mut combined = _mm_setzero_si128();
+                for &needle in set {
+                    let splat = _mm_set1_epi8(needle as i8);
+                    let cmp = _mm_cmpeq_epi8(chunk, splat);
+                    combined = _mm_or_si128(combined, cmp);
+                }
+                let mask = _mm_movemask_epi8(combined) as u32;
+                if mask != 0 {
+                    return Some(i + mask.trailing_zeros() as usize);
+                }
+            }
+            i += 16;
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if set.contains(&haystack[i]) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// AVX512BW + pshufb nibble-split path for sets of 4-8 bytes.
+    #[target_feature(enable = "avx512bw")]
+    unsafe fn find_first_in_set_avx512bw_pshufb(haystack: &[u8], set: &[u8]) -> Option<usize> {
+        let (lo_lut, hi_lut) = super::build_nibble_luts(set);
+        let len = haystack.len();
+        let mut i: usize = 0;
+
+        unsafe {
+            let lo128 = _mm_loadu_si128(lo_lut.as_ptr() as *const __m128i);
+            let hi128 = _mm_loadu_si128(hi_lut.as_ptr() as *const __m128i);
+
+            if len >= 64 {
+                let lo512 = _mm512_broadcast_i32x4(lo128);
+                let hi512 = _mm512_broadcast_i32x4(hi128);
+                let mask_0f_512 = _mm512_set1_epi8(0x0F);
+
+                // --- 64-byte AVX512BW chunks ---
+                while i + 64 <= len {
+                    let chunk = _mm512_loadu_si512(haystack.as_ptr().add(i) as *const __m512i);
+                    let lo_nib = _mm512_and_si512(chunk, mask_0f_512);
+                    let hi_nib = _mm512_and_si512(_mm512_srli_epi16(chunk, 4), mask_0f_512);
+                    let lo_match = _mm512_shuffle_epi8(lo512, lo_nib);
+                    let hi_match = _mm512_shuffle_epi8(hi512, hi_nib);
+                    let matched = _mm512_and_si512(lo_match, hi_match);
+
+                    // _mm512_test_epi8_mask returns mask of lanes where
+                    // (a & b) != 0, i.e. matched bytes.
+                    let mask = _mm512_test_epi8_mask(matched, matched);
+                    if mask != 0 {
+                        return Some(i + mask.trailing_zeros() as usize);
+                    }
+                    i += 64;
+                }
+            }
+
+            // --- 32-byte AVX2 tail using pshufb ---
+            if i + 32 <= len {
+                let lo256 = _mm256_broadcastsi128_si256(lo128);
+                let hi256 = _mm256_broadcastsi128_si256(hi128);
+                let mask_0f_256 = _mm256_set1_epi8(0x0F);
+                let zero256 = _mm256_setzero_si256();
+
+                let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
+                let lo_nib = _mm256_and_si256(chunk, mask_0f_256);
+                let hi_nib = _mm256_and_si256(_mm256_srli_epi16(chunk, 4), mask_0f_256);
+                let lo_match = _mm256_shuffle_epi8(lo256, lo_nib);
+                let hi_match = _mm256_shuffle_epi8(hi256, hi_nib);
+                let matched = _mm256_and_si256(lo_match, hi_match);
+
+                if _mm256_testz_si256(matched, matched) == 0 {
+                    let zero_mask =
+                        _mm256_movemask_epi8(_mm256_cmpeq_epi8(matched, zero256)) as u32;
+                    return Some(i + (!zero_mask).trailing_zeros() as usize);
+                }
+                i += 32;
+            }
+
+            // --- 16-byte SSSE3 tail ---
+            let mask_0f_128 = _mm_set1_epi8(0x0F);
+            let zero128 = _mm_setzero_si128();
+            if i + 16 <= len {
+                let chunk = _mm_loadu_si128(haystack.as_ptr().add(i) as *const __m128i);
+                let lo_nib = _mm_and_si128(chunk, mask_0f_128);
+                let hi_nib = _mm_and_si128(_mm_srli_epi16(chunk, 4), mask_0f_128);
+                let lo_match = _mm_shuffle_epi8(lo128, lo_nib);
+                let hi_match = _mm_shuffle_epi8(hi128, hi_nib);
+                let matched = _mm_and_si128(lo_match, hi_match);
+
+                let zero_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(matched, zero128)) as u32;
+                if zero_mask != 0xFFFF {
+                    return Some(i + ((!zero_mask) & 0xFFFF).trailing_zeros() as usize);
+                }
+                i += 16;
+            }
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            if set.contains(&haystack[i]) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
 
     /// AVX2 implementation -- processes 32 bytes at a time, then a 16-byte
     /// SSE2 tail, then a scalar tail.
@@ -345,6 +507,10 @@ pub(crate) fn find_first_in_set(haystack: &[u8], set: &[u8]) -> Option<usize> {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::find_first_in_set_avx512bw(haystack, set) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::find_first_in_set_avx2(haystack, set) };

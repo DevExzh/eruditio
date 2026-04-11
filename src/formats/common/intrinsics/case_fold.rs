@@ -6,12 +6,12 @@
 //!
 //! The dispatch function selects the best available SIMD backend at runtime:
 //!
-//! | Architecture  | Backend                                |
-//! |---------------|----------------------------------------|
-//! | x86 / x86_64  | AVX2 (32 B) then SSE2 (16 B) fallback |
-//! | aarch64       | NEON (16 B)                            |
-//! | wasm32        | SIMD128 (16 B)                         |
-//! | *other*       | scalar loop                            |
+//! | Architecture  | Backend                                          |
+//! |---------------|--------------------------------------------------|
+//! | x86 / x86_64  | AVX512BW (64 B) > AVX2 (32 B) > SSE2 (16 B)     |
+//! | aarch64       | NEON (16 B)                                      |
+//! | wasm32        | SIMD128 (16 B)                                   |
+//! | *other*       | scalar loop                                      |
 
 // ---------------------------------------------------------------------------
 // x86 / x86_64  SIMD implementations
@@ -60,6 +60,112 @@ mod x86 {
             // result = v | (is_upper & 0x20)
             _mm256_or_si256(v, _mm256_and_si256(is_upper, mask_20))
         }
+    }
+
+    /// Lowercase ASCII letters in a 512-bit vector by OR-ing 0x20 into bytes
+    /// that fall in the A-Z range.
+    #[inline(always)]
+    unsafe fn to_lower_avx512bw(v: __m512i) -> __m512i {
+        unsafe {
+            let a_minus_1 = _mm512_set1_epi8(b'A' as i8 - 1); // 0x40
+            let z_plus_1 = _mm512_set1_epi8(b'Z' as i8 + 1); // 0x5B
+            let mask_20 = _mm512_set1_epi8(0x20);
+            // is_upper = (v > 'A'-1) & ('Z'+1 > v)
+            let gt_a = _mm512_cmpgt_epi8_mask(v, a_minus_1);
+            let lt_z = _mm512_cmpgt_epi8_mask(z_plus_1, v);
+            let is_upper = gt_a & lt_z;
+            // result = v | (is_upper ? 0x20 : 0x00)
+            // Use or + blend: compute v|0x20, then blend with v based on mask.
+            let v_or_20 = _mm512_or_si512(v, mask_20);
+            _mm512_mask_blend_epi8(is_upper, v, v_or_20)
+        }
+    }
+
+    /// AVX512BW implementation -- processes 64 bytes at a time with case folding,
+    /// then a 32-byte AVX2 tail, 16-byte SSE2 tail, and scalar tail.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn eq_ignore_ascii_case_avx512bw(a: &[u8], b: &[u8]) -> bool {
+        debug_assert_eq!(a.len(), b.len());
+        let len = a.len();
+        let mut i: usize = 0;
+
+        // --- 64-byte AVX512BW chunks ---
+        while i + 64 <= len {
+            // SAFETY: `i + 64 <= len == a.len() == b.len()`, so 64-byte
+            // unaligned loads are within bounds. AVX512BW is enabled by
+            // `target_feature`.
+            unsafe {
+                let va = _mm512_loadu_si512(a.as_ptr().add(i) as *const __m512i);
+                let vb = _mm512_loadu_si512(b.as_ptr().add(i) as *const __m512i);
+                let la = to_lower_avx512bw(va);
+                let lb = to_lower_avx512bw(vb);
+                let mask = _mm512_cmpeq_epi8_mask(la, lb);
+                if mask != 0xFFFF_FFFF_FFFF_FFFF_u64 {
+                    return false;
+                }
+            }
+            i += 64;
+        }
+
+        // --- 32-byte AVX2 tail ---
+        if i + 32 <= len {
+            // SAFETY: AVX2 is implied by AVX512BW.
+            unsafe {
+                let va = _mm256_loadu_si256(a.as_ptr().add(i) as *const __m256i);
+                let vb = _mm256_loadu_si256(b.as_ptr().add(i) as *const __m256i);
+                let la = to_lower_avx2(va);
+                let lb = to_lower_avx2(vb);
+                let cmp = _mm256_cmpeq_epi8(la, lb);
+                let mask = _mm256_movemask_epi8(cmp) as u32;
+                if mask != 0xFFFF_FFFF {
+                    return false;
+                }
+            }
+            i += 32;
+        }
+
+        // --- 16-byte SSE2 tail ---
+        if i + 16 <= len {
+            // SAFETY: SSE2 is implied by AVX512BW.
+            unsafe {
+                let va = _mm_loadu_si128(a.as_ptr().add(i) as *const __m128i);
+                let vb = _mm_loadu_si128(b.as_ptr().add(i) as *const __m128i);
+                let la = to_lower_sse2(va);
+                let lb = to_lower_sse2(vb);
+                let cmp = _mm_cmpeq_epi8(la, lb);
+                let mask = _mm_movemask_epi8(cmp) as u32;
+                if mask != 0xFFFF {
+                    return false;
+                }
+            }
+            i += 16;
+        }
+
+        // --- overlapping SSE2 tail (branchless) ---
+        if i < len {
+            if len >= 16 {
+                unsafe {
+                    let va = _mm_loadu_si128(a.as_ptr().add(len - 16) as *const __m128i);
+                    let vb = _mm_loadu_si128(b.as_ptr().add(len - 16) as *const __m128i);
+                    let la = to_lower_sse2(va);
+                    let lb = to_lower_sse2(vb);
+                    let cmp = _mm_cmpeq_epi8(la, lb);
+                    let mask = _mm_movemask_epi8(cmp) as u32;
+                    if mask != 0xFFFF {
+                        return false;
+                    }
+                }
+            } else {
+                // Input shorter than 16 bytes total: scalar fallback.
+                while i < len {
+                    if !a[i].eq_ignore_ascii_case(&b[i]) {
+                        return false;
+                    }
+                    i += 1;
+                }
+            }
+        }
+        true
     }
 
     /// AVX2 implementation -- processes 32 bytes at a time with case folding,
@@ -322,6 +428,10 @@ pub(crate) fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::eq_ignore_ascii_case_avx512bw(a, b) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::eq_ignore_ascii_case_avx2(a, b) };

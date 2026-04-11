@@ -5,9 +5,9 @@
 //!
 //! The dispatch function selects the best available SIMD backend at runtime:
 //!
-//! | Architecture  | Backend                                |
-//! |---------------|----------------------------------------|
-//! | x86 / x86_64  | AVX2 (32 B) then SSE2 (16 B) fallback |
+//! | Architecture  | Backend                                        |
+//! |---------------|------------------------------------------------|
+//! | x86 / x86_64  | AVX512BW (64 B) then AVX2 (32 B) then SSE2 fallback |
 //! | aarch64       | NEON (16 B)                            |
 //! | wasm32        | SIMD128 (16 B)                         |
 //! | *other*       | scalar loop                            |
@@ -22,6 +22,90 @@ mod x86 {
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
+
+    /// AVX512BW implementation -- processes 64 bytes at a time.
+    ///
+    /// Uses an OR-accumulator with 512-bit zmm registers, doubling throughput
+    /// over AVX2.  The `vpmovb2m` instruction extracts high bits directly into
+    /// a 64-bit mask register, avoiding the movemask bottleneck.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn is_all_ascii_avx512bw(data: &[u8]) -> bool {
+        let len = data.len();
+        let mut i: usize = 0;
+
+        // --- 64-byte AVX512BW chunks with OR-accumulator ---
+        unsafe {
+            let mut acc = _mm512_setzero_si512();
+            while i + 64 <= len {
+                let chunk = _mm512_loadu_si512(data.as_ptr().add(i) as *const __m512i);
+                acc = _mm512_or_si512(acc, chunk);
+                i += 64;
+            }
+            // _mm512_movepi8_mask extracts bit 7 from each byte → __mmask64.
+            if _mm512_movepi8_mask(acc) != 0 {
+                return false;
+            }
+        }
+
+        // --- 32-byte AVX2 tail ---
+        if i + 32 <= len {
+            unsafe {
+                let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+                if _mm256_movemask_epi8(chunk) as u32 != 0 {
+                    return false;
+                }
+            }
+            i += 32;
+        }
+
+        // --- 16-byte SSE2 tail ---
+        if i + 16 <= len {
+            unsafe {
+                let chunk = _mm_loadu_si128(data.as_ptr().add(i) as *const __m128i);
+                if _mm_movemask_epi8(chunk) as u32 != 0 {
+                    return false;
+                }
+            }
+            i += 16;
+        }
+
+        // --- overlapping SSE2 tail (branchless) ---
+        if i < len {
+            if len >= 16 {
+                unsafe {
+                    let chunk = _mm_loadu_si128(data.as_ptr().add(len - 16) as *const __m128i);
+                    if _mm_movemask_epi8(chunk) as u32 != 0 {
+                        return false;
+                    }
+                }
+            } else {
+                let ptr = data.as_ptr();
+                let mut acc: u64;
+                if len >= 8 {
+                    unsafe {
+                        acc = (ptr as *const u64).read_unaligned();
+                        acc |= (ptr.add(len - 8) as *const u64).read_unaligned();
+                    }
+                } else if len >= 4 {
+                    unsafe {
+                        acc = (ptr as *const u32).read_unaligned() as u64;
+                        acc |= (ptr.add(len - 4) as *const u32).read_unaligned() as u64;
+                    }
+                } else if len >= 2 {
+                    unsafe {
+                        acc = (ptr as *const u16).read_unaligned() as u64;
+                        acc |= (ptr.add(len - 2) as *const u16).read_unaligned() as u64;
+                    }
+                } else {
+                    acc = data[0] as u64;
+                }
+                if acc & 0x8080_8080_8080_8080 != 0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 
     /// AVX2 implementation -- processes 32 bytes at a time.
     ///
@@ -279,6 +363,10 @@ pub(crate) fn is_all_ascii(data: &[u8]) -> bool {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::is_all_ascii_avx512bw(data) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::is_all_ascii_avx2(data) };

@@ -65,7 +65,7 @@ fn read_from_archive<R: Read + Seek>(
         let size_hint = (file.size() as usize).min(256 * 1024 * 1024);
         let mut data = Vec::with_capacity(size_hint);
         file.read_to_end(&mut data)?;
-        Ok(ManifestData::Inline(Arc::from(data)))
+        Ok(ManifestData::Inline(Arc::new(data)))
     }
 }
 
@@ -156,7 +156,7 @@ fn bytes_to_manifest_data(bytes: Vec<u8>, as_text: bool) -> Result<ManifestData>
         };
         Ok(ManifestData::Text(text))
     } else {
-        Ok(ManifestData::Inline(Arc::from(bytes)))
+        Ok(ManifestData::Inline(Arc::new(bytes)))
     }
 }
 
@@ -223,6 +223,8 @@ fn load_sequential(
     // Avoids ~11 KB heap allocation per Deflate entry.
     let mut decompressor = Decompress::new(false);
     let mut raw_buf = Vec::new();
+    // Reusable path buffer — avoids one String allocation per manifest item.
+    let mut zip_path_buf = String::with_capacity(64);
 
     for id in &ids_to_load {
         let item = match manifest.get(id) {
@@ -230,12 +232,17 @@ fn load_sequential(
             None => continue,
         };
 
-        let zip_path = resolve_href(opf_dir, &item.href);
+        // Build resolved path in reusable buffer instead of allocating.
+        zip_path_buf.clear();
+        if !opf_dir.is_empty() && !item.href.starts_with('/') {
+            zip_path_buf.push_str(opf_dir);
+        }
+        zip_path_buf.push_str(&item.href);
         let is_text = is_text_media_type(&item.media_type);
 
         let data = match read_from_archive_reuse(
             &mut archive,
-            &zip_path,
+            &zip_path_buf,
             is_text,
             &mut decompressor,
             &mut raw_buf,
@@ -251,7 +258,7 @@ fn load_sequential(
                 ) {
                     Ok(d) => d,
                     Err(_) => {
-                        log::warn!("EPUB: missing file in archive: {}", zip_path);
+                        log::warn!("EPUB: missing file in archive: {}", zip_path_buf);
                         continue;
                     },
                 }

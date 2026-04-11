@@ -6,12 +6,12 @@
 //!
 //! The dispatch function selects the best available SIMD backend at runtime:
 //!
-//! | Architecture  | Backend                                |
-//! |---------------|----------------------------------------|
-//! | x86 / x86_64  | AVX2 (32 B) then SSE2 (16 B) fallback |
-//! | aarch64       | NEON (16 B)                            |
-//! | wasm32        | SIMD128 (16 B)                         |
-//! | *other*       | scalar loop                            |
+//! | Architecture  | Backend                                          |
+//! |---------------|--------------------------------------------------|
+//! | x86 / x86_64  | AVX512BW (64 B) > AVX2 (32 B) > SSE2 (16 B)    |
+//! | aarch64       | NEON (16 B)                                      |
+//! | wasm32        | SIMD128 (16 B)                                   |
+//! | *other*       | scalar loop                                      |
 
 // ---------------------------------------------------------------------------
 // Shared verify helper
@@ -42,6 +42,87 @@ mod x86 {
     use core::arch::x86_64::*;
 
     use super::verify_tail;
+
+    /// AVX512BW implementation -- scans 64 bytes at a time for first-byte
+    /// matches, then verifies remaining bytes at each candidate. Falls through
+    /// to AVX2, SSE2, and scalar tails for the remaining bytes.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn find_short_pattern_avx512bw(
+        haystack: &[u8],
+        needle: &[u8],
+    ) -> Option<usize> {
+        let len = haystack.len();
+        let first = needle[0];
+        let mut i: usize = 0;
+
+        // SAFETY: AVX512BW is enabled by `target_feature`.
+        unsafe {
+            let splat = _mm512_set1_epi8(first as i8);
+
+            // --- 64-byte AVX512BW chunks ---
+            while i + 64 <= len {
+                // SAFETY: `i + 64 <= len <= haystack.len()`, so the 64-byte
+                // unaligned load is within bounds.
+                let chunk = _mm512_loadu_si512(haystack.as_ptr().add(i) as *const __m512i);
+                let mut mask = _mm512_cmpeq_epi8_mask(chunk, splat);
+
+                while mask != 0 {
+                    let bit_pos = mask.trailing_zeros() as usize;
+                    let candidate = i + bit_pos;
+                    if verify_tail(haystack, candidate, needle) {
+                        return Some(candidate);
+                    }
+                    mask &= mask - 1; // clear lowest set bit
+                }
+                i += 64;
+            }
+
+            // --- 32-byte AVX2 tail ---
+            if i + 32 <= len {
+                let splat_256 = _mm256_set1_epi8(first as i8);
+                let chunk = _mm256_loadu_si256(haystack.as_ptr().add(i) as *const __m256i);
+                let cmp = _mm256_cmpeq_epi8(chunk, splat_256);
+                let mut mask = _mm256_movemask_epi8(cmp) as u32;
+
+                while mask != 0 {
+                    let bit_pos = mask.trailing_zeros() as usize;
+                    let candidate = i + bit_pos;
+                    if verify_tail(haystack, candidate, needle) {
+                        return Some(candidate);
+                    }
+                    mask &= mask - 1;
+                }
+                i += 32;
+            }
+
+            // --- 16-byte SSE2 tail ---
+            if i + 16 <= len {
+                let splat_128 = _mm_set1_epi8(first as i8);
+                let chunk = _mm_loadu_si128(haystack.as_ptr().add(i) as *const __m128i);
+                let cmp = _mm_cmpeq_epi8(chunk, splat_128);
+                let mut mask = _mm_movemask_epi8(cmp) as u32;
+
+                while mask != 0 {
+                    let bit_pos = mask.trailing_zeros() as usize;
+                    let candidate = i + bit_pos;
+                    if verify_tail(haystack, candidate, needle) {
+                        return Some(candidate);
+                    }
+                    mask &= mask - 1;
+                }
+                i += 16;
+            }
+        }
+
+        // --- scalar tail ---
+        while i + needle.len() <= len {
+            if haystack[i] == first && verify_tail(haystack, i, needle) {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
 
     /// AVX2 implementation -- scans 32 bytes at a time for first-byte matches,
     /// then verifies remaining bytes at each candidate.
@@ -318,6 +399,10 @@ pub(crate) fn find_short_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::find_short_pattern_avx512bw(haystack, needle) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::find_short_pattern_avx2(haystack, needle) };

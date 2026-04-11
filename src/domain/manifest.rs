@@ -6,12 +6,12 @@ use std::sync::Arc;
 pub enum ManifestData {
     /// Raw binary data (images, fonts, etc.).
     ///
-    /// Wrapped in `Arc<[u8]>` so that cloning a `Book` (e.g. in the Kepub
-    /// writer) is a cheap reference-count bump instead of a deep copy of
-    /// every image.  Using `Arc<[u8]>` (fat pointer) rather than
-    /// `Arc<Vec<u8>>` eliminates one level of pointer indirection — the
-    /// bytes live inline in the Arc allocation.
-    Inline(Arc<[u8]>),
+    /// Wrapped in `Arc` so that cloning a `Book` (e.g. in the Kepub writer)
+    /// is a cheap reference-count bump instead of a deep copy of every image.
+    /// Uses `Arc<Vec<u8>>` rather than `Arc<[u8]>` to avoid a full memcpy on
+    /// construction — `Arc::new(vec)` wraps the existing heap allocation in
+    /// constant time, whereas `Arc::from(vec)` must reallocate and copy.
+    Inline(Arc<Vec<u8>>),
     /// Text content (XHTML, CSS, NCX, etc.).
     Text(String),
     /// Placeholder — data has not been loaded yet.
@@ -39,7 +39,7 @@ impl ManifestData {
     ///
     /// This allows callers to `Arc::clone` instead of copying the entire buffer
     /// when shared ownership is sufficient.
-    pub(crate) fn as_inline_arc(&self) -> Option<&Arc<[u8]>> {
+    pub(crate) fn as_inline_arc(&self) -> Option<&Arc<Vec<u8>>> {
         match self {
             ManifestData::Inline(a) => Some(a),
             _ => None,
@@ -103,7 +103,7 @@ impl ManifestItem {
     }
 
     pub fn with_data(mut self, data: Vec<u8>) -> Self {
-        self.data = ManifestData::Inline(Arc::from(data));
+        self.data = ManifestData::Inline(Arc::new(data));
         self
     }
 

@@ -14,6 +14,33 @@ use super::options::ConversionOptions;
 use super::registry::FormatRegistry;
 use crate::domain::traits::Transform;
 
+/// Enum dispatch for transforms — avoids `Box<dyn Transform>` vtable overhead
+/// and heap allocation per conversion.  All variants except `MetadataMerger`
+/// are zero-sized, so the enum is small and cache-friendly.
+enum TransformKind {
+    DataUriExtractor(DataUriExtractor),
+    HtmlNormalizer(HtmlNormalizer),
+    MetadataMerger(MetadataMerger),
+    StructureDetector(StructureDetector),
+    TocGenerator(TocGenerator),
+    CoverHandler(CoverHandler),
+    ManifestTrimmer(ManifestTrimmer),
+}
+
+impl TransformKind {
+    fn apply(&self, book: Book) -> Result<Book> {
+        match self {
+            Self::DataUriExtractor(t) => Transform::apply(t, book),
+            Self::HtmlNormalizer(t) => Transform::apply(t, book),
+            Self::MetadataMerger(t) => Transform::apply(t, book),
+            Self::StructureDetector(t) => Transform::apply(t, book),
+            Self::TocGenerator(t) => Transform::apply(t, book),
+            Self::CoverHandler(t) => Transform::apply(t, book),
+            Self::ManifestTrimmer(t) => Transform::apply(t, book),
+        }
+    }
+}
+
 /// The conversion pipeline: reads, transforms, and writes ebooks.
 #[must_use]
 pub struct Pipeline {
@@ -114,39 +141,39 @@ impl Pipeline {
     }
 
     /// Builds the ordered transform chain based on options.
-    fn build_transform_chain(&self, options: &ConversionOptions) -> Vec<Box<dyn Transform>> {
-        let mut chain: Vec<Box<dyn Transform>> = Vec::new();
+    fn build_transform_chain(&self, options: &ConversionOptions) -> Vec<TransformKind> {
+        let mut chain = Vec::new();
 
         // Order matters: extract data URIs first (simplifies HTML, makes images
         // available as manifest resources), then normalize, detect structure,
         // and generate TOC.
 
         if options.extract_data_uris {
-            chain.push(Box::new(DataUriExtractor));
+            chain.push(TransformKind::DataUriExtractor(DataUriExtractor));
         }
 
         if options.normalize_html {
-            chain.push(Box::new(HtmlNormalizer));
+            chain.push(TransformKind::HtmlNormalizer(HtmlNormalizer));
         }
 
         if let Some(ref overrides) = options.metadata_overrides {
-            chain.push(Box::new(MetadataMerger::new(overrides.clone())));
+            chain.push(TransformKind::MetadataMerger(MetadataMerger::new(overrides.clone())));
         }
 
         if options.detect_structure {
-            chain.push(Box::new(StructureDetector));
+            chain.push(TransformKind::StructureDetector(StructureDetector));
         }
 
         if options.generate_toc {
-            chain.push(Box::new(TocGenerator));
+            chain.push(TransformKind::TocGenerator(TocGenerator));
         }
 
         if options.detect_cover {
-            chain.push(Box::new(CoverHandler));
+            chain.push(TransformKind::CoverHandler(CoverHandler));
         }
 
         if options.trim_manifest {
-            chain.push(Box::new(ManifestTrimmer));
+            chain.push(TransformKind::ManifestTrimmer(ManifestTrimmer));
         }
 
         chain

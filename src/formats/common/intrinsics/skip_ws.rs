@@ -5,9 +5,9 @@
 //!
 //! The dispatch function selects the best available SIMD backend at runtime:
 //!
-//! | Architecture  | Backend                                |
-//! |---------------|----------------------------------------|
-//! | x86 / x86_64  | AVX2 (32 B) then SSE2 (16 B) fallback |
+//! | Architecture  | Backend                                        |
+//! |---------------|------------------------------------------------|
+//! | x86 / x86_64  | AVX512BW (64 B) then AVX2 (32 B) then SSE2 fallback |
 //! | aarch64       | NEON (16 B)                            |
 //! | wasm32        | SIMD128 (16 B)                         |
 //! | *other*       | scalar loop                            |
@@ -22,6 +22,100 @@ mod x86 {
     use core::arch::x86::*;
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
+
+    /// AVX512BW implementation -- processes 64 bytes at a time.
+    ///
+    /// Uses `_mm512_cmpeq_epi8_mask` which returns a `__mmask64` directly,
+    /// avoiding the movemask bottleneck. Falls through to AVX2 (32 B), SSE2
+    /// (16 B), and scalar tails for the remainder.
+    #[target_feature(enable = "avx512bw")]
+    pub(super) unsafe fn skip_whitespace_avx512bw(data: &[u8]) -> usize {
+        let len = data.len();
+        let mut i: usize = 0;
+
+        // --- 64-byte AVX512BW chunks ---
+        // SAFETY: AVX512BW is enabled by `target_feature`.
+        unsafe {
+            let ws_space = _mm512_set1_epi8(0x20_u8 as i8);
+            let ws_tab = _mm512_set1_epi8(0x09_u8 as i8);
+            let ws_nl = _mm512_set1_epi8(0x0A_u8 as i8);
+            let ws_cr = _mm512_set1_epi8(0x0D_u8 as i8);
+
+            while i + 64 <= len {
+                // SAFETY: `i + 64 <= len <= data.len()`, so the 64-byte
+                // unaligned load is within bounds.
+                let chunk = _mm512_loadu_si512(data.as_ptr().add(i) as *const __m512i);
+                let mask = _mm512_cmpeq_epi8_mask(chunk, ws_space)
+                    | _mm512_cmpeq_epi8_mask(chunk, ws_tab)
+                    | _mm512_cmpeq_epi8_mask(chunk, ws_nl)
+                    | _mm512_cmpeq_epi8_mask(chunk, ws_cr);
+                if mask != 0xFFFF_FFFF_FFFF_FFFF_u64 {
+                    // First non-whitespace byte: first 0-bit position.
+                    return i + (!mask).trailing_zeros() as usize;
+                }
+                i += 64;
+            }
+
+            // --- 32-byte AVX2 tail ---
+            // SAFETY: AVX2 is implied by AVX512BW.
+            if i + 32 <= len {
+                let chunk = _mm256_loadu_si256(data.as_ptr().add(i) as *const __m256i);
+                let ws_space_256 = _mm256_set1_epi8(0x20_u8 as i8);
+                let ws_tab_256 = _mm256_set1_epi8(0x09_u8 as i8);
+                let ws_nl_256 = _mm256_set1_epi8(0x0A_u8 as i8);
+                let ws_cr_256 = _mm256_set1_epi8(0x0D_u8 as i8);
+                let combined = _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_cmpeq_epi8(chunk, ws_space_256),
+                        _mm256_cmpeq_epi8(chunk, ws_tab_256),
+                    ),
+                    _mm256_or_si256(
+                        _mm256_cmpeq_epi8(chunk, ws_nl_256),
+                        _mm256_cmpeq_epi8(chunk, ws_cr_256),
+                    ),
+                );
+                let mask = _mm256_movemask_epi8(combined) as u32;
+                if mask != 0xFFFF_FFFF {
+                    return i + (!mask).trailing_zeros() as usize;
+                }
+                i += 32;
+            }
+
+            // --- 16-byte SSE2 tail ---
+            // SAFETY: SSE2 is implied by AVX512BW.
+            if i + 16 <= len {
+                let chunk = _mm_loadu_si128(data.as_ptr().add(i) as *const __m128i);
+                let ws_space_128 = _mm_set1_epi8(0x20_u8 as i8);
+                let ws_tab_128 = _mm_set1_epi8(0x09_u8 as i8);
+                let ws_nl_128 = _mm_set1_epi8(0x0A_u8 as i8);
+                let ws_cr_128 = _mm_set1_epi8(0x0D_u8 as i8);
+                let combined = _mm_or_si128(
+                    _mm_or_si128(
+                        _mm_cmpeq_epi8(chunk, ws_space_128),
+                        _mm_cmpeq_epi8(chunk, ws_tab_128),
+                    ),
+                    _mm_or_si128(
+                        _mm_cmpeq_epi8(chunk, ws_nl_128),
+                        _mm_cmpeq_epi8(chunk, ws_cr_128),
+                    ),
+                );
+                let mask = _mm_movemask_epi8(combined) as u32;
+                if mask != 0xFFFF {
+                    return i + (!mask).trailing_zeros() as usize;
+                }
+                i += 16;
+            }
+        }
+
+        // --- scalar tail ---
+        while i < len {
+            match data[i] {
+                b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+                _ => return i,
+            }
+        }
+        i
+    }
 
     /// AVX2 implementation -- processes 32 bytes at a time.
     #[target_feature(enable = "avx2")]
@@ -275,6 +369,10 @@ pub(crate) fn skip_whitespace(data: &[u8]) -> usize {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
+        if is_x86_feature_detected!("avx512bw") {
+            // SAFETY: AVX512BW feature is confirmed present by the runtime check.
+            return unsafe { x86::skip_whitespace_avx512bw(data) };
+        }
         if is_x86_feature_detected!("avx2") {
             // SAFETY: AVX2 feature is confirmed present by the runtime check.
             return unsafe { x86::skip_whitespace_avx2(data) };

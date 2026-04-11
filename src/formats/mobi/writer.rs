@@ -592,7 +592,8 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
     //
     // `compress_record_into` reuses a per-thread output buffer so we only
     // allocate once per rayon thread instead of once per record.  The final
-    // `buf[..].to_vec()` produces a right-sized copy (no wasted capacity).
+    // `mem::replace` moves the buffer into results without copying, swapping
+    // in a fresh allocation for the next iteration.
     if num_records >= 64 {
         return text
             .par_chunks(RECORD_SIZE)
@@ -605,7 +606,7 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
                 },
                 |(compressor, buf), chunk| {
                     compressor.compress_record_into(chunk, buf);
-                    buf[..].to_vec()
+                    std::mem::replace(buf, Vec::with_capacity(RECORD_SIZE))
                 },
             )
             .collect();
@@ -622,7 +623,7 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
         let end = (offset + RECORD_SIZE).min(text.len());
         let chunk = &text[offset..end];
         compressor.compress_record_into(chunk, &mut buf);
-        records.push(buf[..].to_vec());
+        records.push(std::mem::replace(&mut buf, Vec::with_capacity(RECORD_SIZE)));
         offset = end;
     }
 
