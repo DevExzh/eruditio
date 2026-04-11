@@ -8,7 +8,7 @@
 use super::format::Format;
 
 /// Media types that belong to the TEXT category.
-const TEXT_MEDIA_TYPES: &[&str] = &[
+pub(crate) const TEXT_MEDIA_TYPES: &[&str] = &[
     "application/xhtml+xml",
     "text/html",
     "text/css",
@@ -111,6 +111,11 @@ impl LoadFilter {
     ///
     /// Unknown media types that do not match any category return `false`.
     pub fn matches_media_type(&self, media_type: &str) -> bool {
+        // Fast path: ALL loads everything, regardless of category classification.
+        if self.0 == Self::ALL.0 {
+            return true;
+        }
+
         if self.contains(Self::TEXT) && is_text(media_type) {
             return true;
         }
@@ -385,11 +390,21 @@ mod tests {
     // ---- Edge cases ----
 
     #[test]
-    fn unknown_media_type_matches_nothing() {
-        assert!(!LoadFilter::ALL.matches_media_type("application/octet-stream"));
-        assert!(!LoadFilter::ALL.matches_media_type("application/zip"));
-        assert!(!LoadFilter::ALL.matches_media_type(""));
-        assert!(!LoadFilter::ALL.matches_media_type("something/weird"));
+    fn all_matches_unknown_media_types() {
+        // ALL must accept every media type, even those that don't fit a category.
+        assert!(LoadFilter::ALL.matches_media_type("application/octet-stream"));
+        assert!(LoadFilter::ALL.matches_media_type("application/zip"));
+        assert!(LoadFilter::ALL.matches_media_type(""));
+        assert!(LoadFilter::ALL.matches_media_type("something/weird"));
+    }
+
+    #[test]
+    fn non_all_rejects_unknown_media_types() {
+        // Filters that are not ALL should still reject uncategorised types.
+        let text_images = LoadFilter::TEXT | LoadFilter::IMAGES;
+        assert!(!text_images.matches_media_type("application/octet-stream"));
+        assert!(!text_images.matches_media_type("application/zip"));
+        assert!(!text_images.matches_media_type("something/weird"));
     }
 
     #[test]

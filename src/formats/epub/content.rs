@@ -1,5 +1,6 @@
 use crate::domain::Manifest;
 use crate::domain::load_filter::LoadFilter;
+use crate::domain::load_filter::TEXT_MEDIA_TYPES;
 use crate::domain::manifest::ManifestData;
 use crate::error::{EruditioError, Result};
 use flate2::{Decompress, FlushDecompress};
@@ -8,21 +9,6 @@ use std::io::{Cursor, Read, Seek};
 use std::sync::Arc;
 use zip::CompressionMethod;
 use zip::ZipArchive;
-
-/// Text-based media types whose content should be stored as `ManifestData::Text`.
-const TEXT_MEDIA_TYPES: &[&str] = &[
-    "application/xhtml+xml",
-    "text/html",
-    "text/css",
-    "application/x-dtbncx+xml",
-    "application/xml",
-    "text/xml",
-    "application/smil+xml",
-    "application/javascript",
-    "text/javascript",
-    "text/plain",
-    "application/json",
-];
 
 /// Resolves a manifest href relative to the OPF directory.
 ///
