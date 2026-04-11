@@ -5,7 +5,7 @@
 //! to decompress images, fonts, or audio/video resources.  `LoadFilter` lets the
 //! pipeline communicate this to the reader so it can skip unnecessary work.
 
-use crate::domain::format::Format;
+use super::format::Format;
 
 /// Media types that belong to the TEXT category.
 const TEXT_MEDIA_TYPES: &[&str] = &[
@@ -28,7 +28,7 @@ const TEXT_MEDIA_TYPES: &[&str] = &[
 /// Combine categories with `|` and test membership with [`contains`](Self::contains).
 ///
 /// ```
-/// # use eruditio::pipeline::load_filter::LoadFilter;
+/// # use eruditio::domain::load_filter::LoadFilter;
 /// let filter = LoadFilter::TEXT | LoadFilter::IMAGES;
 /// assert!(filter.contains(LoadFilter::TEXT));
 /// assert!(!filter.contains(LoadFilter::FONTS));

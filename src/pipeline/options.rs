@@ -1,10 +1,9 @@
 //! Conversion pipeline options.
 
 use crate::domain::Metadata;
-use crate::pipeline::load_filter::LoadFilter;
 
 /// Options controlling the conversion pipeline behavior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[must_use]
 pub struct ConversionOptions {
     /// Metadata overrides to apply (non-None fields replace book metadata).
@@ -27,24 +26,6 @@ pub struct ConversionOptions {
 
     /// Whether to extract data URI images into manifest resources.
     pub extract_data_uris: bool,
-
-    /// Controls which categories of manifest resources are loaded by the reader.
-    pub load_filter: LoadFilter,
-}
-
-impl Default for ConversionOptions {
-    fn default() -> Self {
-        Self {
-            metadata_overrides: None,
-            detect_structure: false,
-            generate_toc: false,
-            normalize_html: false,
-            trim_manifest: false,
-            detect_cover: false,
-            extract_data_uris: false,
-            load_filter: LoadFilter::ALL,
-        }
-    }
 }
 
 impl ConversionOptions {
@@ -58,7 +39,6 @@ impl ConversionOptions {
             trim_manifest: true,
             detect_cover: true,
             extract_data_uris: true,
-            load_filter: LoadFilter::ALL,
         }
     }
 
@@ -88,12 +68,6 @@ impl ConversionOptions {
     /// Enables TOC generation.
     pub fn with_generate_toc(mut self) -> Self {
         self.generate_toc = true;
-        self
-    }
-
-    /// Sets the load filter controlling which resource categories the reader loads.
-    pub fn with_load_filter(mut self, filter: LoadFilter) -> Self {
-        self.load_filter = filter;
         self
     }
 }

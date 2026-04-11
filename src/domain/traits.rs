@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::pipeline::load_filter::LoadFilter;
+use super::load_filter::LoadFilter;
 use std::io::{Read, Write};
 
 use super::book::Book;

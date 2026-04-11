@@ -3,7 +3,7 @@
 use crate::domain::Book;
 use crate::domain::format::Format;
 use crate::error::{EruditioError, Result};
-use crate::pipeline::load_filter::LoadFilter;
+use crate::domain::load_filter::LoadFilter;
 use crate::transforms::{
     CoverHandler, DataUriExtractor, HtmlNormalizer, ManifestTrimmer, MetadataMerger,
     StructureDetector, TocGenerator,
@@ -68,6 +68,9 @@ impl Pipeline {
     }
 
     /// Reads a book without writing (useful for inspection/metadata extraction).
+    ///
+    /// All manifest resources are loaded unconditionally because there is no
+    /// output format from which to derive a [`LoadFilter`].
     pub fn read(
         &self,
         format: Format,

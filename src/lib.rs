@@ -21,12 +21,11 @@ pub mod transforms;
 
 pub use domain::{
     Book, Chapter, ChapterView, Format, FormatReader, FormatWriter, Guide, GuideReference,
-    GuideType, Manifest, ManifestData, ManifestItem, Metadata, PageProgression, ResourceView,
-    Spine, SpineItem, TocItem, Transform,
+    GuideType, LoadFilter, Manifest, ManifestData, ManifestItem, Metadata, PageProgression,
+    ResourceView, Spine, SpineItem, TocItem, Transform,
 };
 pub use error::{EruditioError, Result};
 pub use parser::EruditioParser;
 pub use pipeline::convert::Pipeline;
 pub use pipeline::options::ConversionOptions;
-pub use pipeline::load_filter::LoadFilter;
 pub use pipeline::registry::FormatRegistry;
