@@ -3,6 +3,7 @@
 use crate::domain::Book;
 use crate::domain::format::Format;
 use crate::error::{EruditioError, Result};
+use crate::pipeline::load_filter::LoadFilter;
 use crate::transforms::{
     CoverHandler, DataUriExtractor, HtmlNormalizer, ManifestTrimmer, MetadataMerger,
     StructureDetector, TocGenerator,
@@ -49,7 +50,9 @@ impl Pipeline {
             .reader(&input_format)
             .ok_or_else(|| EruditioError::Unsupported(format!("No reader for {}", input_format)))?;
 
-        let book = reader.read_book(input)?;
+        // Read with output-format-aware filtering.
+        let filter = LoadFilter::for_output_format(output_format);
+        let book = reader.read_book_filtered(input, filter)?;
 
         // Transform (takes ownership, avoids cloning).
         let book = self.apply_transforms(book, options)?;

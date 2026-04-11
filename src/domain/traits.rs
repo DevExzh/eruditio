@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::pipeline::load_filter::LoadFilter;
 use std::io::{Read, Write};
 
 use super::book::Book;
@@ -6,6 +7,15 @@ use super::book::Book;
 /// Reads an ebook from a byte source and produces a `Book`.
 pub trait FormatReader: Send + Sync {
     fn read_book(&self, reader: &mut dyn Read) -> Result<Book>;
+
+    /// Reads a book, honouring `filter` to skip resource categories the
+    /// output format does not need.
+    ///
+    /// The default implementation ignores the filter and delegates to
+    /// [`read_book`](Self::read_book), so existing readers work unchanged.
+    fn read_book_filtered(&self, reader: &mut dyn Read, _filter: LoadFilter) -> Result<Book> {
+        self.read_book(reader)
+    }
 }
 
 /// Writes a `Book` to a byte destination in a specific format.
