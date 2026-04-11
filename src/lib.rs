@@ -28,4 +28,5 @@ pub use error::{EruditioError, Result};
 pub use parser::EruditioParser;
 pub use pipeline::convert::Pipeline;
 pub use pipeline::options::ConversionOptions;
+pub use pipeline::load_filter::LoadFilter;
 pub use pipeline::registry::FormatRegistry;
