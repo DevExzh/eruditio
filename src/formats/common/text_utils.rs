@@ -670,6 +670,17 @@ pub fn find_short_pattern(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // Case-insensitive ASCII search (allocation-free)
 // ---------------------------------------------------------------------------
 
+/// Finds a byte pattern case-insensitively, trying exact lowercase match first.
+/// The fast path uses SIMD-accelerated `memchr::memmem::find`.
+/// Falls back to byte-by-byte case-insensitive search only when needed
+/// (e.g. `<TITLE>` in old-style HTML). Most modern HTML is lowercase so the
+/// fast path succeeds and we skip the ~4× slower fallback.
+#[inline]
+pub fn find_ci(haystack: &[u8], lowercase_pattern: &[u8]) -> Option<usize> {
+    memchr::memmem::find(haystack, lowercase_pattern)
+        .or_else(|| find_case_insensitive(haystack, lowercase_pattern))
+}
+
 /// Finds `needle` in `haystack` using ASCII case-insensitive comparison.
 ///
 /// Both `haystack` and `needle` must be valid UTF-8 byte slices. This function

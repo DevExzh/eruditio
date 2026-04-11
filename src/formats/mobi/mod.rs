@@ -650,30 +650,13 @@ fn trim_start_whitespace(data: &[u8]) -> &[u8] {
     &data[start..]
 }
 
-/// Finds an HTML tag in a byte slice, trying exact lowercase first.
+/// Finds all occurrences of an HTML tag pattern, case-insensitively.
 ///
-/// This is much faster than case-insensitive search for the common case
-/// (99%+ of MOBI files use lowercase HTML tags). Falls back to the full
-/// case-insensitive search only when the exact match fails.
-#[inline]
-fn find_tag(haystack: &[u8], lowercase_pattern: &[u8]) -> Option<usize> {
-    memchr::memmem::find(haystack, lowercase_pattern)
-        .or_else(|| text_utils::find_case_insensitive(haystack, lowercase_pattern))
-}
-
-/// Finds all occurrences of an HTML tag pattern, trying exact lowercase first.
-///
-/// Like `find_tag`, this tries the fast exact-match path first. If any matches
-/// are found via exact lowercase, returns those. Otherwise falls back to the
-/// full case-insensitive scan.
+/// Unlike `find_ci` (which only needs the first match), this must return
+/// ALL positions — including mixed-case variants. A document with both
+/// `<html` and `<HTML` must find both. The case-insensitive search is
+/// always used to ensure completeness.
 fn find_all_tags(haystack: &[u8], lowercase_pattern: &[u8]) -> Vec<usize> {
-    // Fast path: collect all exact lowercase matches.
-    let finder = memchr::memmem::find_iter(haystack, lowercase_pattern);
-    let positions: Vec<usize> = finder.collect();
-    if !positions.is_empty() {
-        return positions;
-    }
-    // Slow path: fall back to case-insensitive search.
     text_utils::find_all_case_insensitive(haystack, lowercase_pattern)
 }
 
@@ -1264,7 +1247,7 @@ fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
 fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
 
     // Find the closing </html> tag.
-    let html_close_pos = match find_tag(part.as_bytes(), b"</html") {
+    let html_close_pos = match text_utils::find_ci(part.as_bytes(), b"</html") {
         Some(pos) => pos,
         None => return Cow::Borrowed(part),
     };
@@ -1286,7 +1269,7 @@ fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
     let skeleton = &part[..html_tag_end];
 
     // Find the </body> close tag in the skeleton.
-    let body_close_pos = match find_tag(&part.as_bytes()[..html_tag_end], b"</body") {
+    let body_close_pos = match text_utils::find_ci(&part.as_bytes()[..html_tag_end], b"</body") {
         Some(pos) => pos,
         None => {
             // No </body> tag: fall back to inserting before </html>.
@@ -1481,7 +1464,7 @@ fn extract_first_heading(html: &str) -> Option<String> {
                     let content_start = abs + tag_end_rel + 1;
                     // Build the close tag pattern: </hN (lowercase)
                     let close_pattern = [b'<', b'/', b'h', digit];
-                    let content_end = find_tag(&bytes[content_start..], &close_pattern)
+                    let content_end = text_utils::find_ci(&bytes[content_start..], &close_pattern)
                         .map(|p| content_start + p)?;
                     let heading_html = &html[content_start..content_end];
                     let text = strip_tags(heading_html).trim().to_string();
@@ -1539,10 +1522,10 @@ fn extract_fallback_title(html: &str) -> Option<String> {
 
 /// Extracts the content of the `<title>` tag from an HTML document.
 fn extract_title_tag(html: &str) -> Option<String> {
-    let start = find_tag(html.as_bytes(), b"<title")?;
+    let start = text_utils::find_ci(html.as_bytes(), b"<title")?;
     let content_start = html[start..].find('>')? + start + 1;
     let content_end =
-        find_tag(&html.as_bytes()[content_start..], b"</title")? + content_start;
+        text_utils::find_ci(&html.as_bytes()[content_start..], b"</title")? + content_start;
     let raw = &html[content_start..content_end];
     let text = strip_tags(raw).trim().to_string();
     if text.is_empty() { None } else { Some(text) }
@@ -1553,10 +1536,10 @@ fn extract_first_img_alt(html: &str) -> Option<String> {
     let bytes = html.as_bytes();
 
     // Only look inside <body>.
-    let body_start = find_tag(bytes, b"<body")?;
+    let body_start = text_utils::find_ci(bytes, b"<body")?;
     let body_html = &html[body_start..];
 
-    let img_pos = find_tag(body_html.as_bytes(), b"<img ")?;
+    let img_pos = text_utils::find_ci(body_html.as_bytes(), b"<img ")?;
     let img_end = body_html[img_pos..].find('>')?;
     let img_tag = &bytes[body_start + img_pos..body_start + img_pos + img_end + 1];
 
@@ -1568,10 +1551,10 @@ fn extract_first_img_alt(html: &str) -> Option<String> {
 /// Extracts the first few words of visible text from the body content.
 fn extract_body_text_snippet(html: &str) -> Option<String> {
     // Find <body>.
-    let body_start = find_tag(html.as_bytes(), b"<body")?;
+    let body_start = text_utils::find_ci(html.as_bytes(), b"<body")?;
     let body_tag_end = html[body_start..].find('>')? + body_start + 1;
 
-    let body_close = find_tag(&html.as_bytes()[body_tag_end..], b"</body")
+    let body_close = text_utils::find_ci(&html.as_bytes()[body_tag_end..], b"</body")
         .map(|pos| body_tag_end + pos)
         .unwrap_or(html.len());
 

@@ -108,40 +108,53 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     }
 }
 
-/// Sequential path: original direct-write approach.
+/// Sequential path: pre-compresses deflatable entries with a reusable
+/// `flate2::Compress` to avoid per-entry ~256 KB deflate state init.
 fn write_epub_sequential<W: Write + Seek>(
     book: &Book,
     writer: W,
     stored: FileOptions<'_, ()>,
-    deflated: FileOptions<'_, ()>,
+    _deflated: FileOptions<'_, ()>,
     opf_xml: &str,
     ncx_xml: &str,
 ) -> Result<()> {
     let mut zip = ZipWriter::new(writer);
+    let level = ZIP_DEFLATE_LEVEL.unwrap_or(1) as u32;
+    let mut compressor = Compress::new(Compression::new(level), false);
+    let mut compress_buf = Vec::with_capacity(8192);
 
     // 1. mimetype
     zip.start_file("mimetype", stored)
         .map_err(|e| EruditioError::Format(format!("Failed to write mimetype: {}", e)))?;
     zip.write_all(b"application/epub+zip")?;
 
-    // 2. container.xml — skip deflate for small entries to avoid ~256 KB state init.
+    // 2. container.xml
     let container_xml = generate_container_xml();
-    let container_opts = if container_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
-    zip.start_file("META-INF/container.xml", container_opts)
-        .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
-    zip.write_all(container_xml.as_bytes())?;
+    if container_xml.len() >= MIN_DEFLATE_SIZE {
+        write_deflated_entry(&mut zip, &mut compressor, &mut compress_buf, "META-INF/container.xml", container_xml.as_bytes())?;
+    } else {
+        zip.start_file("META-INF/container.xml", stored)
+            .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
+        zip.write_all(container_xml.as_bytes())?;
+    }
 
     // 3. OPF
-    let opf_opts = if opf_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
-    zip.start_file("OEBPS/content.opf", opf_opts)
-        .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
-    zip.write_all(opf_xml.as_bytes())?;
+    if opf_xml.len() >= MIN_DEFLATE_SIZE {
+        write_deflated_entry(&mut zip, &mut compressor, &mut compress_buf, "OEBPS/content.opf", opf_xml.as_bytes())?;
+    } else {
+        zip.start_file("OEBPS/content.opf", stored)
+            .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
+        zip.write_all(opf_xml.as_bytes())?;
+    }
 
     // 4. NCX
-    let ncx_opts = if ncx_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
-    zip.start_file("OEBPS/toc.ncx", ncx_opts)
-        .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
-    zip.write_all(ncx_xml.as_bytes())?;
+    if ncx_xml.len() >= MIN_DEFLATE_SIZE {
+        write_deflated_entry(&mut zip, &mut compressor, &mut compress_buf, "OEBPS/toc.ncx", ncx_xml.as_bytes())?;
+    } else {
+        zip.start_file("OEBPS/toc.ncx", stored)
+            .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
+        zip.write_all(ncx_xml.as_bytes())?;
+    }
 
     // 5. Manifest items
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
@@ -153,27 +166,66 @@ fn write_epub_sequential<W: Write + Seek>(
         zip_path.clear();
         zip_path.push_str("OEBPS/");
         zip_path.push_str(&item.href);
-        let entry_size = match &item.data {
-            crate::domain::ManifestData::Text(t) => t.len(),
-            crate::domain::ManifestData::Inline(b) => b.len(),
-            crate::domain::ManifestData::Empty => 0,
+        let (data_bytes, entry_size) = match &item.data {
+            crate::domain::ManifestData::Text(t) => (t.as_bytes() as &[u8], t.len()),
+            crate::domain::ManifestData::Inline(b) => (b.as_ref() as &[u8], b.len()),
+            crate::domain::ManifestData::Empty => (&[] as &[u8], 0),
         };
-        let opts = if is_already_compressed(&item.media_type) || entry_size < MIN_DEFLATE_SIZE {
-            stored
+        let should_deflate = !is_already_compressed(&item.media_type) && entry_size >= MIN_DEFLATE_SIZE;
+        if should_deflate {
+            write_deflated_entry(&mut zip, &mut compressor, &mut compress_buf, &zip_path, data_bytes)?;
         } else {
-            deflated
-        };
-        zip.start_file(&zip_path, opts)
-            .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
-        match &item.data {
-            crate::domain::ManifestData::Text(text) => zip.write_all(text.as_bytes())?,
-            crate::domain::ManifestData::Inline(bytes) => zip.write_all(bytes)?,
-            crate::domain::ManifestData::Empty => {},
+            zip.start_file(&zip_path, stored)
+                .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
+            zip.write_all(data_bytes)?;
         }
     }
 
     zip.finish()
         .map_err(|e| EruditioError::Format(format!("Failed to finalize EPUB: {}", e)))?;
+    Ok(())
+}
+
+/// Pre-compresses data with a reusable `Compress` and injects the raw
+/// deflated bytes into the ZIP via `raw_copy_file_rename`.  This avoids
+/// the ~256 KB memset from `ZipWriter::start_file` with deflate.
+fn write_deflated_entry<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    compressor: &mut Compress,
+    compress_buf: &mut Vec<u8>,
+    zip_path: &str,
+    data: &[u8],
+) -> Result<()> {
+    let crc = crc32fast::hash(data);
+
+    compressor.reset();
+    compress_buf.clear();
+    // Deflate worst-case: input + overhead for stored-block headers + padding.
+    // Formula mirrors zlib's deflateBound to handle incompressible data.
+    let max_out = data.len() + (data.len() >> 12) + (data.len() >> 14) + 128;
+    compress_buf.resize(max_out, 0);
+    let status = compressor
+        .compress(data, compress_buf, FlushCompress::Finish)
+        .map_err(|e| EruditioError::Format(format!("deflate compress: {}", e)))?;
+    if status != flate2::Status::StreamEnd {
+        return Err(EruditioError::Format("deflate did not complete in one pass".into()));
+    }
+    let compressed_size = compressor.total_out() as usize;
+    compress_buf.truncate(compressed_size);
+
+    let compressed_u32 = u32::try_from(compressed_size)
+        .map_err(|_| EruditioError::Format("compressed entry exceeds ZIP32 4 GB limit".into()))?;
+    let uncompressed_u32 = u32::try_from(data.len())
+        .map_err(|_| EruditioError::Format("entry exceeds ZIP32 4 GB limit".into()))?;
+    let mini = build_deflate_mini_zip(compress_buf, crc, compressed_u32, uncompressed_u32);
+    let cursor = Cursor::new(mini);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| EruditioError::Format(format!("mini zip read: {}", e)))?;
+    let file = archive
+        .by_index_raw(0)
+        .map_err(|e| EruditioError::Format(format!("mini zip entry: {}", e)))?;
+    zip.raw_copy_file_rename(file, zip_path)
+        .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
     Ok(())
 }
 
@@ -325,15 +377,8 @@ fn write_epub_parallel<W: Write + Seek>(
                 // Compress the entry data, reusing the compressor state.
                 compressor.reset();
                 compress_buf.clear();
-                // Worst case: deflate output can be slightly larger than input.
-                let max_out = uncompressed_size + 64;
-                compress_buf.reserve(max_out);
-                // SAFETY: flate2 writes into the buffer and we only read
-                // `total_out` bytes after compression.  The bytes beyond
-                // `total_out` are never read.  Skipping the zero-fill that
-                // `resize(max_out, 0)` would perform saves ~10% of memset
-                // cost in the parallel compression path.
-                unsafe { compress_buf.set_len(max_out); }
+                let max_out = uncompressed_size + (uncompressed_size >> 12) + (uncompressed_size >> 14) + 128;
+                compress_buf.resize(max_out, 0);
                 let status = compressor.compress(
                     &entry.data,
                     compress_buf,
@@ -345,12 +390,15 @@ fn write_epub_parallel<W: Write + Seek>(
                 let compressed_size = compressor.total_out() as usize;
                 compress_buf.truncate(compressed_size);
 
-                // Build a minimal ZIP archive containing the pre-compressed entry.
+                let compressed_u32 = u32::try_from(compressed_size)
+                    .map_err(|_| EruditioError::Format("compressed entry exceeds ZIP32 4 GB limit".into()))?;
+                let uncompressed_u32 = u32::try_from(uncompressed_size)
+                    .map_err(|_| EruditioError::Format("entry exceeds ZIP32 4 GB limit".into()))?;
                 let mini = build_deflate_mini_zip(
                     compress_buf,
                     crc,
-                    compressed_size as u32,
-                    uncompressed_size as u32,
+                    compressed_u32,
+                    uncompressed_u32,
                 );
 
                 Ok((entry.zip_path, mini))

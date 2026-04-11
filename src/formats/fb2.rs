@@ -2,7 +2,7 @@ use std::fmt::Write as FmtWrite;
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use crate::formats::common::text_utils::{contains_ascii_ci, find_case_insensitive, push_escape_html};
+use crate::formats::common::text_utils::{contains_ascii_ci, push_escape_html};
 use crate::formats::common::xml_utils;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
@@ -787,7 +787,7 @@ fn is_only_empty_markup(bytes: &[u8]) -> bool {
 
 /// Extracts the `href` attribute value from an `<a ...>` tag string.
 fn extract_href(tag: &str) -> Option<&str> {
-    let href_pos = find_case_insensitive(tag.as_bytes(), b"href=")?;
+    let href_pos = crate::formats::common::text_utils::find_ci(tag.as_bytes(), b"href=")?;
     let after_eq = href_pos + 5; // length of "href="
     let bytes = tag.as_bytes();
     if after_eq >= bytes.len() {

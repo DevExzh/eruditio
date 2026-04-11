@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use crate::domain::metadata::Metadata;
 use crate::formats::common::text_utils;
-use crate::formats::common::text_utils::push_escape_xml;
+use crate::formats::common::text_utils::{find_ci, push_escape_xml};
 
 /// Extracts metadata from HTML `<head>` section.
 ///
@@ -213,11 +213,11 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
     close_buf[2 + tag_bytes.len()] = b'>';
     let close_len = 3 + tag_bytes.len();
 
-    let start = text_utils::find_case_insensitive(bytes, &open_buf[..open_len])?;
+    let start = find_ci(bytes, &open_buf[..open_len])?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
     let content_end =
-        text_utils::find_case_insensitive(&bytes[content_start..], &close_buf[..close_len])?
+        find_ci(&bytes[content_start..], &close_buf[..close_len])?
             + content_start;
 
     let text = html[content_start..content_end].trim().to_string();
@@ -227,11 +227,11 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
 /// Extracts content between an opening tag (with possible attributes) and closing tag.
 fn extract_between<'a>(html: &'a str, open_prefix: &str, close_tag: &str) -> Option<&'a str> {
     let bytes = html.as_bytes();
-    let start = text_utils::find_case_insensitive(bytes, open_prefix.as_bytes())?;
+    let start = find_ci(bytes, open_prefix.as_bytes())?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
     let content_end =
-        text_utils::find_case_insensitive(&bytes[content_start..], close_tag.as_bytes())?
+        find_ci(&bytes[content_start..], close_tag.as_bytes())?
             + content_start;
 
     Some(&html[content_start..content_end])
@@ -327,7 +327,7 @@ fn extract_attribute<'t>(tag: &'t str, attr_name: &str) -> Option<&'t str> {
     pattern[attr_bytes.len()] = b'=';
     pattern[attr_bytes.len() + 1] = b'"';
 
-    let start = text_utils::find_case_insensitive(tag.as_bytes(), &pattern[..pat_len])?;
+    let start = find_ci(tag.as_bytes(), &pattern[..pat_len])?;
     let value_start = start + pat_len;
     let value_end = tag[value_start..].find('"')? + value_start;
     Some(&tag[value_start..value_end])
@@ -338,7 +338,7 @@ fn strip_outer_tags(html: &str) -> &str {
     let bytes = html.as_bytes();
 
     // Find </head> case-insensitively — skip everything up to and including it.
-    let start = text_utils::find_case_insensitive(bytes, b"</head>")
+    let start = find_ci(bytes, b"</head>")
         .map(|p| p + 7)
         .unwrap_or(0);
     let working = &html[start..];
@@ -346,8 +346,8 @@ fn strip_outer_tags(html: &str) -> &str {
 
     // Find the earliest of </html> or </body> and truncate there.
     let end = [
-        text_utils::find_case_insensitive(working_bytes, b"</html>"),
-        text_utils::find_case_insensitive(working_bytes, b"</body>"),
+        find_ci(working_bytes, b"</html>"),
+        find_ci(working_bytes, b"</body>"),
     ]
     .into_iter()
     .flatten()
@@ -356,7 +356,7 @@ fn strip_outer_tags(html: &str) -> &str {
     let result = &working[..end];
 
     // Strip opening <body...> if present.
-    if let Some(pos) = text_utils::find_case_insensitive(result.as_bytes(), b"<body")
+    if let Some(pos) = find_ci(result.as_bytes(), b"<body")
         && let Some(gt) = result[pos..].find('>')
     {
         return result[pos + gt + 1..].trim();
