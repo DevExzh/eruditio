@@ -274,6 +274,8 @@ fn load_sequential(
 }
 
 /// Parallel manifest loading — extracts the buffer and uses rayon.
+/// Uses `unsafe_new_with_metadata` to share pre-parsed ZIP central directory
+/// across threads, eliminating redundant EOCD scans (one per rayon thread).
 fn load_parallel(
     archive: ZipArchive<Cursor<Vec<u8>>>,
     manifest: &mut Manifest,
@@ -299,6 +301,9 @@ fn load_parallel(
             Some((id.to_string(), zip_path, fallback, is_text))
         }));
 
+    // Extract metadata before consuming the archive so per-thread archives
+    // can skip EOCD scanning and central directory parsing entirely.
+    let metadata = archive.metadata();
     let zip_data = archive.into_inner().into_inner();
     let zip_ref = zip_data.as_slice();
     let results: Vec<(String, ManifestData)> = entries
@@ -306,17 +311,20 @@ fn load_parallel(
         .map_init(
             || {
                 (
-                    ZipArchive::new(Cursor::new(zip_ref)),
+                    // SAFETY: metadata was extracted from the same archive whose
+                    // raw bytes back `zip_ref`, so they are guaranteed compatible.
+                    unsafe {
+                        ZipArchive::unsafe_new_with_metadata(
+                            Cursor::new(zip_ref),
+                            metadata.clone(),
+                        )
+                    },
                     Decompress::new(false),
                     Vec::new(),
                 )
             },
-            |(archive_result, decompressor, raw_buf),
+            |(archive, decompressor, raw_buf),
              (id, zip_path, fallback, is_text)| {
-                let archive = match archive_result {
-                    Ok(a) => a,
-                    Err(_) => return None,
-                };
                 let data = match read_from_archive_reuse(
                     archive, &zip_path, is_text, decompressor, raw_buf,
                 ) {
