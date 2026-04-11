@@ -1,4 +1,5 @@
 use crate::domain::Manifest;
+use crate::domain::load_filter::LoadFilter;
 use crate::domain::manifest::ManifestData;
 use crate::error::{EruditioError, Result};
 use flate2::{Decompress, FlushDecompress};
@@ -183,14 +184,15 @@ pub(crate) fn load_manifest_data_parallel(
     archive: ZipArchive<Cursor<Vec<u8>>>,
     manifest: &mut Manifest,
     opf_dir: &str,
+    filter: LoadFilter,
 ) -> Result<()> {
-    // Count entries that need loading.
+    // Count entries that need loading (respecting the filter).
     let entry_count = manifest
         .ids()
         .filter(|id| {
             manifest
                 .get(id)
-                .is_some_and(|item| item.data.is_empty())
+                .is_some_and(|item| item.data.is_empty() && filter.matches_media_type(&item.media_type))
         })
         .count();
 
@@ -202,11 +204,11 @@ pub(crate) fn load_manifest_data_parallel(
     // Parallel decompression only pays off for EPUBs with many entries where
     // concurrent Deflate across threads outweighs ZIP central directory re-parse.
     if entry_count < PARALLEL_THRESHOLD {
-        return load_sequential(archive, manifest, opf_dir, entry_count);
+        return load_sequential(archive, manifest, opf_dir, entry_count, filter);
     }
 
     // Large EPUB: parallel decompression with per-thread ZipArchive.
-    load_parallel(archive, manifest, opf_dir, entry_count)
+    load_parallel(archive, manifest, opf_dir, entry_count, filter)
 }
 
 /// Sequential manifest loading — uses a single reusable decompressor.
@@ -215,6 +217,7 @@ fn load_sequential(
     manifest: &mut Manifest,
     opf_dir: &str,
     entry_count: usize,
+    filter: LoadFilter,
 ) -> Result<()> {
     let mut ids_to_load = Vec::with_capacity(entry_count);
     ids_to_load.extend(
@@ -223,7 +226,9 @@ fn load_sequential(
             .filter(|id| {
                 manifest
                     .get(id)
-                    .is_some_and(|item| item.data.is_empty())
+                    .is_some_and(|item| {
+                        item.data.is_empty() && filter.matches_media_type(&item.media_type)
+                    })
             })
             .map(String::from),
     );
@@ -281,6 +286,7 @@ fn load_parallel(
     manifest: &mut Manifest,
     opf_dir: &str,
     entry_count: usize,
+    filter: LoadFilter,
 ) -> Result<()> {
     let mut entries: Vec<(String, String, String, bool)> = Vec::with_capacity(entry_count);
     entries.extend(manifest
@@ -288,7 +294,9 @@ fn load_parallel(
         .filter(|id| {
             manifest
                 .get(id)
-                .is_some_and(|item| item.data.is_empty())
+                .is_some_and(|item| {
+                    item.data.is_empty() && filter.matches_media_type(&item.media_type)
+                })
         })
         .filter_map(|id| {
             let item = manifest.get(&id)?;
