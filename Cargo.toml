@@ -54,11 +54,6 @@ path = "src/bin/memory_profile.rs"
 required-features = []
 
 [[bin]]
-name = "dhat_profile"
-path = "src/bin/dhat_profile.rs"
-required-features = []
-
-[[bin]]
 name = "validate"
 path = "src/bin/validate.rs"
 required-features = ["native-fs"]
