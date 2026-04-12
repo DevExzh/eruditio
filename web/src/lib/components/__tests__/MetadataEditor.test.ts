@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import MetadataEditor from "../MetadataEditor.svelte";
 
 describe("MetadataEditor", () => {
