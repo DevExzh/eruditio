@@ -130,6 +130,7 @@ def plot_intrinsics():
         ("cp1252\n(10 KB ASCII)",     10000, None,                           "cp1252_decode_10k_ascii"),
         ("byte_scan\n(10 KB clean)",  10000, None,                           "byte_scan_clean_10k"),
         ("case_fold\n(1 KB)",         1024,  None,                           "case_fold_eq_1k"),
+        ("find_ci\n(50 KB miss)",     50000, None,                           "find_ci_missing_in_50k_html"),
     ]
 
     labels, scalar_tp, simd_tp = [], [], []

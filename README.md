@@ -37,11 +37,12 @@ All text-processing hot paths use hand-tuned AVX-512/AVX2/SSE2/NEON intrinsics w
 | Intrinsic | Throughput | Scalar Baseline | Speedup |
 |---|---:|---:|---:|
 | `is_ascii` (1 KB) | 282 GB/s | 4.2 GB/s | **67x** |
-| `short_pattern` (10 KB) | 96 GB/s | 3.8 GB/s | **25x** |
-| `skip_whitespace` (1 KB) | 76 GB/s | 3.3 GB/s | **23x** |
-| `byte_scan` (10 KB) | 78 GB/s | -- | -- |
-| `cp1252_decode` (10 KB) | 72 GB/s | -- | -- |
-| `case_fold` (1 KB) | 39 GB/s | -- | -- |
+| `short_pattern` (10 KB) | 130 GB/s | 4.2 GB/s | **31x** |
+| `skip_whitespace` (1 KB) | 76 GB/s | 3.2 GB/s | **23x** |
+| `byte_scan` (10 KB) | 81 GB/s | -- | -- |
+| `cp1252_decode` (10 KB) | 74 GB/s | -- | -- |
+| `case_fold` (1 KB) | 40 GB/s | -- | -- |
+| `find_ci` (50 KB) | 5.4 GB/s | -- | -- |
 
 ## Supported Formats
 
@@ -219,7 +220,7 @@ src/
 └── lib.rs           Public API re-exports
 ```
 
-~51,000 lines of Rust across the library, tests, and benchmarks.
+~57,000 lines of Rust across the library, tests, and benchmarks.
 
 Key design principles:
 
