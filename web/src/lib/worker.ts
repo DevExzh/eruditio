@@ -36,7 +36,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
             output: buffer,
             filename: `converted.${outputFormat}`,
           },
-          [buffer],
+          { transfer: [buffer] },
         );
       } catch (err) {
         self.postMessage({ type: "error", message: String(err) });
