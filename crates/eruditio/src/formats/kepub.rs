@@ -9,6 +9,7 @@ use crate::domain::manifest::{Manifest, ManifestItem};
 use crate::domain::{Book, FormatReader, FormatWriter, LoadFilter};
 use crate::error::Result;
 use crate::formats::epub::{EpubReader, EpubWriter};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::{Read, Write};
 
@@ -73,8 +74,12 @@ impl FormatWriter for KepubWriter {
 fn add_kobo_spans(book: &Book) -> Book {
     // Process manifest items in parallel — insert_kobo_spans is CPU-intensive.
     let items: Vec<_> = book.manifest.iter().collect();
-    let processed: Vec<ManifestItem> = items
-        .into_par_iter()
+    #[cfg(feature = "parallel")]
+    let iter = items.into_par_iter();
+    #[cfg(not(feature = "parallel"))]
+    let iter = items.into_iter();
+
+    let processed: Vec<ManifestItem> = iter
         .map(|item| {
             if (item.media_type.contains("html") || item.media_type.contains("xml"))
                 && let Some(text) = item.data.as_text()

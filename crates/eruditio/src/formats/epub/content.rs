@@ -4,6 +4,7 @@ use crate::domain::load_filter::TEXT_MEDIA_TYPES;
 use crate::domain::manifest::ManifestData;
 use crate::error::{EruditioError, Result};
 use flate2::{Decompress, FlushDecompress};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::{Cursor, Read, Seek};
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use zip::ZipArchive;
 ///
 /// If the OPF is at `OEBPS/content.opf`, then `opf_dir` is `OEBPS/`
 /// and a manifest href `chapter1.xhtml` resolves to `OEBPS/chapter1.xhtml`.
+#[cfg(any(feature = "parallel", test))]
 pub(crate) fn resolve_href(opf_dir: &str, href: &str) -> String {
     if opf_dir.is_empty() || href.starts_with('/') {
         return href.to_string();
@@ -162,6 +164,7 @@ fn bytes_to_manifest_data(bytes: Vec<u8>, as_text: bool) -> Result<ManifestData>
 
 /// Minimum manifest entries to trigger parallel decompression.
 /// Below this, sequential is faster due to rayon thread pool + ZIP re-parse overhead.
+#[cfg(feature = "parallel")]
 const PARALLEL_THRESHOLD: usize = 20;
 
 /// Loads data for all manifest items from the EPUB ZIP archive.
@@ -189,12 +192,12 @@ pub(crate) fn load_manifest_data_parallel(
     // For small/medium EPUBs: use the archive directly (no buffer extraction overhead).
     // Parallel decompression only pays off for EPUBs with many entries where
     // concurrent Deflate across threads outweighs ZIP central directory re-parse.
-    if entry_count < PARALLEL_THRESHOLD {
-        return load_sequential(archive, manifest, opf_dir, entry_count, filter);
+    #[cfg(feature = "parallel")]
+    if entry_count >= PARALLEL_THRESHOLD {
+        return load_parallel(archive, manifest, opf_dir, entry_count, filter);
     }
 
-    // Large EPUB: parallel decompression with per-thread ZipArchive.
-    load_parallel(archive, manifest, opf_dir, entry_count, filter)
+    load_sequential(archive, manifest, opf_dir, entry_count, filter)
 }
 
 /// Sequential manifest loading — uses a single reusable decompressor.
@@ -276,6 +279,7 @@ fn load_sequential(
 /// Parallel manifest loading — extracts the buffer and uses rayon.
 /// Uses `unsafe_new_with_metadata` to share pre-parsed ZIP central directory
 /// across threads, eliminating redundant EOCD scans (one per rayon thread).
+#[cfg(feature = "parallel")]
 fn load_parallel(
     archive: ZipArchive<Cursor<Vec<u8>>>,
     manifest: &mut Manifest,

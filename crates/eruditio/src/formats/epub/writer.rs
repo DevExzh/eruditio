@@ -2,11 +2,16 @@ use crate::domain::{Book, TocItem};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::text_utils::push_escape_xml;
 use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
+#[cfg(feature = "parallel")]
 use flate2::{Compress, Compression, FlushCompress};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "parallel")]
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
-use std::io::{Cursor, Seek, Write};
+#[cfg(feature = "parallel")]
+use std::io::Cursor;
+use std::io::{Seek, Write};
 use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::write::FileOptions;
@@ -45,6 +50,7 @@ const MIN_DEFLATE_SIZE: usize = 4096;
 pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
     let stored: FileOptions<'_, ()> =
         FileOptions::default().compression_method(CompressionMethod::Stored);
+    #[cfg(feature = "parallel")]
     let deflated: FileOptions<'_, ()> =
         FileOptions::default()
             .compression_method(CompressionMethod::Deflated)
@@ -57,55 +63,62 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     // -----------------------------------------------------------------------
     // Decide whether to use the parallel path.
     // -----------------------------------------------------------------------
-    // Count deflatable manifest entries and their total uncompressed size.
-    const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
-    let mut deflate_count: usize = 0;
-    let mut deflate_bytes: usize = 0;
+    #[cfg(feature = "parallel")]
+    {
+        // Count deflatable manifest entries and their total uncompressed size.
+        const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
+        let mut deflate_count: usize = 0;
+        let mut deflate_bytes: usize = 0;
 
-    // Only count entries >= MIN_DEFLATE_SIZE — smaller entries will use Stored
-    // to avoid the ~256 KB deflate state initialization cost.
-    let container_len = generate_container_xml().len();
-    if container_len >= MIN_DEFLATE_SIZE {
-        deflate_count += 1;
-        deflate_bytes += container_len;
-    }
-    if opf_xml.len() >= MIN_DEFLATE_SIZE {
-        deflate_count += 1;
-        deflate_bytes += opf_xml.len();
-    }
-    if ncx_xml.len() >= MIN_DEFLATE_SIZE {
-        deflate_count += 1;
-        deflate_bytes += ncx_xml.len();
-    }
-
-    for item in book.manifest.iter() {
-        if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
-            continue;
+        // Only count entries >= MIN_DEFLATE_SIZE — smaller entries will use Stored
+        // to avoid the ~256 KB deflate state initialization cost.
+        let container_len = generate_container_xml().len();
+        if container_len >= MIN_DEFLATE_SIZE {
+            deflate_count += 1;
+            deflate_bytes += container_len;
         }
-        if !is_already_compressed(&item.media_type) {
-            let entry_size = match &item.data {
-                crate::domain::ManifestData::Text(t) => t.len(),
-                crate::domain::ManifestData::Inline(b) => b.len(),
-                crate::domain::ManifestData::Empty => 0,
-            };
-            if entry_size >= MIN_DEFLATE_SIZE {
-                deflate_count += 1;
-                deflate_bytes += entry_size;
+        if opf_xml.len() >= MIN_DEFLATE_SIZE {
+            deflate_count += 1;
+            deflate_bytes += opf_xml.len();
+        }
+        if ncx_xml.len() >= MIN_DEFLATE_SIZE {
+            deflate_count += 1;
+            deflate_bytes += ncx_xml.len();
+        }
+
+        for item in book.manifest.iter() {
+            if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
+                continue;
+            }
+            if !is_already_compressed(&item.media_type) {
+                let entry_size = match &item.data {
+                    crate::domain::ManifestData::Text(t) => t.len(),
+                    crate::domain::ManifestData::Inline(b) => b.len(),
+                    crate::domain::ManifestData::Empty => 0,
+                };
+                if entry_size >= MIN_DEFLATE_SIZE {
+                    deflate_count += 1;
+                    deflate_bytes += entry_size;
+                }
             }
         }
+
+        // Use parallel path when there are enough entries (>= 8) and enough data
+        // (>= 64 KiB) for rayon overhead to be worthwhile.  The per-entry mini-ZIP
+        // approach adds ~50 us per entry overhead, plus ~100-200 us rayon thread-pool
+        // cost, so we need substantial compression work to recoup that.
+        let use_parallel = deflate_count >= 8 && deflate_bytes >= 65_536;
+        if use_parallel {
+            return write_epub_parallel(book, writer, stored, deflated, &opf_xml, &ncx_xml);
+        }
     }
 
-    // Use parallel path when there are enough entries (>= 8) and enough data
-    // (>= 64 KiB) for rayon overhead to be worthwhile.  The per-entry mini-ZIP
-    // approach adds ~50 us per entry overhead, plus ~100-200 us rayon thread-pool
-    // cost, so we need substantial compression work to recoup that.
-    let use_parallel = deflate_count >= 8 && deflate_bytes >= 65_536;
+    let deflated: FileOptions<'_, ()> =
+        FileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(ZIP_DEFLATE_LEVEL);
 
-    if use_parallel {
-        write_epub_parallel(book, writer, stored, deflated, &opf_xml, &ncx_xml)
-    } else {
-        write_epub_sequential(book, writer, stored, deflated, &opf_xml, &ncx_xml)
-    }
+    write_epub_sequential(book, writer, stored, deflated, &opf_xml, &ncx_xml)
 }
 
 /// Sequential path: uses ZipWriter's built-in deflate for simplicity.
@@ -177,6 +190,7 @@ fn write_epub_sequential<W: Write + Seek>(
 
 /// Parallel path: pre-compress deflatable entries via rayon, then write raw
 /// pre-compressed data into the final ZIP using `raw_copy_file_rename`.
+#[cfg(feature = "parallel")]
 fn write_epub_parallel<W: Write + Seek>(
     book: &Book,
     writer: W,
@@ -389,6 +403,7 @@ fn write_epub_parallel<W: Write + Seek>(
 /// This avoids the overhead of creating a `ZipWriter` (which allocates a new
 /// deflate compressor) and a `ZipArchive` reader (inflate state). The caller
 /// pre-compresses with a reusable `flate2::Compress`.
+#[cfg(feature = "parallel")]
 fn build_deflate_mini_zip(
     compressed: &[u8],
     crc32: u32,

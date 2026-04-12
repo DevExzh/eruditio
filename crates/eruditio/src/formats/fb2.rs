@@ -6,6 +6,7 @@ use crate::formats::common::text_utils::{contains_ascii_ci, push_escape_html};
 use crate::formats::common::xml_utils;
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::{Read, Write};
 
@@ -1006,8 +1007,14 @@ fn generate_fb2(book: &Book) -> String {
 
     let chapters = book.chapter_views();
     // Pre-compute FB2 paragraph conversions in parallel.
+    #[cfg(feature = "parallel")]
     let fb2_contents: Vec<String> = chapters
         .par_iter()
+        .map(|ch| html_to_fb2_paragraphs(ch.content))
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let fb2_contents: Vec<String> = chapters
+        .iter()
         .map(|ch| html_to_fb2_paragraphs(ch.content))
         .collect();
 

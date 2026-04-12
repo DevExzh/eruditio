@@ -6,6 +6,7 @@
 use std::borrow::Cow;
 
 use ahash::{AHashMap, AHashSet};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::domain::Book;
@@ -603,22 +604,25 @@ fn compress_text_records(text: &[u8]) -> Vec<Vec<u8>> {
     // allocate once per rayon thread instead of once per record.  The final
     // `mem::replace` moves the buffer into results without copying, swapping
     // in a fresh allocation for the next iteration.
-    if num_records >= 64 {
-        return text
-            .par_chunks(RECORD_SIZE)
-            .map_init(
-                || {
-                    (
-                        palmdoc::PalmDocCompressor::new(),
-                        Vec::with_capacity(RECORD_SIZE),
-                    )
-                },
-                |(compressor, buf), chunk| {
-                    compressor.compress_record_into(chunk, buf);
-                    std::mem::replace(buf, Vec::with_capacity(RECORD_SIZE))
-                },
-            )
-            .collect();
+    #[cfg(feature = "parallel")]
+    {
+        if num_records >= 64 {
+            return text
+                .par_chunks(RECORD_SIZE)
+                .map_init(
+                    || {
+                        (
+                            palmdoc::PalmDocCompressor::new(),
+                            Vec::with_capacity(RECORD_SIZE),
+                        )
+                    },
+                    |(compressor, buf), chunk| {
+                        compressor.compress_record_into(chunk, buf);
+                        std::mem::replace(buf, Vec::with_capacity(RECORD_SIZE))
+                    },
+                )
+                .collect();
+        }
     }
 
     // Sequential path for small inputs (< 256 KB).
