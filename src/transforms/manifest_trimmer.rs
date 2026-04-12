@@ -109,37 +109,29 @@ fn collect_toc_refs<'a>(
 
 /// Scans HTML/XHTML text for href and src attributes pointing to manifest items.
 ///
-/// Uses byte-level scanning via `memchr` to avoid the overhead of Rust's
-/// `str::pattern` machinery on every iteration.
+/// Uses `memchr::memmem::Finder` for SIMD-accelerated multi-byte pattern
+/// matching, avoiding the false starts of single-byte `memchr` on common
+/// leading bytes like `h` and `s`.
 fn collect_href_references<'a>(
     text: &str,
     href_to_id: &AHashMap<&str, &'a str>,
     filename_to_id: &AHashMap<&str, &'a str>,
     ids: &mut AHashSet<&'a str>,
 ) {
-    let bytes = text.as_bytes();
-    // Attribute patterns to search for, with their byte representations.
-    let patterns: &[&[u8]] = &[b"href=\"", b"src=\""];
+    use memchr::memmem;
 
-    for &pattern in patterns {
-        let pat_len = pattern.len();
+    let bytes = text.as_bytes();
+    // Pre-built finders amortise the setup cost across all occurrences.
+    let finders: [memmem::Finder<'_>; 2] = [
+        memmem::Finder::new(b"href=\""),
+        memmem::Finder::new(b"src=\""),
+    ];
+
+    for finder in &finders {
+        let pat_len = finder.needle().len();
         let mut search_from = 0;
-        while search_from + pat_len <= bytes.len() {
-            // Use memchr to find the first byte of the pattern quickly,
-            // then verify the remaining bytes.
-            let haystack = &bytes[search_from..];
-            let start = match memchr::memchr(pattern[0], haystack) {
-                Some(pos) => pos,
-                None => break,
-            };
-            // Check if the full pattern matches at this position.
-            let abs_start = search_from + start;
-            if abs_start + pat_len > bytes.len()
-                || bytes[abs_start..abs_start + pat_len] != *pattern
-            {
-                search_from = abs_start + 1;
-                continue;
-            }
+        while let Some(pos) = finder.find(&bytes[search_from..]) {
+            let abs_start = search_from + pos;
             let value_start = abs_start + pat_len;
             // Find closing quote using memchr (single byte search).
             if let Some(end) = memchr::memchr(b'"', &bytes[value_start..]) {

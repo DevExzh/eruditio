@@ -176,9 +176,14 @@ fn is_cover_only_chapter(title: Option<&str>, content: &str) -> bool {
 }
 
 /// Converts a `Book` to plain text by stripping HTML from all chapters.
+///
+/// Writes directly to a single `String` buffer instead of collecting
+/// intermediate `Vec<String>` parts, avoiding per-chapter `to_string()`
+/// allocations and the final `join()` allocation.
 pub fn book_to_plain_text(book: &Book) -> String {
     let chapters = book.chapter_views();
-    let mut parts = Vec::with_capacity(chapters.len());
+    let est_size: usize = chapters.iter().map(|c| c.content.len()).sum();
+    let mut result = String::with_capacity(est_size);
 
     for chapter in &chapters {
         // Skip cover-only chapters to avoid "Cover" alt-text artifacts.
@@ -187,9 +192,11 @@ pub fn book_to_plain_text(book: &Book) -> String {
         }
 
         if let Some(title) = chapter.title {
-            parts.push(title.to_string());
-            parts.push(String::new()); // blank line after title
+            result.push_str(title);
+            result.push('\n');
+            result.push('\n'); // blank line after title
         }
+
         let plain = strip_tags(chapter.content);
         let decoded = unescape_basic_entities(&plain);
         let trimmed = decoded.trim();
@@ -200,18 +207,21 @@ pub fn book_to_plain_text(book: &Book) -> String {
             None => trimmed,
         };
         if !trimmed.is_empty() {
-            parts.push(trimmed.to_string());
+            result.push_str(trimmed);
+            result.push('\n');
         }
-        parts.push(String::new()); // blank line between chapters
+
+        result.push('\n'); // blank line between chapters
     }
 
-    // Remove trailing empty lines.
-    while parts.last().is_some_and(|s| s.is_empty()) {
-        parts.pop();
+    // Collapse trailing blank lines down to a single trailing newline.
+    while result.ends_with("\n\n") {
+        result.pop();
+    }
+    if !result.ends_with('\n') {
+        result.push('\n');
     }
 
-    let mut result = parts.join("\n");
-    result.push('\n');
     result
 }
 

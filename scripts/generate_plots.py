@@ -20,18 +20,18 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 CRITERION = ROOT / "target" / "criterion"
 
-# ── Calibre comparison data (from real-world median-of-7 measurements) ────────
+# ── Calibre comparison data (from real-world median-of-31 measurements) ───────
 
 CONVERSIONS = [
-    ("EPUB->MOBI (135 KB)",  11.8,  1100),
-    ("EPUB->MOBI (715 KB)",  20.7,  3921),
-    ("EPUB->TXT (135 KB)",    4.3,   498),
-    ("EPUB->TXT (715 KB)",   15.2,   980),
-    ("EPUB->FB2 (135 KB)",    5.9,   643),
-    ("EPUB->FB2 (715 KB)",    9.7,  1098),
-    ("HTML->EPUB (146 KB)",   3.0,   544),
-    ("HTML->EPUB (941 KB)",   8.8,  1900),
-    ("FB2->EPUB (1.2 MB)",    6.5,   574),
+    ("EPUB->MOBI (135 KB)",   8.1, 1079),
+    ("EPUB->MOBI (715 KB)",  15.0, 3917),
+    ("EPUB->TXT (135 KB)",    4.6,  497),
+    ("EPUB->TXT (715 KB)",   16.0,  951),
+    ("EPUB->FB2 (135 KB)",    7.1,  604),
+    ("EPUB->FB2 (715 KB)",    9.1, 1105),
+    ("HTML->EPUB (146 KB)",   2.9,  513),
+    ("HTML->EPUB (941 KB)",   8.7, 1957),
+    ("FB2->EPUB (1.2 MB)",    7.8,  569),
 ]
 
 # ── Plot 1: Conversion time (horizontal bar, log scale) ──────────────────────

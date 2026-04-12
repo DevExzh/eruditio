@@ -1,6 +1,6 @@
 # Eruditio
 
-A safe, fast, and production-ready Rust library for parsing and generating ebook files. Eruditio provides a unified API to read, transform, and write ebooks across 30+ formats — **64-216x faster** than Calibre on real-world conversions.
+A safe, fast, and production-ready Rust library for parsing and generating ebook files. Eruditio provides a unified API to read, transform, and write ebooks across 30+ formats — **59-261x faster** than Calibre on real-world conversions.
 
 ## Performance
 
@@ -16,17 +16,17 @@ Eruditio is written in pure Rust with zero-copy parsing, SIMD-accelerated text p
 
 | Conversion | Eruditio | Calibre 9.6 | Speedup |
 |---|---:|---:|---:|
-| EPUB -> MOBI (135 KB) | 11.8 ms | 1,100 ms | **93x** |
-| EPUB -> MOBI (715 KB) | 20.7 ms | 3,921 ms | **189x** |
-| EPUB -> TXT (135 KB) | 4.3 ms | 498 ms | **116x** |
-| EPUB -> TXT (715 KB) | 15.2 ms | 980 ms | **64x** |
-| EPUB -> FB2 (135 KB) | 5.9 ms | 643 ms | **109x** |
-| EPUB -> FB2 (715 KB) | 9.7 ms | 1,098 ms | **113x** |
-| HTML -> EPUB (146 KB) | 3.0 ms | 544 ms | **181x** |
-| HTML -> EPUB (941 KB) | 8.8 ms | 1,900 ms | **216x** |
-| FB2 -> EPUB (1.2 MB) | 6.5 ms | 574 ms | **88x** |
+| EPUB -> MOBI (135 KB) | 8.1 ms | 1,079 ms | **133x** |
+| EPUB -> MOBI (715 KB) | 15.0 ms | 3,917 ms | **261x** |
+| EPUB -> TXT (135 KB) | 4.6 ms | 497 ms | **108x** |
+| EPUB -> TXT (715 KB) | 16.0 ms | 951 ms | **59x** |
+| EPUB -> FB2 (135 KB) | 7.1 ms | 604 ms | **85x** |
+| EPUB -> FB2 (715 KB) | 9.1 ms | 1,105 ms | **121x** |
+| HTML -> EPUB (146 KB) | 2.9 ms | 513 ms | **177x** |
+| HTML -> EPUB (941 KB) | 8.7 ms | 1,957 ms | **225x** |
+| FB2 -> EPUB (1.2 MB) | 7.8 ms | 569 ms | **73x** |
 
-Measured on the same machine, median of 7 runs, using public domain Project Gutenberg ebooks. Calibre version 9.6.0.
+Measured on the same machine, median of 31 runs, using public domain Project Gutenberg ebooks. Calibre version 9.6.0.
 
 ### SIMD Intrinsics Throughput
 

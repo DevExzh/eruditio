@@ -197,13 +197,15 @@ fn push_escape_byte(buf: &mut String, b: u8) {
 
 /// Strips all HTML/XML tags, returning plain text.
 ///
-/// Uses `memchr` to jump between `<` and `>` delimiters instead of scanning
-/// character by character.
+/// Uses a two-pass approach for maximum throughput:
+///   1. Strip tags via `memchr` into a contiguous intermediate buffer,
+///      inserting `\n` at block-level boundaries.
+///   2. Collapse whitespace on the contiguous buffer in a single pass.
 ///
-/// Block-level elements (`<br>`, `<p>`, `<div>`, `<h1>`–`<h6>`, `<li>`,
-/// `<tr>`, `<td>`, `<th>`, `<blockquote>`) insert a space when removed so
-/// that adjacent text nodes are not concatenated.  A post-processing step
-/// collapses runs of whitespace and trims the result.
+/// The two-pass design lets the whitespace collapsing loop run over one
+/// large contiguous buffer instead of many small inter-tag chunks, which
+/// dramatically improves branch predictor accuracy and eliminates per-chunk
+/// function call overhead.
 ///
 /// Returns `Cow::Borrowed` when the input contains no tags, avoiding
 /// allocation entirely.
@@ -216,141 +218,159 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
     }
 
     let len = bytes.len();
-    let mut result = String::with_capacity(len);
+
+    // ── Pass 1: strip tags into contiguous intermediate buffer ────────────
+    // Allocate for the full input size; output is always <= input.
+    let mut raw: Vec<u8> = Vec::with_capacity(len);
     let mut pos = 0;
-    // Depth counter for <head> nesting.  While > 0, suppress all text output
-    // so that content inside <head> (including <title>) is not emitted.
     let mut head_depth: u32 = 0;
-    // Whitespace collapsing state (integrated to avoid second allocation).
-    let mut in_ws = true; // treat start as whitespace so leading is trimmed
-    let mut newline_count: usize = 0;
 
     loop {
-        // Find the next '<' (tag start).
         match memchr(b'<', &bytes[pos..]) {
             Some(offset) => {
-                // Copy text before the tag (only when outside <head>),
-                // collapsing whitespace inline via byte iteration.
                 if offset > 0 && head_depth == 0 {
-                    append_ws_collapsed(
-                        &html[pos..pos + offset],
-                        &mut result,
-                        &mut in_ws,
-                        &mut newline_count,
-                    );
+                    raw.extend_from_slice(&bytes[pos..pos + offset]);
                 }
                 let tag_start = pos + offset;
-                // Find the closing '>'.
                 match memchr(b'>', &bytes[tag_start..]) {
                     Some(end_offset) => {
                         let tag_bytes = &bytes[tag_start..tag_start + end_offset + 1];
-                        // Track <head> / </head> transitions.
                         if is_head_open_tag(tag_bytes) {
                             head_depth += 1;
                         } else if is_head_close_tag(tag_bytes) {
                             head_depth = head_depth.saturating_sub(1);
                         }
                         if head_depth == 0 && is_block_level_tag(tag_bytes) {
-                            // Feed block-level newline into whitespace state
-                            // instead of pushing directly into result.
-                            if !in_ws {
-                                in_ws = true;
-                                newline_count = 1;
-                            } else {
-                                newline_count += 1;
-                            }
+                            // Insert newline marker for block-level elements.
+                            // The ws collapsing pass will handle deduplication.
+                            raw.push(b'\n');
                         }
                         pos = tag_start + end_offset + 1;
-                    },
-                    None => {
-                        // Unclosed tag -- skip the rest.
-                        break;
-                    },
+                    }
+                    None => break,
                 }
-            },
+            }
             None => {
-                // No more tags -- copy remaining text.
                 if head_depth == 0 {
-                    append_ws_collapsed(&html[pos..], &mut result, &mut in_ws, &mut newline_count);
+                    raw.extend_from_slice(&bytes[pos..]);
                 }
                 break;
-            },
+            }
         }
     }
 
-    Cow::Owned(result)
+    // ── Pass 2: collapse whitespace in-place ────────────────────────────
+    let new_len = ws_collapse_in_place(&mut raw);
+    raw.truncate(new_len);
+
+    // SAFETY: `raw` contains only bytes from valid-UTF-8 input plus ASCII
+    // separators (0x20, 0x0A).  Whitespace splits never break multi-byte UTF-8.
+    Cow::Owned(unsafe { String::from_utf8_unchecked(raw) })
 }
 
-/// Appends `chunk` to `result` while collapsing whitespace runs.
+/// Collapses whitespace in-place, returning the new length.
 ///
-/// Uses a 256-byte const lookup table for O(1) per-byte whitespace
-/// classification, avoiding the per-call SIMD setup cost that
-/// `find_first_in_set` incurs (PSHUFB LUT rebuild + AVX2 lane broadcast).
-/// For the typical HTML→text workload (many small-to-medium text chunks
-/// between tags), the table-driven loop is faster because the 256-byte
-/// table stays in L1d cache and pays zero dispatch overhead.
+/// Since whitespace collapsing only shrinks or preserves data (never expands),
+/// we can write the output back into the same buffer using separate read/write
+/// cursors (write <= read always).  This eliminates the second `Vec` allocation
+/// and its associated memcpy.
 ///
-/// All ASCII whitespace characters are single-byte, so splitting at
-/// whitespace boundaries cannot break multi-byte UTF-8 sequences.
-#[inline]
-fn append_ws_collapsed(
-    chunk: &str,
-    result: &mut String,
-    in_ws: &mut bool,
-    newline_count: &mut usize,
-) {
-    /// 256-byte lookup table: `true` for the 5 ASCII whitespace bytes
-    /// (SP 0x20, TAB 0x09, LF 0x0A, CR 0x0D, FF 0x0C), `false` otherwise.
-    const IS_WS: [bool; 256] = {
-        let mut t = [false; 256];
-        t[b' ' as usize] = true;
-        t[b'\t' as usize] = true;
-        t[b'\n' as usize] = true;
-        t[b'\r' as usize] = true;
-        t[0x0C] = true; // form feed
+/// Whitespace runs are replaced by:
+/// - `\n\n` if the run contains 2+ newlines (paragraph break)
+/// - `\n`   if the run contains exactly 1 newline
+/// - ` `    if the run is spaces/tabs only
+///
+/// Leading and trailing whitespace is trimmed.
+fn ws_collapse_in_place(buf: &mut Vec<u8>) -> usize {
+    /// 256-byte LUT: `1` for the 5 ASCII whitespace bytes, `0` otherwise.
+    const IS_WS: [u8; 256] = {
+        let mut t = [0u8; 256];
+        t[b' ' as usize] = 1;
+        t[b'\t' as usize] = 1;
+        t[b'\n' as usize] = 1;
+        t[b'\r' as usize] = 1;
+        t[0x0C] = 1;
         t
     };
 
-    let bytes = chunk.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
+    let len = buf.len();
+    if len == 0 {
+        return 0;
+    }
 
-    while i < len {
-        if IS_WS[bytes[i] as usize] {
-            // Consume the whitespace run, counting newlines in the same pass.
-            if !*in_ws {
-                *in_ws = true;
-                *newline_count = 0;
+    let ptr = buf.as_mut_ptr();
+    let mut r: usize = 0; // read cursor
+    let mut w: usize = 0; // write cursor
+    let mut in_ws = true; // trim leading whitespace
+    let mut nl_count: usize = 0;
+
+    while r < len {
+        // SAFETY: r < len is checked by the loop guard.
+        let b = unsafe { *ptr.add(r) };
+
+        if IS_WS[b as usize] != 0 {
+            // ── Whitespace run: scan to end, count newlines ──────────
+            if !in_ws {
+                in_ws = true;
+                nl_count = 0;
             }
-            while i < len && IS_WS[bytes[i] as usize] {
-                if bytes[i] == b'\n' {
-                    *newline_count += 1;
+            nl_count += (b == b'\n') as usize;
+            r += 1;
+            while r < len {
+                let b2 = unsafe { *ptr.add(r) };
+                if IS_WS[b2 as usize] == 0 {
+                    break;
                 }
-                i += 1;
+                nl_count += (b2 == b'\n') as usize;
+                r += 1;
             }
         } else {
-            // Emit pending whitespace separator.
-            if *in_ws && !result.is_empty() {
-                if *newline_count >= 2 {
-                    result.push_str("\n\n");
-                } else if *newline_count == 1 {
-                    result.push('\n');
+            // ── Non-whitespace run: emit separator, then bulk-copy ───
+            if in_ws && w > 0 {
+                // Write separator for the preceding whitespace run.
+                // SAFETY: w <= r always (ws collapsing only shrinks), so
+                // writing 1-2 bytes at w cannot overwrite unread data at r.
+                if nl_count >= 2 {
+                    unsafe {
+                        *ptr.add(w) = b'\n';
+                        *ptr.add(w + 1) = b'\n';
+                    }
+                    w += 2;
+                } else if nl_count == 1 {
+                    unsafe { *ptr.add(w) = b'\n'; }
+                    w += 1;
                 } else {
-                    result.push(' ');
+                    unsafe { *ptr.add(w) = b' '; }
+                    w += 1;
                 }
             }
-            *in_ws = false;
-            *newline_count = 0;
+            in_ws = false;
+            nl_count = 0;
 
-            // Scan for next whitespace byte using the table.
-            let start = i;
-            i += 1;
-            while i < len && !IS_WS[bytes[i] as usize] {
-                i += 1;
+            // Find end of non-ws run with a tight scalar loop.
+            // Words average ~6 bytes; SIMD dispatch overhead (~50 insns/call)
+            // far exceeds the scalar cost (~4 insns/byte × 6 bytes = 24 insns).
+            let start = r;
+            r += 1;
+            while r < len {
+                if IS_WS[unsafe { *ptr.add(r) } as usize] != 0 {
+                    break;
+                }
+                r += 1;
             }
-            result.push_str(&chunk[start..i]);
+
+            // Copy the non-ws chunk.  When w < start the regions are
+            // disjoint; when w == start (ws run == separator length) the
+            // copy is a no-op we can skip entirely.
+            let chunk_len = r - start;
+            if w != start {
+                unsafe { std::ptr::copy(ptr.add(start), ptr.add(w), chunk_len); }
+            }
+            w += chunk_len;
         }
     }
+
+    w
 }
 
 /// Returns `true` if the tag is an opening `<head` tag (case-insensitive).

@@ -82,7 +82,7 @@ impl Pipeline {
         let book = reader.read_book_filtered(input, filter)?;
 
         // Transform (takes ownership, avoids cloning).
-        let book = self.apply_transforms(book, options)?;
+        let book = self.apply_transforms(book, options, Some(input_format), Some(output_format))?;
 
         // Write.
         let writer = self.registry.writer(&output_format).ok_or_else(|| {
@@ -110,7 +110,7 @@ impl Pipeline {
             .ok_or_else(|| EruditioError::Unsupported(format!("No reader for {}", format)))?;
 
         let book = reader.read_book(input)?;
-        self.apply_transforms(book, options)
+        self.apply_transforms(book, options, Some(format), None)
     }
 
     /// Writes a book without reading (useful when you already have a Book).
@@ -129,8 +129,8 @@ impl Pipeline {
     }
 
     /// Applies the configured transforms to a book (takes ownership to avoid cloning).
-    fn apply_transforms(&self, book: Book, options: &ConversionOptions) -> Result<Book> {
-        let transforms = self.build_transform_chain(options);
+    fn apply_transforms(&self, book: Book, options: &ConversionOptions, input_format: Option<Format>, output_format: Option<Format>) -> Result<Book> {
+        let transforms = self.build_transform_chain(options, input_format, output_format);
 
         let mut current = book;
         for transform in &transforms {
@@ -141,18 +141,41 @@ impl Pipeline {
     }
 
     /// Builds the ordered transform chain based on options.
-    fn build_transform_chain(&self, options: &ConversionOptions) -> Vec<TransformKind> {
+    ///
+    /// When `output_format` is a plain-text format (TXT, MD, PML), transforms
+    /// that only benefit structured/rich output are skipped — they scan HTML
+    /// without affecting the final text, wasting cycles.
+    ///
+    /// When `input_format` is a non-container source (HTML, FB2, TXT, etc.),
+    /// ManifestTrimmer is skipped because these readers only produce referenced
+    /// resources — there are no orphan manifest items to trim.
+    fn build_transform_chain(&self, options: &ConversionOptions, input_format: Option<Format>, output_format: Option<Format>) -> Vec<TransformKind> {
+        let text_only = matches!(
+            output_format,
+            Some(Format::Txt | Format::Txtz | Format::Tcr | Format::Md | Format::Pml | Format::Pmlz)
+        );
+
+        // Source formats that bundle resources in a container (ZIP, etc.) may
+        // have orphan manifest items that need trimming.  Non-container formats
+        // (HTML, FB2, TXT, …) only produce referenced resources.
+        let source_has_container = matches!(
+            input_format,
+            Some(Format::Epub | Format::Kepub | Format::Oeb | Format::Htmlz
+                 | Format::Cbz | Format::Cb7 | Format::Cbr | Format::Cbc
+                 | Format::Mobi | Format::Azw | Format::Azw3 | Format::Prc
+                 | Format::Fbz | Format::Pmlz | Format::Txtz | Format::Lit)
+        );
         let mut chain = Vec::new();
 
         // Order matters: extract data URIs first (simplifies HTML, makes images
         // available as manifest resources), then normalize, detect structure,
         // and generate TOC.
 
-        if options.extract_data_uris {
+        if options.extract_data_uris && !text_only {
             chain.push(TransformKind::DataUriExtractor(DataUriExtractor));
         }
 
-        if options.normalize_html {
+        if options.normalize_html && !text_only {
             chain.push(TransformKind::HtmlNormalizer(HtmlNormalizer));
         }
 
@@ -160,19 +183,19 @@ impl Pipeline {
             chain.push(TransformKind::MetadataMerger(MetadataMerger::new(overrides.clone())));
         }
 
-        if options.detect_structure {
+        if options.detect_structure && !text_only {
             chain.push(TransformKind::StructureDetector(StructureDetector));
         }
 
-        if options.generate_toc {
+        if options.generate_toc && !text_only {
             chain.push(TransformKind::TocGenerator(TocGenerator));
         }
 
-        if options.detect_cover {
+        if options.detect_cover && !text_only {
             chain.push(TransformKind::CoverHandler(CoverHandler));
         }
 
-        if options.trim_manifest {
+        if options.trim_manifest && !text_only && source_has_container {
             chain.push(TransformKind::ManifestTrimmer(ManifestTrimmer));
         }
 
