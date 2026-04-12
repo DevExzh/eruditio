@@ -11,7 +11,7 @@
 <div class="format-select">
   <label for="output-format">Output format</label>
   <select id="output-format" bind:value>
-    {#each formats as fmt}
+    {#each formats as fmt (fmt)}
       <option value={fmt}>{fmt.toUpperCase()}</option>
     {/each}
   </select>
