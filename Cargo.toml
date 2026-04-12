@@ -1,95 +1,11 @@
-[package]
-name = "eruditio"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-ahash = "0.8"
-bzip2 = "0.6.1"
-chrono = "0.4.43"
-flate2 = "1.1"
-log = "0.4.29"
-memchr = "2"
-mime = "0.3.17"
-mime_guess = "2.0.5"
-quick-xml = "0.39.2"
-sevenz-rust2 = { version = "0.20", optional = true }
-thiserror = "2.0.18"
-unrar = { version = "0.5", optional = true }
-zip = "8.1.0"
-lzxd = "0.2"
-mimalloc = { version = "0.1", default-features = false }
-pulldown-cmark = "0.12"
-encoding_rs = "0.8"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp"] }
-clap = { version = "4", features = ["derive"], optional = true }
-base64-simd = "0.8.0"
-crc32fast = "1"
-rayon = "1.11.0"
-
-[features]
-default = ["native-fs", "cbr", "cb7", "cli"]
-cli = ["dep:clap"]
-native-fs = []
-cbr = ["dep:unrar", "native-fs"]
-cb7 = ["dep:sevenz-rust2"]
-dhat-heap = ["dep:dhat"]
-
-[dependencies.dhat]
-version = "0.3"
-optional = true
-
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-dhat = "0.3"
-
-[[bin]]
-name = "eruditio-convert"
-path = "src/bin/convert.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "memory_profile"
-path = "src/bin/memory_profile.rs"
-required-features = []
-
-[[bin]]
-name = "validate"
-path = "src/bin/validate.rs"
-required-features = ["native-fs"]
-
-[[bench]]
-name = "palmdoc"
-harness = false
-
-[[bench]]
-name = "html_escape"
-harness = false
-
-[[bench]]
-name = "rtf_tokenizer"
-harness = false
-
-[[bench]]
-name = "mobi_roundtrip"
-harness = false
-
-[[bench]]
-name = "intrinsics"
-harness = false
-
-[[bench]]
-name = "intrinsics_integration"
-harness = false
-
-[[bench]]
-name = "conversion"
-harness = false
+[workspace]
+members = ["crates/eruditio", "crates/eruditio-wasm"]
+resolver = "3"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 
 [profile.bench]
-debug = true       # Required for meaningful flamegraphs
-lto = "thin"       # Match production build settings
+debug = true
+lto = "thin"
