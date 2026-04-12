@@ -128,6 +128,16 @@ impl Pipeline {
         &self.registry
     }
 
+    /// Applies transforms to a book without format context.
+    ///
+    /// Use this when you have already read the book and want to apply
+    /// transforms before writing. Since no input/output format is known,
+    /// all enabled transforms run unconditionally (text-only and
+    /// container-source optimizations are skipped).
+    pub fn apply_transforms_standalone(&self, book: Book, options: &ConversionOptions) -> Result<Book> {
+        self.apply_transforms(book, options, None, None)
+    }
+
     /// Applies the configured transforms to a book (takes ownership to avoid cloning).
     fn apply_transforms(&self, book: Book, options: &ConversionOptions, input_format: Option<Format>, output_format: Option<Format>) -> Result<Book> {
         let transforms = self.build_transform_chain(options, input_format, output_format);
@@ -324,5 +334,25 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn apply_transforms_public_api() {
+        let pipeline = Pipeline::new();
+        let mut book = Book::new();
+        book.metadata.title = Some("Original".into());
+        book.add_chapter(Chapter {
+            title: None,
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let overrides = crate::domain::Metadata {
+            title: Some("Transformed".into()),
+            ..Default::default()
+        };
+        let opts = ConversionOptions::none().with_metadata(overrides);
+        let result = pipeline.apply_transforms_standalone(book, &opts).unwrap();
+        assert_eq!(result.metadata.title.as_deref(), Some("Transformed"));
     }
 }
