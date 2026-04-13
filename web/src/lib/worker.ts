@@ -29,7 +29,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           options,
           (stage: string) => self.postMessage({ type: "progress", stage }),
         );
-        const buffer = result.buffer;
+        const copied = result.slice();
+        const buffer = copied.buffer;
         self.postMessage(
           {
             type: "result",

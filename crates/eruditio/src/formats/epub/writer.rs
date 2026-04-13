@@ -6,7 +6,6 @@ use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 use flate2::{Compress, Compression, FlushCompress};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-#[cfg(feature = "parallel")]
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
 #[cfg(feature = "parallel")]
@@ -39,6 +38,388 @@ fn is_already_compressed(media_type: &str) -> bool {
 /// Entries below this threshold use `Stored` — the typical compression
 /// savings (< 1 KB for a 2 KB file) don't justify the 256 KB memset cost.
 const MIN_DEFLATE_SIZE: usize = 4096;
+
+/// Returns `true` if the XHTML content is already a proper XML document
+/// (starts with `<?xml`). Such content can be used as-is without sanitization.
+fn is_valid_xhtml_document(text: &str) -> bool {
+    text.trim_start().as_bytes().starts_with(b"<?xml")
+}
+
+/// Extracts the inner content of the `<body>` element from an HTML document.
+///
+/// If no `<body>` is found, returns the entire input (it's a bare fragment).
+/// Used to strip the MOBI reader's invalid `<html><head>...</head><body>` wrapper.
+fn extract_body_content(html: &str) -> &str {
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+
+    // Find <body (case-insensitive) then the closing '>'.
+    let body_start = {
+        let mut found = None;
+        for i in 0..len.saturating_sub(4) {
+            if bytes[i] == b'<'
+                && bytes[i + 1].to_ascii_lowercase() == b'b'
+                && bytes[i + 2].to_ascii_lowercase() == b'o'
+                && bytes[i + 3].to_ascii_lowercase() == b'd'
+                && bytes[i + 4].to_ascii_lowercase() == b'y'
+            {
+                // Find the closing '>' of the <body> tag.
+                if let Some(gt) = html[i..].find('>') {
+                    found = Some(i + gt + 1);
+                }
+                break;
+            }
+        }
+        found
+    };
+
+    let Some(start) = body_start else {
+        return html;
+    };
+
+    // Find </body> (case-insensitive) from the end.
+    let body_end = {
+        let mut found = None;
+        for i in (0..len.saturating_sub(6)).rev() {
+            if bytes[i] == b'<'
+                && bytes[i + 1] == b'/'
+                && bytes[i + 2].to_ascii_lowercase() == b'b'
+                && bytes[i + 3].to_ascii_lowercase() == b'o'
+                && bytes[i + 4].to_ascii_lowercase() == b'd'
+                && bytes[i + 5].to_ascii_lowercase() == b'y'
+            {
+                found = Some(i);
+                break;
+            }
+        }
+        found
+    };
+
+    let end = body_end.unwrap_or(len);
+    &html[start..end]
+}
+
+/// Sanitizes HTML content to be valid inside an XHTML document.
+///
+/// Handles the following issues found in MOBI reader output:
+/// - Strips MOBI namespace tags (`<mbp:…>`, `</mbp:…>`)
+/// - Strips closing tags for void elements (`</br>`, `</hr>`, etc.)
+/// - Converts void elements to self-closing form (`<br>` → `<br/>`)
+/// - Quotes unquoted attribute values (`filepos=123` → `filepos="123"`)
+/// - Escapes bare `&` not part of valid entities
+fn sanitize_html_for_xhtml(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + 256);
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+    let mut pos = 0;
+
+    while pos < len {
+        if bytes[pos] == b'<' {
+            // Find the end of this tag.
+            let tag_end = match memchr::memchr(b'>', &bytes[pos..]) {
+                Some(offset) => pos + offset + 1,
+                None => {
+                    // Malformed — no closing '>'. Output as escaped text.
+                    out.push_str("&lt;");
+                    pos += 1;
+                    continue;
+                }
+            };
+
+            let tag = &html[pos..tag_end];
+
+            // Strip MOBI namespace tags (<mbp:…> and </mbp:…>).
+            if is_mobi_ns_tag(tag) {
+                pos = tag_end;
+                continue;
+            }
+
+            // Strip structural HTML tags — our XHTML wrapper provides these.
+            if is_structural_html_tag(tag) {
+                pos = tag_end;
+                continue;
+            }
+
+            // Handle HTML void elements (br, hr, img, etc.):
+            // - Strip closing tags (</br>, </hr>, etc.)
+            // - Convert opening tags to self-closing XHTML form (<br/>)
+            if is_void_element_tag(tag) {
+                if bytes[pos + 1] == b'/' {
+                    // Closing tag for void element — strip it.
+                    pos = tag_end;
+                    continue;
+                }
+                // Opening void element — sanitize attrs and ensure self-closing.
+                sanitize_void_element(&mut out, tag);
+                pos = tag_end;
+                continue;
+            }
+
+            // Fix unquoted attributes inside opening/self-closing tags.
+            if tag.len() > 2 && bytes[pos + 1] != b'/' && bytes[pos + 1] != b'!' && bytes[pos + 1] != b'?' {
+                sanitize_tag_attrs(&mut out, tag);
+            } else {
+                out.push_str(tag);
+            }
+            pos = tag_end;
+        } else if bytes[pos] == b'&' {
+            // Escape bare '&' that is not a valid entity/character reference.
+            if is_valid_entity_ref(html, pos) {
+                // Copy the entity reference including the ';'.
+                let rest = &html[pos..];
+                if let Some(semi) = rest.find(';') {
+                    out.push_str(&rest[..semi + 1]);
+                    pos += semi + 1;
+                } else {
+                    out.push_str("&amp;");
+                    pos += 1;
+                }
+            } else {
+                out.push_str("&amp;");
+                pos += 1;
+            }
+        } else {
+            // Copy non-tag, non-entity text as-is (including multi-byte UTF-8).
+            let ch = unsafe { html.get_unchecked(pos..) }.chars().next().unwrap();
+            out.push(ch);
+            pos += ch.len_utf8();
+        }
+    }
+
+    out
+}
+
+/// Returns `true` if the tag is a MOBI namespace tag (e.g., `<mbp:pagebreak>`).
+fn is_mobi_ns_tag(tag: &str) -> bool {
+    let bytes = tag.as_bytes();
+    if bytes.len() < 5 {
+        return false;
+    }
+    let start = if bytes[1] == b'/' { 2 } else { 1 };
+    bytes.get(start..start + 4).is_some_and(|b| {
+        b[0].to_ascii_lowercase() == b'm'
+            && b[1].to_ascii_lowercase() == b'b'
+            && b[2].to_ascii_lowercase() == b'p'
+            && b[3] == b':'
+    })
+}
+
+/// Returns `true` if the tag is a structural HTML element that the XHTML
+/// wrapper already provides (`html`, `head`, `body`, `guide`).
+/// These are stripped during sanitization to avoid duplication.
+fn is_structural_html_tag(tag: &str) -> bool {
+    let bytes = tag.as_bytes();
+    if bytes.len() < 3 {
+        return false;
+    }
+    let start = if bytes[1] == b'/' { 2 } else { 1 };
+    let rest = &bytes[start..];
+
+    // Match tag names: html, head, body, guide (case-insensitive).
+    let name_end = rest
+        .iter()
+        .position(|&b| b == b' ' || b == b'>' || b == b'/')
+        .unwrap_or(rest.len());
+    let name = &rest[..name_end];
+
+    if name.len() < 4 || name.len() > 5 {
+        return false;
+    }
+    let mut lower = [0u8; 5];
+    for (i, &b) in name.iter().enumerate() {
+        lower[i] = b.to_ascii_lowercase();
+    }
+    let lower = &lower[..name.len()];
+    lower == b"html" || lower == b"head" || lower == b"body" || lower == b"guide"
+}
+
+/// Returns `true` if the tag is for an HTML void element (e.g., `<br>`, `</hr>`,
+/// `<img src="…">`). In XHTML, void elements must be self-closing and must not
+/// have closing tags.
+fn is_void_element_tag(tag: &str) -> bool {
+    let bytes = tag.as_bytes();
+    if bytes.len() < 3 {
+        return false;
+    }
+    let start = if bytes[1] == b'/' { 2 } else { 1 };
+    let rest = &bytes[start..];
+    let name_end = rest
+        .iter()
+        .position(|&b| b == b' ' || b == b'>' || b == b'/')
+        .unwrap_or(rest.len());
+    let name = &rest[..name_end];
+
+    match name.len() {
+        2 => {
+            let a = name[0].to_ascii_lowercase();
+            let b = name[1].to_ascii_lowercase();
+            (a == b'b' && b == b'r') || (a == b'h' && b == b'r')
+        }
+        3 => {
+            let mut l = [0u8; 3];
+            for i in 0..3 { l[i] = name[i].to_ascii_lowercase(); }
+            l == *b"img" || l == *b"col" || l == *b"wbr"
+        }
+        4 => {
+            let mut l = [0u8; 4];
+            for i in 0..4 { l[i] = name[i].to_ascii_lowercase(); }
+            l == *b"area" || l == *b"base" || l == *b"meta" || l == *b"link"
+        }
+        5 => {
+            let mut l = [0u8; 5];
+            for i in 0..5 { l[i] = name[i].to_ascii_lowercase(); }
+            l == *b"input" || l == *b"embed" || l == *b"track"
+        }
+        6 => {
+            let mut l = [0u8; 6];
+            for i in 0..6 { l[i] = name[i].to_ascii_lowercase(); }
+            l == *b"source"
+        }
+        _ => false,
+    }
+}
+
+/// Returns `true` if position `pos` in `html` starts a valid entity or
+/// character reference (`&amp;`, `&lt;`, `&#123;`, `&#xAB;`, etc.).
+fn is_valid_entity_ref(html: &str, pos: usize) -> bool {
+    let rest = &html[pos..];
+    if !rest.starts_with('&') || rest.len() < 3 {
+        return false;
+    }
+    // Must have a ';' within a reasonable distance.
+    let semi = match rest[1..].find(';') {
+        Some(s) if s < 12 => s + 1, // offset from pos
+        _ => return false,
+    };
+    let inner = &rest[1..semi];
+    if inner.starts_with('#') {
+        // Numeric: &#123; or &#xAB;
+        let digits = &inner[1..];
+        if digits.starts_with('x') || digits.starts_with('X') {
+            digits[1..].chars().all(|c| c.is_ascii_hexdigit())
+        } else {
+            digits.chars().all(|c| c.is_ascii_digit())
+        }
+    } else {
+        // Named: &amp; &lt; &gt; &quot; &apos; &nbsp; etc.
+        inner.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+
+/// Writes a sanitized copy of an opening/self-closing HTML tag, quoting any
+/// unquoted attribute values.
+///
+/// Example: `<reference type="toc" filepos=0002371959 />`
+/// becomes: `<reference type="toc" filepos="0002371959" />`
+fn sanitize_tag_attrs(out: &mut String, tag: &str) {
+    let bytes = tag.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == b'=' && i + 1 < len {
+            out.push('=');
+            i += 1;
+            // The next non-space character after '=' should be a quote.
+            while i < len && bytes[i] == b' ' {
+                out.push(' ');
+                i += 1;
+            }
+            if i >= len {
+                break;
+            }
+            if bytes[i] == b'"' || bytes[i] == b'\'' {
+                // Already quoted — copy through to the matching close quote.
+                let quote = bytes[i];
+                out.push(bytes[i] as char);
+                i += 1;
+                while i < len && bytes[i] != quote {
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+                if i < len {
+                    out.push(bytes[i] as char); // closing quote
+                    i += 1;
+                }
+            } else {
+                // Unquoted value — collect until space, '>', or '/'.
+                out.push('"');
+                while i < len && bytes[i] != b' ' && bytes[i] != b'>' && bytes[i] != b'/' {
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+                out.push('"');
+            }
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+}
+
+/// Sanitizes an opening void element tag: quotes unquoted attributes and
+/// ensures the tag is self-closing (e.g., `<br>` → `<br/>`,
+/// `<img src=foo>` → `<img src="foo"/>`).
+fn sanitize_void_element(out: &mut String, tag: &str) {
+    let mark = out.len();
+    sanitize_tag_attrs(out, tag);
+    // Ensure the tag ends with `/>`.
+    let written = &out[mark..];
+    if written.ends_with("/>") {
+        // Already self-closing — nothing to do.
+    } else if written.ends_with('>') {
+        let len = out.len();
+        out.truncate(len - 1);
+        out.push_str("/>");
+    }
+}
+
+/// Wraps a bare HTML fragment in a full XHTML document envelope.
+///
+/// Produces valid XHTML matching the structure calibre emits:
+/// ```xml
+/// <?xml version="1.0" encoding="UTF-8"?>
+/// <html xmlns="http://www.w3.org/1999/xhtml">
+/// <head><title></title></head>
+/// <body>
+/// {content}
+/// </body>
+/// </html>
+/// ```
+fn wrap_xhtml(content: &str, lang: Option<&str>) -> String {
+    let mut doc = String::with_capacity(content.len() + 256);
+    doc.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"");
+    if let Some(l) = lang {
+        doc.push_str(" xml:lang=\"");
+        doc.push_str(l);
+        doc.push('"');
+    }
+    doc.push_str(">\n<head>\n<title></title>\n</head>\n<body>\n");
+    doc.push_str(content);
+    doc.push_str("\n</body>\n</html>\n");
+    doc
+}
+
+/// Returns the XHTML bytes for a manifest item, sanitizing HTML content and
+/// wrapping in a proper XHTML document when needed.
+///
+/// - Content starting with `<?xml` is assumed to be valid XHTML → zero-copy.
+/// - Content with an `<html>` wrapper (e.g., from MOBI) → body extracted,
+///   sanitized, and wrapped in proper XHTML.
+/// - Bare HTML fragments → sanitized and wrapped.
+fn xhtml_bytes<'a>(text: &'a str, lang: Option<&str>) -> Cow<'a, [u8]> {
+    if is_valid_xhtml_document(text) {
+        return Cow::Borrowed(text.as_bytes());
+    }
+
+    // Extract body content (strips MOBI's <html><head>…<body> wrapper).
+    let body = extract_body_content(text);
+
+    // Sanitize HTML for XHTML validity (quote attrs, strip MOBI tags, escape &).
+    let sanitized = sanitize_html_for_xhtml(body);
+
+    Cow::Owned(wrap_xhtml(&sanitized, lang).into_bytes())
+}
 
 /// Writes a `Book` as a valid EPUB archive to the given writer.
 ///
@@ -160,6 +541,7 @@ fn write_epub_sequential<W: Write + Seek>(
 
     // 5. Manifest items
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
+    let lang = book.metadata.language.as_deref();
     let mut zip_path = String::with_capacity(64);
     for item in book.manifest.iter() {
         if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
@@ -168,11 +550,17 @@ fn write_epub_sequential<W: Write + Seek>(
         zip_path.clear();
         zip_path.push_str("OEBPS/");
         zip_path.push_str(&item.href);
-        let (data_bytes, entry_size) = match &item.data {
-            crate::domain::ManifestData::Text(t) => (t.as_bytes() as &[u8], t.len()),
-            crate::domain::ManifestData::Inline(b) => (b.as_ref() as &[u8], b.len()),
-            crate::domain::ManifestData::Empty => (&[] as &[u8], 0),
+
+        // For XHTML items, ensure content is a full document (not a bare fragment).
+        let is_xhtml = item.media_type == "application/xhtml+xml";
+        let wrapped: Cow<'_, [u8]> = match &item.data {
+            crate::domain::ManifestData::Text(t) => {
+                if is_xhtml { xhtml_bytes(t, lang) } else { Cow::Borrowed(t.as_bytes()) }
+            }
+            crate::domain::ManifestData::Inline(b) => Cow::Borrowed(b.as_ref()),
+            crate::domain::ManifestData::Empty => Cow::Borrowed(&[]),
         };
+        let entry_size = wrapped.len();
         let opts = if is_already_compressed(&item.media_type) || entry_size < MIN_DEFLATE_SIZE {
             stored
         } else {
@@ -180,7 +568,7 @@ fn write_epub_sequential<W: Write + Seek>(
         };
         zip.start_file(&zip_path, opts)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
-        zip.write_all(data_bytes)?;
+        zip.write_all(&wrapped)?;
     }
 
     zip.finish()
@@ -216,7 +604,7 @@ fn write_epub_parallel<W: Write + Seek>(
 
     struct StoredEntry<'a> {
         zip_path: String,
-        data: &'a [u8],
+        data: Cow<'a, [u8]>,
     }
 
     let mut deflate_entries: Vec<DeflateEntry<'_>> = Vec::new();
@@ -232,7 +620,7 @@ fn write_epub_parallel<W: Write + Seek>(
     } else {
         stored_entries.push(StoredEntry {
             zip_path: "META-INF/container.xml".to_string(),
-            data: container_xml.as_bytes(),
+            data: Cow::Borrowed(container_xml.as_bytes()),
         });
     }
     if opf_xml.len() >= MIN_DEFLATE_SIZE {
@@ -243,7 +631,7 @@ fn write_epub_parallel<W: Write + Seek>(
     } else {
         stored_entries.push(StoredEntry {
             zip_path: "OEBPS/content.opf".to_string(),
-            data: opf_xml.as_bytes(),
+            data: Cow::Borrowed(opf_xml.as_bytes()),
         });
     }
     if ncx_xml.len() >= MIN_DEFLATE_SIZE {
@@ -254,12 +642,13 @@ fn write_epub_parallel<W: Write + Seek>(
     } else {
         stored_entries.push(StoredEntry {
             zip_path: "OEBPS/toc.ncx".to_string(),
-            data: ncx_xml.as_bytes(),
+            data: Cow::Borrowed(ncx_xml.as_bytes()),
         });
     }
 
     // Manifest entries
     const STRUCTURAL_HREFS: &[&str] = &["toc.ncx", "content.opf"];
+    let lang = book.metadata.language.as_deref();
     for item in book.manifest.iter() {
         if STRUCTURAL_HREFS.contains(&item.href.as_str()) {
             continue;
@@ -267,43 +656,45 @@ fn write_epub_parallel<W: Write + Seek>(
         let mut zip_path = String::with_capacity(6 + item.href.len());
         zip_path.push_str("OEBPS/");
         zip_path.push_str(&item.href);
+        let is_xhtml = item.media_type == "application/xhtml+xml";
 
         if is_already_compressed(&item.media_type) {
             match &item.data {
                 crate::domain::ManifestData::Inline(bytes) => {
-                    stored_entries.push(StoredEntry { zip_path, data: &**bytes });
+                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(bytes) });
                 },
                 crate::domain::ManifestData::Text(text) => {
-                    stored_entries.push(StoredEntry { zip_path, data: text.as_bytes() });
+                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(text.as_bytes()) });
                 },
                 crate::domain::ManifestData::Empty => {
-                    stored_entries.push(StoredEntry { zip_path, data: &[] });
+                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(&[]) });
                 },
             }
         } else {
             match &item.data {
                 crate::domain::ManifestData::Text(text) => {
-                    if text.len() < MIN_DEFLATE_SIZE {
-                        stored_entries.push(StoredEntry { zip_path, data: text.as_bytes() });
+                    let effective = if is_xhtml { xhtml_bytes(text, lang) } else { Cow::Borrowed(text.as_bytes()) };
+                    if effective.len() < MIN_DEFLATE_SIZE {
+                        stored_entries.push(StoredEntry { zip_path, data: effective });
                     } else {
                         deflate_entries.push(DeflateEntry {
                             zip_path,
-                            data: Cow::Borrowed(text.as_bytes()),
+                            data: effective,
                         });
                     }
                 },
                 crate::domain::ManifestData::Inline(bytes) => {
                     if bytes.len() < MIN_DEFLATE_SIZE {
-                        stored_entries.push(StoredEntry { zip_path, data: &**bytes });
+                        stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(bytes) });
                     } else {
                         deflate_entries.push(DeflateEntry {
                             zip_path,
-                            data: Cow::Borrowed(&**bytes),
+                            data: Cow::Borrowed(bytes),
                         });
                     }
                 },
                 crate::domain::ManifestData::Empty => {
-                    stored_entries.push(StoredEntry { zip_path, data: &[] });
+                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(&[]) });
                 },
             }
         }
@@ -390,7 +781,7 @@ fn write_epub_parallel<W: Write + Seek>(
     for entry in &stored_entries {
         zip.start_file(&entry.zip_path, stored)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", entry.zip_path, e)))?;
-        zip.write_all(entry.data)?;
+        zip.write_all(&entry.data)?;
     }
 
     zip.finish()
@@ -1266,5 +1657,212 @@ mod tests {
             Some("URI"),
             "identifier_scheme should survive OPF round-trip"
         );
+    }
+
+    #[test]
+    fn xhtml_wrapping_for_bare_fragments() {
+        // Chapters created via add_chapter() store bare HTML fragments.
+        // The EPUB writer must wrap them in full XHTML documents.
+        let book = sample_book(); // chapters have content like "<p>Hello World</p>"
+        let mut output = Cursor::new(Vec::new());
+        write_epub(&book, &mut output).unwrap();
+
+        output.set_position(0);
+        let mut archive = zip::ZipArchive::new(output).unwrap();
+
+        for name in ["OEBPS/ch1.xhtml", "OEBPS/ch2.xhtml"] {
+            let mut content = String::new();
+            {
+                use std::io::Read as _;
+                archive
+                    .by_name(name)
+                    .unwrap()
+                    .read_to_string(&mut content)
+                    .unwrap();
+            }
+
+            let trimmed = content.trim_start();
+            assert!(
+                trimmed.starts_with("<?xml"),
+                "{} must start with XML declaration, got: {:?}",
+                name,
+                &trimmed[..trimmed.len().min(60)]
+            );
+            assert!(
+                content.contains("<html"),
+                "{} must contain <html> element",
+                name
+            );
+            assert!(
+                content.contains("<body>"),
+                "{} must contain <body> element",
+                name
+            );
+            assert!(
+                content.contains("</body>"),
+                "{} must contain </body>",
+                name
+            );
+            assert!(
+                content.contains("</html>"),
+                "{} must contain </html>",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn xhtml_wrapping_preserves_existing_documents() {
+        // When content is already a full XHTML document (e.g., EPUB→EPUB),
+        // the writer must NOT double-wrap it.
+        let full_xhtml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body><p>Hello</p></body>
+</html>"#;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Test".into());
+        book.metadata.language = Some("en".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch1".into()),
+            content: full_xhtml.to_string(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Cursor::new(Vec::new());
+        write_epub(&book, &mut output).unwrap();
+
+        output.set_position(0);
+        let mut archive = zip::ZipArchive::new(output).unwrap();
+
+        let mut content = String::new();
+        {
+            use std::io::Read as _;
+            archive
+                .by_name("OEBPS/ch1.xhtml")
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+        }
+
+        // Should NOT be double-wrapped: only one <?xml declaration.
+        let xml_count = content.matches("<?xml").count();
+        assert_eq!(
+            xml_count, 1,
+            "Should have exactly 1 XML declaration, got {}. Content:\n{}",
+            xml_count,
+            &content[..content.len().min(300)]
+        );
+    }
+
+    #[test]
+    fn xhtml_wrapping_includes_language() {
+        let mut book = Book::new();
+        book.metadata.title = Some("Test".into());
+        book.metadata.language = Some("ja".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>こんにちは</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Cursor::new(Vec::new());
+        write_epub(&book, &mut output).unwrap();
+
+        output.set_position(0);
+        let mut archive = zip::ZipArchive::new(output).unwrap();
+
+        let mut content = String::new();
+        {
+            use std::io::Read as _;
+            archive
+                .by_name("OEBPS/ch1.xhtml")
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+        }
+
+        assert!(
+            content.contains("xml:lang=\"ja\""),
+            "XHTML wrapper should include xml:lang. Content:\n{}",
+            &content[..content.len().min(300)]
+        );
+        assert!(
+            content.contains("こんにちは"),
+            "CJK content must be preserved in wrapped XHTML"
+        );
+    }
+
+    #[test]
+    fn valid_xhtml_passes_through() {
+        assert!(is_valid_xhtml_document(
+            r#"<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body></body></html>"#
+        ));
+        assert!(!is_valid_xhtml_document(
+            r#"<html><head></head><body></body></html>"#
+        ));
+        assert!(!is_valid_xhtml_document("<p>fragment</p>"));
+        assert!(!is_valid_xhtml_document(""));
+    }
+
+    #[test]
+    fn extract_body_content_strips_html_wrapper() {
+        let html = r#"<html><head><guide></guide></head><body><p>Hello</p></body></html>"#;
+        assert_eq!(extract_body_content(html), "<p>Hello</p>");
+    }
+
+    #[test]
+    fn extract_body_content_returns_fragment_as_is() {
+        let frag = "<p>Hello</p>";
+        assert_eq!(extract_body_content(frag), frag);
+    }
+
+    #[test]
+    fn sanitize_quotes_unquoted_attributes() {
+        let html = r#"<reference type="toc" filepos=0002371959 />"#;
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains(r#"filepos="0002371959""#),
+            "Unquoted attr should be quoted. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_mobi_namespace_tags() {
+        let html = r#"</mbp:pagebreak><p>Content</p><mbp:nu/>"#;
+        let result = sanitize_html_for_xhtml(html);
+        assert!(!result.contains("mbp:"), "MOBI tags should be stripped. Got: {}", result);
+        assert!(result.contains("<p>Content</p>"));
+    }
+
+    #[test]
+    fn sanitize_escapes_bare_ampersand() {
+        let html = "<p>A & B</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(result.contains("A &amp; B"), "Bare & should be escaped. Got: {}", result);
+    }
+
+    #[test]
+    fn sanitize_preserves_valid_entities() {
+        let html = "<p>&amp; &lt; &#x4F60; &#123;</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(result.contains("&amp;"), "Got: {}", result);
+        assert!(result.contains("&lt;"), "Got: {}", result);
+        assert!(result.contains("&#x4F60;"), "Got: {}", result);
+        assert!(result.contains("&#123;"), "Got: {}", result);
+    }
+
+    #[test]
+    fn xhtml_bytes_sanitizes_mobi_html() {
+        // Simulate MOBI reader output with invalid HTML
+        let mobi_html = r#"<html><head><guide><reference type="toc" title="TOC" filepos=0002371959 /></guide></head><body><p height="6em" width="0pt">Hello</p></body></html>"#;
+        let result = xhtml_bytes(mobi_html, Some("zh"));
+        let text = std::str::from_utf8(&result).unwrap();
+        assert!(text.starts_with("<?xml"), "Should be wrapped in XHTML: {:?}", &text[..80.min(text.len())]);
+        assert!(!text.contains("filepos=0002371959"), "Unquoted attr should be fixed");
+        assert!(text.contains("Hello"), "Content should be preserved");
+        assert!(!text.contains("<guide>"), "MOBI guide should be stripped");
     }
 }

@@ -517,3 +517,199 @@ fn test_pg23962_kf8_mobi_large() {
         total_cjk_chars
     );
 }
+
+// ---------------------------------------------------------------------------
+// 13. MOBI → EPUB produces valid XHTML (not bare HTML fragments)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mobi_to_epub_produces_valid_xhtml() {
+    let path = test_data_path("test-data/real-world/small/pg31757-images.mobi");
+    if !path.exists() {
+        eprintln!("[SKIP] pg31757 MOBI not found");
+        return;
+    }
+
+    let book = EruditioParser::parse_file(&path).expect("pg31757 MOBI should parse");
+
+    // Write to EPUB
+    let writer = eruditio::formats::epub::EpubWriter::new();
+    let mut buf = Vec::new();
+    writer.write_book(&book, &mut buf).expect("EPUB write should succeed");
+
+    // Inspect the EPUB ZIP — every .xhtml file must be a full XHTML document.
+    let cursor = std::io::Cursor::new(&buf);
+    let mut archive = zip::ZipArchive::new(cursor).expect("output should be valid ZIP");
+
+    for i in 0..archive.len() {
+        let name = archive.by_index(i).unwrap().name().to_string();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+
+        let mut content = String::new();
+        {
+            use std::io::Read;
+            archive
+                .by_name(&name)
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+        }
+
+        let trimmed = content.trim_start();
+        assert!(
+            trimmed.starts_with("<?xml") || trimmed.starts_with("<html") || trimmed.starts_with("<!DOCTYPE"),
+            "[MOBI→EPUB] {} is not a valid XHTML document. Starts with: {:?}",
+            name,
+            &trimmed[..trimmed.len().min(80)]
+        );
+        assert!(
+            content.contains("<html"),
+            "[MOBI→EPUB] {} missing <html> element",
+            name
+        );
+
+        eprintln!("[MOBI→EPUB] {} OK ({} bytes)", name, content.len());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 14. pg23962 MOBI → EPUB produces XML-parseable XHTML (the user's bug report)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pg23962_mobi_to_epub_valid_xml() {
+    let path = test_data_path("test-data/real-world/medium/pg23962-images.mobi");
+    if !path.exists() {
+        eprintln!("[SKIP] pg23962 MOBI not found");
+        return;
+    }
+
+    let book = EruditioParser::parse_file(&path).expect("pg23962 MOBI should parse");
+
+    // Write to EPUB
+    let writer = eruditio::formats::epub::EpubWriter::new();
+    let mut buf = Vec::new();
+    writer
+        .write_book(&book, &mut buf)
+        .expect("EPUB write should succeed");
+
+    // Validate every .xhtml file in the EPUB is well-formed XML.
+    let cursor = std::io::Cursor::new(&buf);
+    let mut archive = zip::ZipArchive::new(cursor).expect("output should be valid ZIP");
+    let mut errors = Vec::new();
+
+    for i in 0..archive.len() {
+        let name = archive.by_index(i).unwrap().name().to_string();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+
+        let mut content = String::new();
+        {
+            use std::io::Read;
+            archive
+                .by_name(&name)
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+        }
+
+        // Must start with XML declaration
+        let trimmed = content.trim_start();
+        if !trimmed.starts_with("<?xml") {
+            errors.push(format!("{}: missing XML declaration, starts with {:?}", name, &trimmed[..trimmed.len().min(60)]));
+            continue;
+        }
+
+        // Must be parseable as XML (quick-xml check)
+        let mut reader = quick_xml::Reader::from_str(&content);
+        reader.config_mut().check_end_names = true;
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Err(e) => {
+                    errors.push(format!("{}: XML parse error at position {}: {}", name, reader.error_position(), e));
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        errors.is_empty(),
+        "pg23962 MOBI→EPUB XHTML validation errors:\n{}",
+        errors.join("\n")
+    );
+    eprintln!("[pg23962 MOBI→EPUB] All XHTML files are valid XML");
+}
+
+// ---------------------------------------------------------------------------
+// 15. pg31757 MOBI → EPUB produces XML-parseable XHTML
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pg31757_mobi_to_epub_valid_xml() {
+    let path = test_data_path("test-data/real-world/small/pg31757-images.mobi");
+    if !path.exists() {
+        eprintln!("[SKIP] pg31757 MOBI not found");
+        return;
+    }
+
+    let book = EruditioParser::parse_file(&path).expect("pg31757 MOBI should parse");
+
+    let writer = eruditio::formats::epub::EpubWriter::new();
+    let mut buf = Vec::new();
+    writer
+        .write_book(&book, &mut buf)
+        .expect("EPUB write should succeed");
+
+    let cursor = std::io::Cursor::new(&buf);
+    let mut archive = zip::ZipArchive::new(cursor).expect("output should be valid ZIP");
+    let mut errors = Vec::new();
+
+    for i in 0..archive.len() {
+        let name = archive.by_index(i).unwrap().name().to_string();
+        if !name.ends_with(".xhtml") {
+            continue;
+        }
+
+        let mut content = String::new();
+        {
+            use std::io::Read;
+            archive
+                .by_name(&name)
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+        }
+
+        let trimmed = content.trim_start();
+        if !trimmed.starts_with("<?xml") {
+            errors.push(format!("{}: missing XML declaration", name));
+            continue;
+        }
+
+        let mut reader = quick_xml::Reader::from_str(&content);
+        reader.config_mut().check_end_names = true;
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Err(e) => {
+                    errors.push(format!("{}: XML parse error: {}", name, e));
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        errors.is_empty(),
+        "pg31757 MOBI→EPUB XHTML validation errors:\n{}",
+        errors.join("\n")
+    );
+    eprintln!("[pg31757 MOBI→EPUB] All XHTML files are valid XML");
+}

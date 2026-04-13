@@ -83,7 +83,7 @@
           input: buffer,
           inputFormat,
           outputFormat,
-          options: metadataOptions,
+          options: $state.snapshot(metadataOptions),
         },
       },
       [buffer],
