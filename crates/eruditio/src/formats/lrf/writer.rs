@@ -376,7 +376,7 @@ fn html_to_text_stream(
                     emit_font_weight(&mut stream, 400);
                     emit_font_size(&mut stream, default_size);
                 },
-                _ if tag_name.len() >= 3 && tag_name[..3].eq_ignore_ascii_case("img") => {
+                _ if tag_name.get(..3).is_some_and(|s| s.eq_ignore_ascii_case("img")) => {
                     // Extract src attribute.
                     if let Some(src) = extract_attr(tag_content, "src") {
                         // Look up the image object ID.
@@ -1120,5 +1120,51 @@ mod tests {
     fn decode_html_entities_basic() {
         assert_eq!(decode_html_entities("a &amp; b"), "a & b");
         assert_eq!(decode_html_entities("&lt;tag&gt;"), "<tag>");
+    }
+
+    #[test]
+    fn html_to_text_stream_cjk_img_tag_does_not_panic() {
+        // Ensure tag names with multi-byte UTF-8 don't cause a slice panic.
+        let map = AHashMap::new();
+        let html = "<p>文本内容</p><日本語タグ>test</日本語タグ>";
+        let stream = html_to_text_stream(html, &map);
+        // Should not panic; just skips the unknown tag.
+        assert!(!stream.is_empty());
+    }
+
+    #[test]
+    fn html_to_text_stream_2byte_tag_name() {
+        // 2-byte UTF-8 chars (e.g., Cyrillic) as tag names.
+        let map = AHashMap::new();
+        let html = "<п>Привет</п>";
+        let stream = html_to_text_stream(html, &map);
+        assert!(!stream.is_empty());
+    }
+
+    #[test]
+    fn html_to_text_stream_emoji_tag_name() {
+        // 4-byte emoji as tag name — ensures no panic from byte slicing.
+        let map = AHashMap::new();
+        let html = "<🎉>Party</🎉><p>Normal text</p>";
+        let stream = html_to_text_stream(html, &map);
+        assert!(!stream.is_empty());
+    }
+
+    #[test]
+    fn html_to_text_stream_img_tag_with_cjk_attrs() {
+        // Real "img" tag but with CJK attribute values.
+        let map: AHashMap<String, u32> = AHashMap::new();
+        let html = r#"<img src="chinese_img.png" alt="中文替代文字" />"#;
+        let stream = html_to_text_stream(html, &map);
+        // Should process the img tag normally.
+        assert!(!stream.is_empty());
+    }
+
+    #[test]
+    fn html_to_text_stream_mixed_cjk_ascii_content() {
+        let map = AHashMap::new();
+        let html = "<p>Hello 你好 World 世界</p><p>Mixed 混合 Content 内容</p>";
+        let stream = html_to_text_stream(html, &map);
+        assert!(!stream.is_empty());
     }
 }

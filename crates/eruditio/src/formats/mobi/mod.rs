@@ -1572,13 +1572,16 @@ fn extract_body_text_snippet(html: &str) -> Option<String> {
 /// Truncates a title to a maximum number of characters, breaking at a word boundary.
 /// Appends "..." if truncated.
 fn truncate_title(s: &str, max_chars: usize) -> String {
-    if s.len() <= max_chars {
-        return s.to_string();
-    }
-    // Find last space before the limit.
-    let truncated = &s[..max_chars];
+    // Find the byte offset at the max_chars-th character boundary.
+    // Returns None when the string has <= max_chars characters.
+    let byte_limit = match s.char_indices().nth(max_chars).map(|(i, _)| i) {
+        Some(b) => b,
+        None => return s.to_string(),
+    };
+    let truncated = &s[..byte_limit];
+    // Break at the last space if it's not too early in the string.
     if let Some(last_space) = truncated.rfind(' ')
-        && last_space > max_chars / 3
+        && last_space > byte_limit / 3
     {
         return format!("{}...", &s[..last_space]);
     }
@@ -2533,6 +2536,75 @@ mod tests {
         let result = truncate_title(long, 40);
         assert!(result.len() <= 43); // 40 + "..."
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_title_cjk_does_not_panic() {
+        // 60 chars limit on a string of 3-byte CJK characters must not split mid-char.
+        let cjk = "目录 科普袖珍馆：昆虫记 科普袖珍馆：爱因斯坦自述 科普袖珍馆：趣味物理学 科普袖珍馆：生命是什么 科普袖珍馆：达尔文笔记 科普袖珍馆：十万个为什么";
+        let result = truncate_title(cjk, 60);
+        assert!(result.ends_with("..."));
+        assert!(result.chars().count() <= 63); // 60 + "..."
+    }
+
+    #[test]
+    fn truncate_title_empty_string() {
+        assert_eq!(truncate_title("", 60), "");
+    }
+
+    #[test]
+    fn truncate_title_exactly_at_limit() {
+        // Exactly 60 CJK chars — should NOT be truncated.
+        let s: String = "字".repeat(60);
+        assert_eq!(truncate_title(&s, 60), s);
+    }
+
+    #[test]
+    fn truncate_title_one_over_limit() {
+        // 61 CJK chars — truncated to 60 + "...".
+        let s: String = "字".repeat(61);
+        let result = truncate_title(&s, 60);
+        assert!(result.ends_with("..."));
+        // No spaces, so it truncates at char boundary directly.
+        assert_eq!(result.chars().count(), 63); // 60 + "..."
+    }
+
+    #[test]
+    fn truncate_title_emoji_4byte() {
+        // 4-byte emoji characters should not cause panics.
+        let s = "🎉🎊🎈🎁🎂🎃🎄🎅🎆🎇🧨✨🎋🎍🎎🎏🎐🎑🎒🎓🎖🎗🎘🎙🎚🎛🎞🎟🎠🎡🎢🎣🎤🎥🎦🎧🎨🎩🎪🎫🎬🎭🎮🎯🎰🎱🎲🎳🎴🎵🎶🎷🎸🎹🎺🎻🎼🎽🎾🎿🏀";
+        let result = truncate_title(s, 60);
+        assert!(result.ends_with("..."));
+        assert!(result.chars().count() <= 63);
+    }
+
+    #[test]
+    fn truncate_title_mixed_ascii_cjk() {
+        let s = "Hello 你好世界 World 再见朋友 Goodbye 晚安大家";
+        let result = truncate_title(s, 10);
+        assert!(result.ends_with("..."));
+        // Should break at a word boundary (space).
+        assert!(result.chars().count() <= 13);
+    }
+
+    #[test]
+    fn truncate_title_pure_cjk_no_spaces() {
+        // No word boundary to break at.
+        let s: String = "测试中文标题无空格字符串".to_string();
+        let result = truncate_title(&s, 5);
+        assert_eq!(result, "测试中文标...");
+    }
+
+    #[test]
+    fn truncate_title_max_chars_zero() {
+        let result = truncate_title("Hello", 0);
+        assert_eq!(result, "...");
+    }
+
+    #[test]
+    fn truncate_title_max_chars_one() {
+        let result = truncate_title("Hello World", 1);
+        assert_eq!(result, "H...");
     }
 
     // --- split_kf8_content no generic "Part N" labels ---

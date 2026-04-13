@@ -211,8 +211,16 @@ impl FormatWriter for RbWriter {
         // Image entries (raw, flag=0).
         for (href, img_data) in &images {
             let name = href.rsplit('/').next().unwrap_or(href);
-            // Truncate name to 31 chars max.
-            let name = if name.len() > 31 { &name[..31] } else { name };
+            // Truncate name to 31 bytes max, respecting UTF-8 char boundaries.
+            let name = if name.len() > 31 {
+                let mut end = 31;
+                while end > 0 && !name.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &name[..end]
+            } else {
+                name
+            };
             entries.push(RbEntry {
                 name: name.to_string(),
                 data: img_data.to_vec(),
@@ -758,5 +766,95 @@ mod tests {
             .map(|c| c.content.clone())
             .collect();
         assert!(content.contains("Hello RocketBook!"));
+    }
+
+    #[test]
+    fn rb_writer_cjk_image_name_does_not_panic() {
+        use crate::domain::book::Chapter;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("CJK Test".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch".into()),
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        // 11 CJK chars × 3 bytes = 33 bytes — exceeds the 31-byte RB name limit.
+        book.add_resource(
+            "img1",
+            "图片文件名称测试长度超限制.png",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
+        let mut output = Vec::new();
+        RbWriter::new().write_book(&book, &mut output).unwrap();
+    }
+
+    #[test]
+    fn rb_writer_exactly_31_bytes_no_truncation() {
+        use crate::domain::book::Chapter;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Test".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch".into()),
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        // Exactly 31 ASCII bytes — no truncation needed.
+        book.add_resource(
+            "img1",
+            "1234567890123456789012345678901",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
+        let mut output = Vec::new();
+        RbWriter::new().write_book(&book, &mut output).unwrap();
+    }
+
+    #[test]
+    fn rb_writer_emoji_filename_does_not_panic() {
+        use crate::domain::book::Chapter;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Emoji".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch".into()),
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        // 4-byte emoji: 8 emojis × 4 bytes = 32 bytes, exceeds 31.
+        book.add_resource(
+            "img1",
+            "🎉🎊🎈🎁🎂🎃🎄🎅",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
+        let mut output = Vec::new();
+        RbWriter::new().write_book(&book, &mut output).unwrap();
+    }
+
+    #[test]
+    fn rb_writer_mixed_ascii_cjk_boundary() {
+        use crate::domain::book::Chapter;
+
+        let mut book = Book::new();
+        book.metadata.title = Some("Mixed".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch".into()),
+            content: "<p>Content</p>".into(),
+            id: Some("ch1".into()),
+        });
+        // "abc" (3) + "中文" (6) + "def" (3) + "日本語" (9) + "ghi" (3) + "韩国" (6) = 30 bytes
+        // + one more byte "x" = 31 bytes exactly
+        // + "y" = 32 bytes, forces truncation mid-potential char
+        book.add_resource(
+            "img1",
+            "abc中文def日本語ghi韩国xy",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
+        let mut output = Vec::new();
+        RbWriter::new().write_book(&book, &mut output).unwrap();
     }
 }

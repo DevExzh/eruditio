@@ -104,7 +104,11 @@ fn html_to_markdown(html: &str, md: &mut String) {
             // all equality/prefix comparisons are against short patterns.
             let tag_bytes = raw_tag.as_bytes();
             let mut lower_buf = [0u8; 128];
-            let lower_len = tag_bytes.len().min(128);
+            let mut lower_len = tag_bytes.len().min(128);
+            // Ensure truncation doesn't split a multi-byte UTF-8 character.
+            while lower_len > 0 && !raw_tag.is_char_boundary(lower_len) {
+                lower_len -= 1;
+            }
             for i in 0..lower_len {
                 lower_buf[i] = tag_bytes[i].to_ascii_lowercase();
             }
@@ -335,14 +339,14 @@ fn decode_md_entity(html: &str, pos: usize) -> (char, usize) {
         }
     }
     if rest.starts_with("&#x") || rest.starts_with("&#X") {
-        if let Some(semi) = rest[..rest.len().min(12)].find(';')
+        if let Some(semi) = rest.find(';').filter(|&s| s < 12)
             && let Ok(code) = u32::from_str_radix(&rest[3..semi], 16)
             && let Some(ch) = char::from_u32(code)
         {
             return (ch, semi + 1);
         }
     } else if rest.starts_with("&#")
-        && let Some(semi) = rest[..rest.len().min(12)].find(';')
+        && let Some(semi) = rest.find(';').filter(|&s| s < 12)
         && let Ok(code) = rest[2..semi].parse::<u32>()
         && let Some(ch) = char::from_u32(code)
     {
@@ -441,5 +445,81 @@ mod tests {
         let mut md = String::new();
         html_to_markdown("<pre><code>fn main() {}</code></pre>", &mut md);
         assert!(md.contains("```\nfn main() {}\n```"));
+    }
+
+    #[test]
+    fn html_to_markdown_cjk_long_tag_does_not_panic() {
+        // Build a fake tag that is > 128 bytes with multi-byte CJK attributes.
+        // This tests that the stack-based tag lowering doesn't split mid-char.
+        let attr = "数".repeat(50); // 50 × 3 bytes = 150 bytes of CJK
+        let html = format!("<div data-x=\"{}\">内容</div>", attr);
+        let mut md = String::new();
+        html_to_markdown(&html, &mut md);
+        assert!(md.contains("内容"));
+    }
+
+    #[test]
+    fn html_to_markdown_emoji_in_tag_attrs() {
+        // 4-byte emoji characters in attribute values that push tag > 128 bytes.
+        let attr = "🎉".repeat(40); // 40 × 4 bytes = 160 bytes
+        let html = format!("<div data-emoji=\"{}\">Content</div>", attr);
+        let mut md = String::new();
+        html_to_markdown(&html, &mut md);
+        assert!(md.contains("Content"));
+    }
+
+    #[test]
+    fn html_to_markdown_2byte_chars_at_boundary() {
+        // 2-byte Cyrillic characters: ensure boundary calculation is correct.
+        let attr = "ж".repeat(70); // 70 × 2 bytes = 140 bytes > 128
+        let html = format!("<div data-ru=\"{}\">Текст</div>", attr);
+        let mut md = String::new();
+        html_to_markdown(&html, &mut md);
+        assert!(md.contains("Текст"));
+    }
+
+    #[test]
+    fn html_to_markdown_cjk_heading() {
+        let html = "<h1>中文标题</h1><p>正文内容</p>";
+        let mut md = String::new();
+        html_to_markdown(html, &mut md);
+        assert!(md.contains("# 中文标题"));
+        assert!(md.contains("正文内容"));
+    }
+
+    #[test]
+    fn html_to_markdown_cjk_entities() {
+        let mut md = String::new();
+        html_to_markdown("<p>&#x4F60;&#x597D;</p>", &mut md);
+        assert!(md.contains("你好"));
+    }
+
+    #[test]
+    fn html_to_markdown_cjk_link() {
+        let html = r#"<p><a href="https://example.com">链接文字</a></p>"#;
+        let mut md = String::new();
+        html_to_markdown(html, &mut md);
+        assert!(md.contains("[链接文字](https://example.com)"));
+    }
+
+    #[test]
+    fn html_to_markdown_cjk_list_items() {
+        let html = "<ul><li>第一项</li><li>第二项</li><li>第三项</li></ul>";
+        let mut md = String::new();
+        html_to_markdown(html, &mut md);
+        assert!(md.contains("- 第一项"));
+        assert!(md.contains("- 第二项"));
+        assert!(md.contains("- 第三项"));
+    }
+
+    #[test]
+    fn html_to_markdown_malformed_entity_with_cjk() {
+        // Malformed entity followed by CJK — previously could panic
+        // because rest[..12] might land mid-character.
+        let html = "<p>&#x日本語テスト;</p>";
+        let mut md = String::new();
+        html_to_markdown(html, &mut md);
+        // Should not panic; the malformed entity is treated as literal '&'.
+        assert!(!md.is_empty());
     }
 }
