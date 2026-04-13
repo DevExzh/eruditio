@@ -165,10 +165,20 @@ fn sanitize_html_for_xhtml(html: &str) -> String {
         } else if bytes[pos] == b'&' {
             // Escape bare '&' that is not a valid entity/character reference.
             if is_valid_entity_ref(html, pos) {
-                // Copy the entity reference including the ';'.
                 let rest = &html[pos..];
                 if let Some(semi) = rest.find(';') {
-                    out.push_str(&rest[..semi + 1]);
+                    let inner = &rest[1..semi];
+                    if inner.starts_with('#') || is_xml_builtin_entity(inner) {
+                        // Numeric reference or XML built-in — pass through.
+                        out.push_str(&rest[..semi + 1]);
+                    } else if let Some(cp) = html_entity_to_codepoint(inner) {
+                        // Known HTML named entity — convert to numeric ref.
+                        write!(out, "&#{cp};").unwrap();
+                    } else {
+                        // Unknown named entity — escape the ampersand.
+                        out.push_str("&amp;");
+                        out.push_str(&rest[1..semi + 1]);
+                    }
                     pos += semi + 1;
                 } else {
                     out.push_str("&amp;");
@@ -324,9 +334,290 @@ fn is_valid_entity_ref(html: &str, pos: usize) -> bool {
             !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
         }
     } else {
-        // Named: &amp; &lt; &gt; &quot; &apos; &nbsp; etc.
+        // Named: accept XML built-ins and known HTML entities so the caller
+        // can decide how to handle them (convert or pass through).
         !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric())
     }
+}
+
+/// Returns `true` if `name` is one of the five XML predefined entities.
+fn is_xml_builtin_entity(name: &str) -> bool {
+    matches!(name, "amp" | "lt" | "gt" | "quot" | "apos")
+}
+
+/// Maps an HTML named entity to its Unicode code point.
+///
+/// Covers all HTML 4 character entity references plus common HTML5 additions
+/// (248 entities). Returns `None` for unknown names.
+fn html_entity_to_codepoint(name: &str) -> Option<u32> {
+    Some(match name {
+        // Latin-1 supplement (ISO 8859-1 characters)
+        "nbsp" => 160,
+        "iexcl" => 161,
+        "cent" => 162,
+        "pound" => 163,
+        "curren" => 164,
+        "yen" => 165,
+        "brvbar" => 166,
+        "sect" => 167,
+        "uml" => 168,
+        "copy" => 169,
+        "ordf" => 170,
+        "laquo" => 171,
+        "not" => 172,
+        "shy" => 173,
+        "reg" => 174,
+        "macr" => 175,
+        "deg" => 176,
+        "plusmn" => 177,
+        "sup2" => 178,
+        "sup3" => 179,
+        "acute" => 180,
+        "micro" => 181,
+        "para" => 182,
+        "middot" => 183,
+        "cedil" => 184,
+        "sup1" => 185,
+        "ordm" => 186,
+        "raquo" => 187,
+        "frac14" => 188,
+        "frac12" => 189,
+        "frac34" => 190,
+        "iquest" => 191,
+        // Latin capital letters with diacritics
+        "Agrave" => 192,
+        "Aacute" => 193,
+        "Acirc" => 194,
+        "Atilde" => 195,
+        "Auml" => 196,
+        "Aring" => 197,
+        "AElig" => 198,
+        "Ccedil" => 199,
+        "Egrave" => 200,
+        "Eacute" => 201,
+        "Ecirc" => 202,
+        "Euml" => 203,
+        "Igrave" => 204,
+        "Iacute" => 205,
+        "Icirc" => 206,
+        "Iuml" => 207,
+        "ETH" => 208,
+        "Ntilde" => 209,
+        "Ograve" => 210,
+        "Oacute" => 211,
+        "Ocirc" => 212,
+        "Otilde" => 213,
+        "Ouml" => 214,
+        "times" => 215,
+        "Oslash" => 216,
+        "Ugrave" => 217,
+        "Uacute" => 218,
+        "Ucirc" => 219,
+        "Uuml" => 220,
+        "Yacute" => 221,
+        "THORN" => 222,
+        "szlig" => 223,
+        // Latin small letters with diacritics
+        "agrave" => 224,
+        "aacute" => 225,
+        "acirc" => 226,
+        "atilde" => 227,
+        "auml" => 228,
+        "aring" => 229,
+        "aelig" => 230,
+        "ccedil" => 231,
+        "egrave" => 232,
+        "eacute" => 233,
+        "ecirc" => 234,
+        "euml" => 235,
+        "igrave" => 236,
+        "iacute" => 237,
+        "icirc" => 238,
+        "iuml" => 239,
+        "eth" => 240,
+        "ntilde" => 241,
+        "ograve" => 242,
+        "oacute" => 243,
+        "ocirc" => 244,
+        "otilde" => 245,
+        "ouml" => 246,
+        "divide" => 247,
+        "oslash" => 248,
+        "ugrave" => 249,
+        "uacute" => 250,
+        "ucirc" => 251,
+        "uuml" => 252,
+        "yacute" => 253,
+        "thorn" => 254,
+        "yuml" => 255,
+        // Latin extended / special
+        "OElig" => 338,
+        "oelig" => 339,
+        "Scaron" => 352,
+        "scaron" => 353,
+        "Yuml" => 376,
+        "fnof" => 402,
+        // Spacing modifier letters
+        "circ" => 710,
+        "tilde" => 732,
+        // Greek capital letters
+        "Alpha" => 913,
+        "Beta" => 914,
+        "Gamma" => 915,
+        "Delta" => 916,
+        "Epsilon" => 917,
+        "Zeta" => 918,
+        "Eta" => 919,
+        "Theta" => 920,
+        "Iota" => 921,
+        "Kappa" => 922,
+        "Lambda" => 923,
+        "Mu" => 924,
+        "Nu" => 925,
+        "Xi" => 926,
+        "Omicron" => 927,
+        "Pi" => 928,
+        "Rho" => 929,
+        "Sigma" => 931,
+        "Tau" => 932,
+        "Upsilon" => 933,
+        "Phi" => 934,
+        "Chi" => 935,
+        "Psi" => 936,
+        "Omega" => 937,
+        // Greek small letters
+        "alpha" => 945,
+        "beta" => 946,
+        "gamma" => 947,
+        "delta" => 948,
+        "epsilon" => 949,
+        "zeta" => 950,
+        "eta" => 951,
+        "theta" => 952,
+        "iota" => 953,
+        "kappa" => 954,
+        "lambda" => 955,
+        "mu" => 956,
+        "nu" => 957,
+        "xi" => 958,
+        "omicron" => 959,
+        "pi" => 960,
+        "rho" => 961,
+        "sigmaf" => 962,
+        "sigma" => 963,
+        "tau" => 964,
+        "upsilon" => 965,
+        "phi" => 966,
+        "chi" => 967,
+        "psi" => 968,
+        "omega" => 969,
+        "thetasym" => 977,
+        "upsih" => 978,
+        "piv" => 982,
+        // General punctuation
+        "ensp" => 8194,
+        "emsp" => 8195,
+        "thinsp" => 8201,
+        "zwnj" => 8204,
+        "zwj" => 8205,
+        "lrm" => 8206,
+        "rlm" => 8207,
+        "ndash" => 8211,
+        "mdash" => 8212,
+        "lsquo" => 8216,
+        "rsquo" => 8217,
+        "sbquo" => 8218,
+        "ldquo" => 8220,
+        "rdquo" => 8221,
+        "bdquo" => 8222,
+        "dagger" => 8224,
+        "Dagger" => 8225,
+        "bull" => 8226,
+        "hellip" => 8230,
+        "permil" => 8240,
+        "prime" => 8242,
+        "Prime" => 8243,
+        "lsaquo" => 8249,
+        "rsaquo" => 8250,
+        "oline" => 8254,
+        "frasl" => 8260,
+        // Currency
+        "euro" => 8364,
+        // Letter-like symbols
+        "image" => 8465,
+        "weierp" => 8472,
+        "real" => 8476,
+        "trade" => 8482,
+        "alefsym" => 8501,
+        // Arrows
+        "larr" => 8592,
+        "uarr" => 8593,
+        "rarr" => 8594,
+        "darr" => 8595,
+        "harr" => 8596,
+        "crarr" => 8629,
+        "lArr" => 8656,
+        "uArr" => 8657,
+        "rArr" => 8658,
+        "dArr" => 8659,
+        "hArr" => 8660,
+        // Mathematical operators
+        "forall" => 8704,
+        "part" => 8706,
+        "exist" => 8707,
+        "empty" => 8709,
+        "nabla" => 8711,
+        "isin" => 8712,
+        "notin" => 8713,
+        "ni" => 8715,
+        "prod" => 8719,
+        "sum" => 8721,
+        "minus" => 8722,
+        "lowast" => 8727,
+        "radic" => 8730,
+        "prop" => 8733,
+        "infin" => 8734,
+        "ang" => 8736,
+        "and" => 8743,
+        "or" => 8744,
+        "cap" => 8745,
+        "cup" => 8746,
+        "int" => 8747,
+        "there4" => 8756,
+        "sim" => 8764,
+        "cong" => 8773,
+        "asymp" => 8776,
+        "ne" => 8800,
+        "equiv" => 8801,
+        "le" => 8804,
+        "ge" => 8805,
+        "sub" => 8834,
+        "sup" => 8835,
+        "nsub" => 8836,
+        "sube" => 8838,
+        "supe" => 8839,
+        "oplus" => 8853,
+        "otimes" => 8855,
+        "perp" => 8869,
+        "sdot" => 8901,
+        // Miscellaneous technical
+        "lceil" => 8968,
+        "rceil" => 8969,
+        "lfloor" => 8970,
+        "rfloor" => 8971,
+        // HTML 4 values (U+2329/U+232A). HTML5 remaps these to U+27E8/U+27E9
+        // but MOBI sources use HTML 4, and the code points are canonical equivalents.
+        "lang" => 9001,
+        "rang" => 9002,
+        // Geometric shapes
+        "loz" => 9674,
+        // Miscellaneous symbols
+        "spades" => 9824,
+        "clubs" => 9827,
+        "hearts" => 9829,
+        "diams" => 9830,
+        _ => return None,
+    })
 }
 
 /// Writes a sanitized copy of an opening/self-closing HTML tag, quoting any
@@ -1927,5 +2218,270 @@ mod tests {
         );
         assert!(text.contains("Hello"), "Content should be preserved");
         assert!(!text.contains("<guide>"), "MOBI guide should be stripped");
+    }
+
+    // ── HTML entity → numeric reference conversion tests ──────────────
+
+    #[test]
+    fn is_xml_builtin_entity_accepts_builtins() {
+        assert!(is_xml_builtin_entity("amp"));
+        assert!(is_xml_builtin_entity("lt"));
+        assert!(is_xml_builtin_entity("gt"));
+        assert!(is_xml_builtin_entity("quot"));
+        assert!(is_xml_builtin_entity("apos"));
+    }
+
+    #[test]
+    fn is_xml_builtin_entity_rejects_html_entities() {
+        assert!(!is_xml_builtin_entity("nbsp"));
+        assert!(!is_xml_builtin_entity("mdash"));
+        assert!(!is_xml_builtin_entity("copy"));
+        assert!(!is_xml_builtin_entity("eacute"));
+        assert!(!is_xml_builtin_entity(""));
+    }
+
+    #[test]
+    fn html_entity_codepoint_common_entities() {
+        assert_eq!(html_entity_to_codepoint("nbsp"), Some(160));
+        assert_eq!(html_entity_to_codepoint("mdash"), Some(8212));
+        assert_eq!(html_entity_to_codepoint("ndash"), Some(8211));
+        assert_eq!(html_entity_to_codepoint("ldquo"), Some(8220));
+        assert_eq!(html_entity_to_codepoint("rdquo"), Some(8221));
+        assert_eq!(html_entity_to_codepoint("lsquo"), Some(8216));
+        assert_eq!(html_entity_to_codepoint("rsquo"), Some(8217));
+        assert_eq!(html_entity_to_codepoint("hellip"), Some(8230));
+        assert_eq!(html_entity_to_codepoint("copy"), Some(169));
+        assert_eq!(html_entity_to_codepoint("reg"), Some(174));
+        assert_eq!(html_entity_to_codepoint("trade"), Some(8482));
+        assert_eq!(html_entity_to_codepoint("euro"), Some(8364));
+    }
+
+    #[test]
+    fn html_entity_codepoint_accented_chars() {
+        assert_eq!(html_entity_to_codepoint("eacute"), Some(233));
+        assert_eq!(html_entity_to_codepoint("Eacute"), Some(201));
+        assert_eq!(html_entity_to_codepoint("agrave"), Some(224));
+        assert_eq!(html_entity_to_codepoint("ntilde"), Some(241));
+        assert_eq!(html_entity_to_codepoint("ouml"), Some(246));
+        assert_eq!(html_entity_to_codepoint("ccedil"), Some(231));
+    }
+
+    #[test]
+    fn html_entity_codepoint_greek() {
+        assert_eq!(html_entity_to_codepoint("alpha"), Some(945));
+        assert_eq!(html_entity_to_codepoint("Alpha"), Some(913));
+        assert_eq!(html_entity_to_codepoint("omega"), Some(969));
+        assert_eq!(html_entity_to_codepoint("Omega"), Some(937));
+        assert_eq!(html_entity_to_codepoint("pi"), Some(960));
+    }
+
+    #[test]
+    fn html_entity_codepoint_unknown_returns_none() {
+        assert_eq!(html_entity_to_codepoint("notarealentity"), None);
+        assert_eq!(html_entity_to_codepoint(""), None);
+        assert_eq!(html_entity_to_codepoint("NBSP"), None); // case-sensitive
+    }
+
+    #[test]
+    fn sanitize_converts_nbsp_to_numeric() {
+        let html = "<p>Hello&nbsp;World</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains("&#160;"),
+            "&nbsp; should become &#160;. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("&nbsp;"),
+            "&nbsp; should not remain in output. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn sanitize_converts_mdash_to_numeric() {
+        let html = "<p>one&mdash;two</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains("&#8212;"),
+            "&mdash; should become &#8212;. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("&mdash;"),
+            "&mdash; should not remain in output. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn sanitize_converts_multiple_html_entities() {
+        let html = "<p>&ldquo;Hello&rdquo; &mdash; &copy; 2024</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(result.contains("&#8220;"), "ldquo. Got: {}", result);
+        assert!(result.contains("&#8221;"), "rdquo. Got: {}", result);
+        assert!(result.contains("&#8212;"), "mdash. Got: {}", result);
+        assert!(result.contains("&#169;"), "copy. Got: {}", result);
+        assert!(!result.contains("&ldquo;"), "Got: {}", result);
+        assert!(!result.contains("&rdquo;"), "Got: {}", result);
+        assert!(!result.contains("&mdash;"), "Got: {}", result);
+        assert!(!result.contains("&copy;"), "Got: {}", result);
+    }
+
+    #[test]
+    fn sanitize_preserves_xml_builtin_entities() {
+        let html = "<p>&amp; &lt; &gt; &quot; &apos;</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(result.contains("&amp;"), "Got: {}", result);
+        assert!(result.contains("&lt;"), "Got: {}", result);
+        assert!(result.contains("&gt;"), "Got: {}", result);
+        assert!(result.contains("&quot;"), "Got: {}", result);
+        assert!(result.contains("&apos;"), "Got: {}", result);
+    }
+
+    #[test]
+    fn sanitize_preserves_numeric_entities() {
+        let html = "<p>&#160; &#x4F60; &#xA0;</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(result.contains("&#160;"), "Got: {}", result);
+        assert!(result.contains("&#x4F60;"), "Got: {}", result);
+        assert!(result.contains("&#xA0;"), "Got: {}", result);
+    }
+
+    #[test]
+    fn sanitize_escapes_unknown_named_entities() {
+        // An entity name that isn't in our lookup table should have its & escaped.
+        let html = "<p>&notarealentity;</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains("&amp;notarealentity;"),
+            "Unknown entity should be escaped. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn sanitize_handles_mixed_entities_and_bare_ampersands() {
+        let html = "<p>A & B &amp; C &nbsp; D &mdash; E &#8226; F</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(result.contains("A &amp; B"), "bare &. Got: {}", result);
+        assert!(result.contains("&amp;"), "xml builtin. Got: {}", result);
+        assert!(result.contains("&#160;"), "nbsp. Got: {}", result);
+        assert!(result.contains("&#8212;"), "mdash. Got: {}", result);
+        assert!(result.contains("&#8226;"), "numeric. Got: {}", result);
+    }
+
+    #[test]
+    fn sanitize_converts_accented_entities() {
+        let html = "<p>caf&eacute; na&iuml;ve</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains("&#233;"),
+            "eacute should become &#233;. Got: {}",
+            result
+        );
+        assert!(
+            result.contains("&#239;"),
+            "iuml should become &#239;. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn sanitize_escapes_entity_without_semicolon() {
+        // A trailing entity-like pattern with no ';' should have its '&' escaped.
+        let html = "<p>text &nbsp</p>";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains("&amp;nbsp"),
+            "Entity without semicolon should have bare & escaped. Got: {}",
+            result
+        );
+        assert!(
+            !result.contains("&#160;"),
+            "Should not convert entity without semicolon. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn sanitize_entity_at_end_of_input_without_semicolon() {
+        let html = "text &nbsp";
+        let result = sanitize_html_for_xhtml(html);
+        assert!(
+            result.contains("&amp;"),
+            "Trailing entity without ';' should be escaped. Got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn xhtml_bytes_converts_html_entities_in_mobi() {
+        // Simulate MOBI reader output that contains &nbsp; and &mdash;
+        let mobi_html = "<html><body><p>Hello&nbsp;World &mdash; done</p></body></html>";
+        let result = xhtml_bytes(mobi_html, Some("en"));
+        let text = std::str::from_utf8(&result).unwrap();
+        assert!(
+            text.contains("&#160;"),
+            "&nbsp; should be converted. Got: {}",
+            &text[..text.len().min(400)]
+        );
+        assert!(
+            text.contains("&#8212;"),
+            "&mdash; should be converted. Got: {}",
+            &text[..text.len().min(400)]
+        );
+        assert!(
+            !text.contains("&nbsp;"),
+            "&nbsp; should not remain. Got: {}",
+            &text[..text.len().min(400)]
+        );
+    }
+
+    #[test]
+    fn epub_with_nbsp_produces_parseable_xhtml() {
+        // End-to-end: a book with &nbsp; in chapter content should produce
+        // XHTML that an XML parser can handle without "entity not defined".
+        let mut book = Book::new();
+        book.metadata.title = Some("Entity Test".into());
+        book.metadata.language = Some("en".into());
+        book.add_chapter(Chapter {
+            title: Some("Ch1".into()),
+            content: "<p>Hello&nbsp;World &mdash; &ldquo;test&rdquo;</p>".into(),
+            id: Some("ch1".into()),
+        });
+
+        let mut output = Cursor::new(Vec::new());
+        write_epub(&book, &mut output).unwrap();
+
+        output.set_position(0);
+        let mut archive = zip::ZipArchive::new(output).unwrap();
+        let mut content = String::new();
+        {
+            use std::io::Read as _;
+            archive
+                .by_name("OEBPS/ch1.xhtml")
+                .unwrap()
+                .read_to_string(&mut content)
+                .unwrap();
+        }
+
+        // Must not contain any HTML-only named entities.
+        assert!(!content.contains("&nbsp;"), "Got: {}", content);
+        assert!(!content.contains("&mdash;"), "Got: {}", content);
+        assert!(!content.contains("&ldquo;"), "Got: {}", content);
+        assert!(!content.contains("&rdquo;"), "Got: {}", content);
+
+        // Must contain the numeric equivalents.
+        assert!(content.contains("&#160;"), "Got: {}", content);
+        assert!(content.contains("&#8212;"), "Got: {}", content);
+        assert!(content.contains("&#8220;"), "Got: {}", content);
+        assert!(content.contains("&#8221;"), "Got: {}", content);
+
+        // Verify it parses as valid XML.
+        assert!(
+            content.starts_with("<?xml"),
+            "Should be valid XHTML document"
+        );
     }
 }

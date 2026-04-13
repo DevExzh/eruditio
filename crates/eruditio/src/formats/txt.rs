@@ -28,7 +28,7 @@ impl FormatReader for TxtReader {
             if trimmed.is_empty() {
                 blank_count += 1;
                 if blank_count == 2 {
-                    html_content.push_str("<p>&nbsp;</p>\n");
+                    html_content.push_str("<p>&#160;</p>\n");
                 }
             } else {
                 blank_count = 0;

@@ -1147,7 +1147,7 @@ fn process_phtml(data: &[u8], paragraph_offsets: &HashSet<usize>) -> String {
                 },
             }
         } else if c == 0xa0 {
-            html.push_str("&nbsp;");
+            html.push_str("&#160;");
         } else if c == b'<' {
             html.push_str("&lt;");
         } else if c == b'>' {
