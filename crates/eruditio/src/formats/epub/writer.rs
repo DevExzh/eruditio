@@ -58,10 +58,7 @@ fn extract_body_content(html: &str) -> &str {
         let mut found = None;
         for i in 0..len.saturating_sub(4) {
             if bytes[i] == b'<'
-                && bytes[i + 1].to_ascii_lowercase() == b'b'
-                && bytes[i + 2].to_ascii_lowercase() == b'o'
-                && bytes[i + 3].to_ascii_lowercase() == b'd'
-                && bytes[i + 4].to_ascii_lowercase() == b'y'
+                && bytes[i + 1..i + 5].eq_ignore_ascii_case(b"body")
             {
                 // Find the closing '>' of the <body> tag.
                 if let Some(gt) = html[i..].find('>') {
@@ -83,10 +80,7 @@ fn extract_body_content(html: &str) -> &str {
         for i in (0..len.saturating_sub(6)).rev() {
             if bytes[i] == b'<'
                 && bytes[i + 1] == b'/'
-                && bytes[i + 2].to_ascii_lowercase() == b'b'
-                && bytes[i + 3].to_ascii_lowercase() == b'o'
-                && bytes[i + 4].to_ascii_lowercase() == b'd'
-                && bytes[i + 5].to_ascii_lowercase() == b'y'
+                && bytes[i + 2..i + 6].eq_ignore_ascii_case(b"body")
             {
                 found = Some(i);
                 break;
@@ -107,6 +101,10 @@ fn extract_body_content(html: &str) -> &str {
 /// - Converts void elements to self-closing form (`<br>` → `<br/>`)
 /// - Quotes unquoted attribute values (`filepos=123` → `filepos="123"`)
 /// - Escapes bare `&` not part of valid entities
+///
+/// **Limitation:** Tag boundary detection uses a simple `>` scan and does not
+/// handle `>` characters inside quoted attribute values (e.g., `title="a > b"`).
+/// This is acceptable for MOBI output which does not produce such patterns.
 fn sanitize_html_for_xhtml(html: &str) -> String {
     let mut out = String::with_capacity(html.len() + 256);
     let bytes = html.as_bytes();
@@ -179,10 +177,26 @@ fn sanitize_html_for_xhtml(html: &str) -> String {
                 pos += 1;
             }
         } else {
-            // Copy non-tag, non-entity text as-is (including multi-byte UTF-8).
-            let ch = unsafe { html.get_unchecked(pos..) }.chars().next().unwrap();
-            out.push(ch);
-            pos += ch.len_utf8();
+            // Bulk-copy plain text until the next '<' or '&'.
+            // This avoids per-character decode/re-encode overhead, which is
+            // significant for CJK content (3-4 bytes per character).
+            match memchr::memchr2(b'<', b'&', &bytes[pos..]) {
+                Some(offset) if offset > 0 => {
+                    out.push_str(&html[pos..pos + offset]);
+                    pos += offset;
+                }
+                Some(_) => {
+                    // offset == 0 shouldn't happen (would be caught above),
+                    // but advance one char to avoid infinite loop.
+                    let ch = html[pos..].chars().next().unwrap();
+                    out.push(ch);
+                    pos += ch.len_utf8();
+                }
+                None => {
+                    out.push_str(&html[pos..]);
+                    break;
+                }
+            }
         }
     }
 
@@ -197,10 +211,7 @@ fn is_mobi_ns_tag(tag: &str) -> bool {
     }
     let start = if bytes[1] == b'/' { 2 } else { 1 };
     bytes.get(start..start + 4).is_some_and(|b| {
-        b[0].to_ascii_lowercase() == b'm'
-            && b[1].to_ascii_lowercase() == b'b'
-            && b[2].to_ascii_lowercase() == b'p'
-            && b[3] == b':'
+        b[..3].eq_ignore_ascii_case(b"mbp") && b[3] == b':'
     })
 }
 
@@ -253,7 +264,7 @@ fn is_void_element_tag(tag: &str) -> bool {
         2 => {
             let a = name[0].to_ascii_lowercase();
             let b = name[1].to_ascii_lowercase();
-            (a == b'b' && b == b'r') || (a == b'h' && b == b'r')
+            (a == b'b' || a == b'h') && b == b'r'
         }
         3 => {
             let mut l = [0u8; 3];
@@ -292,17 +303,16 @@ fn is_valid_entity_ref(html: &str, pos: usize) -> bool {
         _ => return false,
     };
     let inner = &rest[1..semi];
-    if inner.starts_with('#') {
+    if let Some(digits) = inner.strip_prefix('#') {
         // Numeric: &#123; or &#xAB;
-        let digits = &inner[1..];
-        if digits.starts_with('x') || digits.starts_with('X') {
-            digits[1..].chars().all(|c| c.is_ascii_hexdigit())
+        if let Some(hex) = digits.strip_prefix('x').or_else(|| digits.strip_prefix('X')) {
+            !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit())
         } else {
-            digits.chars().all(|c| c.is_ascii_digit())
+            !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
         }
     } else {
         // Named: &amp; &lt; &gt; &quot; &apos; &nbsp; etc.
-        inner.chars().all(|c| c.is_ascii_alphanumeric())
+        !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric())
     }
 }
 
@@ -331,26 +341,28 @@ fn sanitize_tag_attrs(out: &mut String, tag: &str) {
             if bytes[i] == b'"' || bytes[i] == b'\'' {
                 // Already quoted — copy through to the matching close quote.
                 let quote = bytes[i];
-                out.push(bytes[i] as char);
+                let start = i;
                 i += 1;
                 while i < len && bytes[i] != quote {
-                    out.push(bytes[i] as char);
                     i += 1;
                 }
                 if i < len {
-                    out.push(bytes[i] as char); // closing quote
-                    i += 1;
+                    i += 1; // include closing quote
                 }
+                out.push_str(&tag[start..i]);
             } else {
                 // Unquoted value — collect until space, '>', or '/'.
                 out.push('"');
+                let start = i;
                 while i < len && bytes[i] != b' ' && bytes[i] != b'>' && bytes[i] != b'/' {
-                    out.push(bytes[i] as char);
                     i += 1;
                 }
+                out.push_str(&tag[start..i]);
                 out.push('"');
             }
         } else {
+            // Copy byte-by-byte for ASCII tag syntax (tag names, spaces, etc.)
+            // Attribute values are handled above via push_str to preserve UTF-8.
             out.push(bytes[i] as char);
             i += 1;
         }
@@ -391,7 +403,7 @@ fn wrap_xhtml(content: &str, lang: Option<&str>) -> String {
     doc.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"");
     if let Some(l) = lang {
         doc.push_str(" xml:lang=\"");
-        doc.push_str(l);
+        push_escape_xml(&mut doc, l);
         doc.push('"');
     }
     doc.push_str(">\n<head>\n<title></title>\n</head>\n<body>\n");
