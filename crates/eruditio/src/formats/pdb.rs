@@ -8,16 +8,18 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use std::fmt::Write as FmtWrite;
 use crate::formats::common::compression::palmdoc;
 use crate::formats::common::palm_db::{
     PdbFile, build_pdb_header, read_u16_be, read_u32_be, write_u16_be, write_u32_be,
 };
-use crate::formats::common::text_utils::{decode_cp1252, push_escape_html, strip_tags_and_unescape};
+use crate::formats::common::text_utils::{
+    decode_cp1252, push_escape_html, strip_tags_and_unescape,
+};
 use flate2::Compression;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use std::collections::HashSet;
+use std::fmt::Write as FmtWrite;
 use std::io::{Read, Write};
 
 /// PDB ebook format reader.
@@ -60,7 +62,8 @@ impl FormatWriter for PdbWriter {
         let max_record_size = 4096usize;
 
         // Split into records and compress (reuse compressor across records).
-        let mut records: Vec<Vec<u8>> = Vec::with_capacity((text_bytes.len() / max_record_size) + 1);
+        let mut records: Vec<Vec<u8>> =
+            Vec::with_capacity((text_bytes.len() / max_record_size) + 1);
         let mut compressor = palmdoc::PalmDocCompressor::new();
         let mut offset = 0;
         while offset < text_bytes.len() {
@@ -133,7 +136,8 @@ impl FormatWriter for PdbZtxtWriter {
         let max_record_size = 8192usize;
 
         // Split into records and compress with zlib.
-        let mut records: Vec<Vec<u8>> = Vec::with_capacity((text_bytes.len() / max_record_size) + 1);
+        let mut records: Vec<Vec<u8>> =
+            Vec::with_capacity((text_bytes.len() / max_record_size) + 1);
         let mut offset = 0;
         while offset < text_bytes.len() {
             let end = (offset + max_record_size).min(text_bytes.len());
@@ -201,7 +205,8 @@ impl FormatWriter for PdbEreaderWriter {
         let max_page_size = 4096usize;
 
         // Split PML into pages and compress with zlib (compression type 10).
-        let mut text_records: Vec<Vec<u8>> = Vec::with_capacity((pml_bytes.len() / max_page_size) + 1);
+        let mut text_records: Vec<Vec<u8>> =
+            Vec::with_capacity((pml_bytes.len() / max_page_size) + 1);
         let mut offset = 0;
         while offset < pml_bytes.len() {
             let end = (offset + max_page_size).min(pml_bytes.len());
@@ -661,12 +666,7 @@ fn read_ereader(pdb: &PdbFile) -> Result<Book> {
             let mut href = String::with_capacity(7 + name.len());
             href.push_str("images/");
             href.push_str(&name);
-            book.add_resource(
-                id,
-                href,
-                img_data.to_vec(),
-                media_type,
-            );
+            book.add_resource(id, href, img_data.to_vec(), media_type);
         }
     }
 

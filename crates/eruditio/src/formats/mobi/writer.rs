@@ -17,7 +17,6 @@ use crate::formats::common::palm_db::{build_pdb_header, write_u16_be, write_u32_
 
 use image::ImageEncoder;
 
-
 use super::exth::{
     self, EXTH_ASIN, EXTH_AUTHOR, EXTH_CDE_TYPE, EXTH_COVER_OFFSET, EXTH_CREATOR_BUILD,
     EXTH_CREATOR_MAJOR, EXTH_CREATOR_MINOR, EXTH_CREATOR_SOFTWARE, EXTH_DESCRIPTION,
@@ -189,7 +188,9 @@ fn build_ncx_indx(chapters: &[(Cow<'_, str>, usize)]) -> (Vec<u8>, Vec<u8>, Vec<
             loop {
                 buf[j] = b'0' + (n % 10) as u8;
                 n /= 10;
-                if j == 0 { break; }
+                if j == 0 {
+                    break;
+                }
                 j -= 1;
             }
             buf
@@ -342,12 +343,7 @@ fn generate_thumbnail(image_data: &[u8]) -> Option<Vec<u8>> {
     let encoder =
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_buf, THUMBNAIL_JPEG_QUALITY);
     encoder
-        .write_image(
-            &dst_buf,
-            new_w,
-            new_h,
-            image::ExtendedColorType::Rgb8,
-        )
+        .write_image(&dst_buf, new_w, new_h, image::ExtendedColorType::Rgb8)
         .ok()?;
     Some(jpeg_buf.into_inner())
 }
@@ -1046,8 +1042,7 @@ fn book_to_mobi_html<'a>(book: &'a Book) -> (String, Vec<(Cow<'a, str>, usize)>)
 
     // Build a map: spine manifest href -> spine index in chapter_info.
     // This lets us resolve TOC entry hrefs to the correct spine item.
-    let mut href_to_chapter_info_idx: AHashMap<&str, usize> =
-        AHashMap::new();
+    let mut href_to_chapter_info_idx: AHashMap<&str, usize> = AHashMap::new();
     for (info_idx, (spine_idx, _)) in chapter_info.iter().enumerate() {
         let spine_item = &book.spine.items[*spine_idx];
         if let Some(manifest_item) = book.manifest.get(&spine_item.manifest_id) {
@@ -1057,19 +1052,13 @@ fn book_to_mobi_html<'a>(book: &'a Book) -> (String, Vec<(Cow<'a, str>, usize)>)
 
     // Group TOC entries by their base href (spine item) to identify which
     // fragment IDs need pagebreaks within each chapter.
-    let mut fragments_by_chapter: AHashMap<
-        &str,
-        AHashSet<&str>,
-    > = AHashMap::new();
+    let mut fragments_by_chapter: AHashMap<&str, AHashSet<&str>> = AHashMap::new();
     for (_depth, _title, href) in &all_toc_entries {
         if let Some(hash_pos) = href.find('#') {
             let base = &href[..hash_pos];
             let frag = &href[hash_pos + 1..];
             if !frag.is_empty() {
-                fragments_by_chapter
-                    .entry(base)
-                    .or_default()
-                    .insert(frag);
+                fragments_by_chapter.entry(base).or_default().insert(frag);
             }
         }
     }
@@ -1140,8 +1129,7 @@ fn book_to_mobi_html<'a>(book: &'a Book) -> (String, Vec<(Cow<'a, str>, usize)>)
     let mut first_chapter_offset: Option<usize> = None;
 
     // Track fragment offsets within serialized content: "base_href#frag" -> byte_offset.
-    let mut fragment_offsets: AHashMap<String, usize> =
-        AHashMap::new();
+    let mut fragment_offsets: AHashMap<String, usize> = AHashMap::new();
 
     let empty_frag_set = AHashSet::new();
     for (content_idx, (spine_idx, ch_title)) in chapter_info.iter().enumerate() {
@@ -1344,15 +1332,11 @@ impl<'a> TocTitleMap<'a> {
     fn collect(&mut self, items: &'a [crate::domain::toc::TocItem]) {
         for item in items {
             // Exact href -> title (first match wins)
-            self.map
-                .entry(&item.href)
-                .or_insert(&item.title);
+            self.map.entry(&item.href).or_insert(&item.title);
             // Base href (fragment stripped) -> title
             let base = item.href.split('#').next().unwrap_or(&item.href);
             if !base.is_empty() && base != item.href {
-                self.map
-                    .entry(base)
-                    .or_insert(&item.title);
+                self.map.entry(base).or_insert(&item.title);
             }
             self.flat.push((&item.href, &item.title));
             self.collect(&item.children);
@@ -1391,8 +1375,8 @@ fn push_html_escaped(buf: &mut String, text: &str) {
 fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
     let bytes = content.as_bytes();
     // Fast path: extract <body> inner content as a borrowed slice — zero allocation.
-    if let Some(body_start) = memchr::memmem::find(bytes, b"<body")
-        .or_else(|| memchr::memmem::find(bytes, b"<BODY"))
+    if let Some(body_start) =
+        memchr::memmem::find(bytes, b"<body").or_else(|| memchr::memmem::find(bytes, b"<BODY"))
         && let Some(gt) = memchr::memchr(b'>', &bytes[body_start..])
     {
         let inner_start = body_start + gt + 1;
@@ -2580,11 +2564,7 @@ mod tests {
         // Read back and extract the decompressed text.
         let mut cursor = std::io::Cursor::new(mobi_data);
         let decoded = MobiReader::new().read_book(&mut cursor).unwrap();
-        let all_content: String = decoded
-            .chapter_views()
-            .iter()
-            .map(|c| c.content)
-            .collect();
+        let all_content: String = decoded.chapter_views().iter().map(|c| c.content).collect();
 
         // The decompressed/decoded text should preserve filepos references.
         // At minimum, verify the original HTML contains them (pre-compression).
@@ -2659,7 +2639,8 @@ mod tests {
 
     #[test]
     fn indx_header_starts_with_magic_and_contains_tagx() {
-        let chapters: Vec<(Cow<str>, usize)> = vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
+        let chapters: Vec<(Cow<str>, usize)> =
+            vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
         let (indx_header, _, _) = build_ncx_indx(&chapters);
 
         // Starts with "INDX" magic.
@@ -2676,7 +2657,8 @@ mod tests {
 
     #[test]
     fn indx_data_starts_with_magic_and_contains_idxt() {
-        let chapters: Vec<(Cow<str>, usize)> = vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
+        let chapters: Vec<(Cow<str>, usize)> =
+            vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
         let (_, indx_data, _) = build_ncx_indx(&chapters);
 
         // Starts with "INDX" magic.
@@ -2854,7 +2836,8 @@ mod tests {
     fn indx_header_has_correct_cncx_count() {
         use crate::formats::common::palm_db::read_u32_be;
 
-        let chapters: Vec<(Cow<str>, usize)> = vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
+        let chapters: Vec<(Cow<str>, usize)> =
+            vec![(Cow::Borrowed("Ch1"), 0), (Cow::Borrowed("Ch2"), 1000)];
         let (indx_header, _, _) = build_ncx_indx(&chapters);
 
         // CNCX record count at header offset 52 should be 1.

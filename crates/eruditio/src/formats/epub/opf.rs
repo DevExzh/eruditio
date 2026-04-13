@@ -169,17 +169,14 @@ pub(crate) fn parse_opf_xml(xml: &str) -> Result<OpfData> {
                             ));
                         }
                         // Capture opf:file-as from the first creator (take avoids clone).
-                        if current_dc_tag == "creator"
-                            && data.metadata.author_sort.is_none()
-                        {
+                        if current_dc_tag == "creator" && data.metadata.author_sort.is_none() {
                             data.metadata.author_sort = current_file_as.take();
                         }
                         // Capture opf:scheme from the primary identifier.
                         // Unconditionally assign so scheme stays in sync with
                         // whichever <dc:identifier> last set metadata.identifier.
                         if current_dc_tag == "identifier" {
-                            data.metadata.identifier_scheme =
-                                current_identifier_scheme.take();
+                            data.metadata.identifier_scheme = current_identifier_scheme.take();
                         }
                         current_date_event = None;
                         current_dc_tag.clear();
@@ -228,7 +225,11 @@ fn parse_spine_attrs(e: &quick_xml::events::BytesStart<'_>, data: &mut OpfData) 
     if let Some(attr) = e.try_get_attribute(b"toc").ok().flatten() {
         data.ncx_id = Some(xml_utils::bytes_to_string(&attr.value));
     }
-    if let Some(attr) = e.try_get_attribute(b"page-progression-direction").ok().flatten() {
+    if let Some(attr) = e
+        .try_get_attribute(b"page-progression-direction")
+        .ok()
+        .flatten()
+    {
         data.spine.page_progression_direction = match attr.value.as_ref() {
             b"rtl" => Some(PageProgression::Rtl),
             b"ltr" => Some(PageProgression::Ltr),
@@ -845,10 +846,7 @@ mod tests {
   <spine/>
 </package>"#;
         let data = parse_opf_xml(xml).unwrap();
-        assert_eq!(
-            data.metadata.identifier.as_deref(),
-            Some("urn:uuid:12345")
-        );
+        assert_eq!(data.metadata.identifier.as_deref(), Some("urn:uuid:12345"));
         assert_eq!(
             data.metadata.identifier_scheme.as_deref(),
             Some("URI"),

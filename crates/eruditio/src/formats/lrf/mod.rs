@@ -17,9 +17,9 @@ use std::io::Read;
 
 pub use writer::LrfWriter;
 
+use ahash::AHashMap as HashMap;
 use header::{LrfHeader, parse_metadata};
 use objects::{LrfObject, ObjType, parse_objects, parse_toc_stream};
-use ahash::AHashMap as HashMap;
 use tags::TAG_REFSTREAM;
 use text::{tokenize_text_stream, tokens_to_html};
 
@@ -569,4 +569,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

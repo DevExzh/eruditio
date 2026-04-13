@@ -112,10 +112,7 @@ fn extract_headings(html: &str) -> Vec<(String, u8)> {
 /// Finds a substring case-insensitively, trying exact lowercase first via SIMD.
 /// Delegates to the centralized `find_ci` implementation in text_utils.
 fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
-    crate::formats::common::text_utils::find_ci(
-        haystack.as_bytes(),
-        needle.as_bytes(),
-    )
+    crate::formats::common::text_utils::find_ci(haystack.as_bytes(), needle.as_bytes())
 }
 
 #[cfg(test)]

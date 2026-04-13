@@ -65,7 +65,7 @@ impl LoadFilter {
             // Text-only outputs — no embedded resources.
             Format::Txt | Format::Md | Format::Pml | Format::Pdb | Format::Tcr | Format::Txtz => {
                 Self::TEXT
-            }
+            },
 
             // Formats that embed images alongside text.
             Format::Rtf
@@ -94,7 +94,11 @@ impl LoadFilter {
             | Format::Cbc => Self::ALL,
 
             // Safe fallback for complex/unknown targets.
-            Format::Azw4 | Format::Docx | Format::Odt | Format::Djvu | Format::Chm
+            Format::Azw4
+            | Format::Docx
+            | Format::Odt
+            | Format::Djvu
+            | Format::Chm
             | Format::Zip => Self::ALL,
         }
     }

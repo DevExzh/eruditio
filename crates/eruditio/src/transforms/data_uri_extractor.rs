@@ -269,9 +269,7 @@ mod tests {
     const TINY_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
 
     fn decode_tiny_png() -> Vec<u8> {
-        base64_simd::STANDARD
-            .decode_to_vec(TINY_PNG_B64)
-            .unwrap()
+        base64_simd::STANDARD.decode_to_vec(TINY_PNG_B64).unwrap()
     }
 
     #[test]

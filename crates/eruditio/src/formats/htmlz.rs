@@ -9,9 +9,7 @@ use crate::domain::{Book, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
 use crate::formats::common::MAX_INPUT_SIZE;
 use crate::formats::common::html_utils::strip_leading_heading;
-use crate::formats::common::text_utils::{
-    contains_ascii_ci, ends_with_ascii_ci, push_escape_html,
-};
+use crate::formats::common::text_utils::{contains_ascii_ci, ends_with_ascii_ci, push_escape_html};
 use crate::formats::common::xml_utils;
 use crate::formats::common::zip_utils::ZIP_DEFLATE_LEVEL;
 
@@ -121,10 +119,9 @@ impl FormatWriter for HtmlzWriter {
         let mut zip_buf = Cursor::new(Vec::new());
         {
             let mut zip = ZipWriter::new(&mut zip_buf);
-            let deflated: FileOptions<'_, ()> =
-                FileOptions::default()
-                    .compression_method(CompressionMethod::Deflated)
-                    .compression_level(ZIP_DEFLATE_LEVEL);
+            let deflated: FileOptions<'_, ()> = FileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .compression_level(ZIP_DEFLATE_LEVEL);
             let stored: FileOptions<'_, ()> =
                 FileOptions::default().compression_method(CompressionMethod::Stored);
 
@@ -157,21 +154,33 @@ impl FormatWriter for HtmlzWriter {
 
             // 1. Write index.html (HTML content with stylesheet link)
             let html = generate_htmlz_content(book);
-            let html_opts = if html.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            let html_opts = if html.len() >= MIN_DEFLATE_SIZE {
+                deflated
+            } else {
+                stored
+            };
             zip.start_file("index.html", html_opts)
                 .map_err(|e| EruditioError::Format(format!("Failed to write index.html: {}", e)))?;
             zip.write_all(html.as_bytes())?;
 
             // 2. Write metadata.opf
             let opf = generate_htmlz_opf(book);
-            let opf_opts = if opf.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            let opf_opts = if opf.len() >= MIN_DEFLATE_SIZE {
+                deflated
+            } else {
+                stored
+            };
             zip.start_file("metadata.opf", opf_opts).map_err(|e| {
                 EruditioError::Format(format!("Failed to write metadata.opf: {}", e))
             })?;
             zip.write_all(opf.as_bytes())?;
 
             // 3. Write style.css
-            let css_opts = if css_content.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            let css_opts = if css_content.len() >= MIN_DEFLATE_SIZE {
+                deflated
+            } else {
+                stored
+            };
             zip.start_file("style.css", css_opts)
                 .map_err(|e| EruditioError::Format(format!("Failed to write style.css: {}", e)))?;
             zip.write_all(css_content.as_bytes())?;
@@ -219,12 +228,9 @@ fn generate_htmlz_content(book: &Book) -> String {
                 .filter(|item| item.media_type.starts_with("image/"))
         })
         .or_else(|| {
-            book.manifest
-                .iter()
-                .find(|item| {
-                    contains_ascii_ci(&item.id, "cover")
-                        && item.media_type.starts_with("image/")
-                })
+            book.manifest.iter().find(|item| {
+                contains_ascii_ci(&item.id, "cover") && item.media_type.starts_with("image/")
+            })
         });
     if let Some(item) = cover_item {
         let filename = item.href.rsplit('/').next().unwrap_or(&item.href);
@@ -642,8 +648,8 @@ fn merge_opf_metadata(opf_xml: &str, book: &mut Book) {
 fn strip_xhtml_wrapper(content: &str) -> Cow<'_, str> {
     let bytes = content.as_bytes();
     // Fast path: extract <body> inner content as a borrowed slice — zero allocation.
-    if let Some(body_start) = memchr::memmem::find(bytes, b"<body")
-        .or_else(|| memchr::memmem::find(bytes, b"<BODY"))
+    if let Some(body_start) =
+        memchr::memmem::find(bytes, b"<body").or_else(|| memchr::memmem::find(bytes, b"<BODY"))
         && let Some(gt) = memchr::memchr(b'>', &bytes[body_start..])
     {
         let inner_start = body_start + gt + 1;
@@ -2297,9 +2303,8 @@ mod tests {
         book.metadata.cover_image_id = Some("cover-page".into());
 
         // The manifest item exists but is NOT an image (e.g. an XHTML cover page)
-        let cover_item =
-            ManifestItem::new("cover-page", "cover.xhtml", "application/xhtml+xml")
-                .with_text("<html><body>Cover</body></html>");
+        let cover_item = ManifestItem::new("cover-page", "cover.xhtml", "application/xhtml+xml")
+            .with_text("<html><body>Cover</body></html>");
         book.manifest.insert(cover_item);
 
         book.add_chapter(Chapter {
@@ -2347,9 +2352,8 @@ mod tests {
         drop(html_file);
 
         assert!(
-            html_content.contains(
-                r#"<div class="cover"><img src="images/cover.png" alt="Cover"/></div>"#
-            ),
+            html_content
+                .contains(r#"<div class="cover"><img src="images/cover.png" alt="Cover"/></div>"#),
             "ZIP index.html should contain cover page div. Got: {}",
             html_content
         );

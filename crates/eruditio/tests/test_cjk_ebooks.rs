@@ -4,9 +4,9 @@
 //! across EPUB and MOBI formats to ensure no panics, correct metadata extraction,
 //! and valid CJK content handling.
 
+use eruditio::EruditioParser;
 use eruditio::domain::{FormatReader, FormatWriter};
 use eruditio::formats::mobi::MobiReader;
-use eruditio::EruditioParser;
 use std::path::{Path, PathBuf};
 
 /// Helper: resolve a path relative to the workspace root.
@@ -60,19 +60,15 @@ fn test_cjk_ebooks_no_panics() {
         let result = std::panic::catch_unwind(|| EruditioParser::parse_file(&path));
         match result {
             Ok(Ok(book)) => {
-                eprintln!(
-                    "[OK]    {} -> {} chapters",
-                    rel,
-                    book.chapter_count()
-                );
-            }
+                eprintln!("[OK]    {} -> {} chapters", rel, book.chapter_count());
+            },
             Ok(Err(e)) => {
                 eprintln!("[ERR]   {} -> {}", rel, e);
-            }
+            },
             Err(_) => {
                 eprintln!("[PANIC] {}", rel);
                 panics.push(rel.to_string());
-            }
+            },
         }
     }
 
@@ -105,10 +101,7 @@ fn test_pg23962_epub_content() {
     );
 
     // At least one chapter should contain CJK characters
-    let has_cjk_content = book
-        .chapters()
-        .iter()
-        .any(|ch| contains_cjk(&ch.content));
+    let has_cjk_content = book.chapters().iter().any(|ch| contains_cjk(&ch.content));
     assert!(
         has_cjk_content,
         "pg23962 EPUB should contain CJK characters in chapter content"
@@ -146,10 +139,7 @@ fn test_pg23962_mobi_content() {
             rel
         );
 
-        let has_cjk_content = book
-            .chapters()
-            .iter()
-            .any(|ch| contains_cjk(&ch.content));
+        let has_cjk_content = book.chapters().iter().any(|ch| contains_cjk(&ch.content));
         assert!(
             has_cjk_content,
             "{} should contain CJK characters in chapter content",
@@ -189,10 +179,7 @@ fn test_pg31757_epub_content() {
             rel
         );
 
-        let has_cjk_content = book
-            .chapters()
-            .iter()
-            .any(|ch| contains_cjk(&ch.content));
+        let has_cjk_content = book.chapters().iter().any(|ch| contains_cjk(&ch.content));
         assert!(
             has_cjk_content,
             "{} should contain CJK characters in chapter content",
@@ -232,10 +219,7 @@ fn test_pg31757_mobi_content() {
             rel
         );
 
-        let has_cjk_content = book
-            .chapters()
-            .iter()
-            .any(|ch| contains_cjk(&ch.content));
+        let has_cjk_content = book.chapters().iter().any(|ch| contains_cjk(&ch.content));
         assert!(
             has_cjk_content,
             "{} should contain CJK characters in chapter content",
@@ -338,7 +322,7 @@ fn test_cjk_epub_to_markdown_no_panic() {
                 "[EPUB→MD] pg31757 conversion OK, {} bytes, CJK preserved",
                 md_text.len()
             );
-        }
+        },
         Err(_) => panic!("EPUB→Markdown conversion of CJK ebook panicked!"),
     }
 }
@@ -374,7 +358,7 @@ fn test_cjk_epub_to_txt_no_panic() {
                 "[EPUB→TXT] pg31757 conversion OK, {} bytes, CJK preserved",
                 txt_text.len()
             );
-        }
+        },
         Err(_) => panic!("EPUB→TXT conversion of CJK ebook panicked!"),
     }
 }
@@ -432,18 +416,15 @@ fn test_cjk_mobi_roundtrip() {
 
     match write_result {
         Ok(Ok(())) => {
-            eprintln!(
-                "[MOBI roundtrip] write OK, {} bytes",
-                buf.len()
-            );
-        }
+            eprintln!("[MOBI roundtrip] write OK, {} bytes", buf.len());
+        },
         Ok(Err(e)) => {
             eprintln!("[MOBI roundtrip] write error: {}", e);
             return;
-        }
+        },
         Err(_) => {
             panic!("MOBI roundtrip write panicked on CJK ebook!");
-        }
+        },
     }
 
     // Re-read
@@ -463,13 +444,13 @@ fn test_cjk_mobi_roundtrip() {
                 original_chapter_count,
                 reread.chapter_count()
             );
-        }
+        },
         Ok(Err(e)) => {
             eprintln!("[MOBI roundtrip] re-read error: {}", e);
-        }
+        },
         Err(_) => {
             panic!("MOBI roundtrip re-read panicked on CJK ebook!");
-        }
+        },
     }
 }
 
@@ -535,7 +516,9 @@ fn test_mobi_to_epub_produces_valid_xhtml() {
     // Write to EPUB
     let writer = eruditio::formats::epub::EpubWriter::new();
     let mut buf = Vec::new();
-    writer.write_book(&book, &mut buf).expect("EPUB write should succeed");
+    writer
+        .write_book(&book, &mut buf)
+        .expect("EPUB write should succeed");
 
     // Inspect the EPUB ZIP — every .xhtml file must be a full XHTML document.
     let cursor = std::io::Cursor::new(&buf);
@@ -559,7 +542,9 @@ fn test_mobi_to_epub_produces_valid_xhtml() {
 
         let trimmed = content.trim_start();
         assert!(
-            trimmed.starts_with("<?xml") || trimmed.starts_with("<html") || trimmed.starts_with("<!DOCTYPE"),
+            trimmed.starts_with("<?xml")
+                || trimmed.starts_with("<html")
+                || trimmed.starts_with("<!DOCTYPE"),
             "[MOBI→EPUB] {} is not a valid XHTML document. Starts with: {:?}",
             name,
             &trimmed[..trimmed.len().min(80)]
@@ -619,7 +604,11 @@ fn test_pg23962_mobi_to_epub_valid_xml() {
         // Must start with XML declaration
         let trimmed = content.trim_start();
         if !trimmed.starts_with("<?xml") {
-            errors.push(format!("{}: missing XML declaration, starts with {:?}", name, &trimmed[..trimmed.len().min(60)]));
+            errors.push(format!(
+                "{}: missing XML declaration, starts with {:?}",
+                name,
+                &trimmed[..trimmed.len().min(60)]
+            ));
             continue;
         }
 
@@ -630,10 +619,15 @@ fn test_pg23962_mobi_to_epub_valid_xml() {
             match reader.read_event() {
                 Ok(quick_xml::events::Event::Eof) => break,
                 Err(e) => {
-                    errors.push(format!("{}: XML parse error at position {}: {}", name, reader.error_position(), e));
+                    errors.push(format!(
+                        "{}: XML parse error at position {}: {}",
+                        name,
+                        reader.error_position(),
+                        e
+                    ));
                     break;
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -700,8 +694,8 @@ fn test_pg31757_mobi_to_epub_valid_xml() {
                 Err(e) => {
                     errors.push(format!("{}: XML parse error: {}", name, e));
                     break;
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }

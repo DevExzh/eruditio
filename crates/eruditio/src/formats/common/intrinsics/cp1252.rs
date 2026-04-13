@@ -141,8 +141,7 @@ mod x86 {
                 // Copy remaining ASCII bytes after the last non-ASCII byte.
                 if chunk_pos < 64 {
                     // SAFETY: remaining bytes have high bit clear, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 64]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 64]);
                     result.push_str(ascii_slice);
                 }
                 i += 64;
@@ -175,8 +174,7 @@ mod x86 {
                     mask &= mask - 1;
                 }
                 if chunk_pos < 32 {
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 32]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 32]);
                     result.push_str(ascii_slice);
                 }
                 i += 32;
@@ -209,8 +207,7 @@ mod x86 {
                     mask &= mask - 1;
                 }
                 if chunk_pos < 16 {
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
                 i += 16;
@@ -278,8 +275,7 @@ mod x86 {
                 // Copy remaining ASCII bytes after the last non-ASCII byte.
                 if chunk_pos < 32 {
                     // SAFETY: remaining bytes have high bit clear, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 32]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 32]);
                     result.push_str(ascii_slice);
                 }
                 i += 32;
@@ -320,8 +316,7 @@ mod x86 {
                 }
                 if chunk_pos < 16 {
                     // SAFETY: remaining bytes have high bit clear, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
                 i += 16;
@@ -383,8 +378,7 @@ mod x86 {
                 }
                 if chunk_pos < 16 {
                     // SAFETY: remaining bytes have high bit clear, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
                 i += 16;
@@ -451,9 +445,7 @@ mod aarch64 {
                         }
                         // SAFETY: bytes in [i+start .. i+j] are 0x00-0x7F,
                         // valid UTF-8.
-                        let ascii_slice = core::str::from_utf8_unchecked(
-                            &data[i + start..i + j],
-                        );
+                        let ascii_slice = core::str::from_utf8_unchecked(&data[i + start..i + j]);
                         result.push_str(ascii_slice);
                     } else {
                         result.push(CP1252_TABLE[b as usize]);
@@ -531,8 +523,7 @@ mod wasm {
                 }
                 if chunk_pos < 16 {
                     // SAFETY: remaining bytes have high bit clear, valid UTF-8.
-                    let ascii_slice =
-                        core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
+                    let ascii_slice = core::str::from_utf8_unchecked(&data[i + chunk_pos..i + 16]);
                     result.push_str(ascii_slice);
                 }
                 i += 16;

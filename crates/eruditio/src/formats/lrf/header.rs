@@ -200,8 +200,7 @@ fn parse_metadata_xml(xml: &str) -> Result<LrfMetadata> {
                 pending_reading = None;
             },
             Ok(Event::Text(ref e)) => {
-                let text =
-                    crate::formats::common::text_utils::bytes_to_string(e);
+                let text = crate::formats::common::text_utils::bytes_to_string(e);
                 if text.trim().is_empty() {
                     continue;
                 }
@@ -377,8 +376,8 @@ mod tests {
         }
 
         // Compress with zlib (matching what the real header stores).
-        use flate2::write::ZlibEncoder;
         use flate2::Compression;
+        use flate2::write::ZlibEncoder;
         use std::io::Write as _;
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&utf16_bytes).unwrap();

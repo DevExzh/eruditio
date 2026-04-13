@@ -68,8 +68,7 @@ pub(crate) fn split_into_chapters<'a>(body: &'a str) -> Vec<(Option<Cow<'a, str>
         }
 
         let b1 = bytes[abs_pos + 1];
-        if (b1 == b'h' || b1 == b'H')
-            && (bytes[abs_pos + 2] == b'1' || bytes[abs_pos + 2] == b'2')
+        if (b1 == b'h' || b1 == b'H') && (bytes[abs_pos + 2] == b'1' || bytes[abs_pos + 2] == b'2')
         {
             let b3 = bytes[abs_pos + 3];
             // Verify this is a real tag (followed by '>', whitespace, or '/')
@@ -81,15 +80,14 @@ pub(crate) fn split_into_chapters<'a>(body: &'a str) -> Vec<(Option<Cow<'a, str>
                     let content_start = abs_pos + gt_offset + 1;
 
                     // Find matching closing tag </hN> using memchr.
-                    if let Some(close_pos) = find_closing_heading(bytes, content_start, heading_level) {
-                        let heading_cow =
-                            text_utils::strip_tags(&body[content_start..close_pos]);
+                    if let Some(close_pos) =
+                        find_closing_heading(bytes, content_start, heading_level)
+                    {
+                        let heading_cow = text_utils::strip_tags(&body[content_start..close_pos]);
                         let trimmed = heading_cow.trim();
                         if !trimmed.is_empty() {
                             let title: Cow<'a, str> = match heading_cow {
-                                Cow::Borrowed(s) => {
-                                    Cow::Borrowed(s.trim())
-                                }
+                                Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
                                 Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
                             };
                             split_points.push((abs_pos, title));
@@ -216,9 +214,7 @@ fn extract_tag_content(html: &str, tag: &str) -> Option<String> {
     let start = find_ci(bytes, &open_buf[..open_len])?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
-    let content_end =
-        find_ci(&bytes[content_start..], &close_buf[..close_len])?
-            + content_start;
+    let content_end = find_ci(&bytes[content_start..], &close_buf[..close_len])? + content_start;
 
     let text = html[content_start..content_end].trim().to_string();
     if text.is_empty() { None } else { Some(text) }
@@ -230,9 +226,7 @@ fn extract_between<'a>(html: &'a str, open_prefix: &str, close_tag: &str) -> Opt
     let start = find_ci(bytes, open_prefix.as_bytes())?;
     let gt = html[start..].find('>')?;
     let content_start = start + gt + 1;
-    let content_end =
-        find_ci(&bytes[content_start..], close_tag.as_bytes())?
-            + content_start;
+    let content_end = find_ci(&bytes[content_start..], close_tag.as_bytes())? + content_start;
 
     Some(&html[content_start..content_end])
 }
@@ -259,7 +253,11 @@ fn extract_meta_tags(head: &str, meta: &mut Metadata) {
             && (bytes[abs_pos + 2] | 0x20) == b'e'
             && (bytes[abs_pos + 3] | 0x20) == b't'
             && (bytes[abs_pos + 4] | 0x20) == b'a'
-            && (abs_pos + 5 >= len || matches!(bytes[abs_pos + 5], b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/'));
+            && (abs_pos + 5 >= len
+                || matches!(
+                    bytes[abs_pos + 5],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/'
+                ));
 
         if !is_meta {
             search_from = abs_pos + 1;
@@ -338,9 +336,7 @@ fn strip_outer_tags(html: &str) -> &str {
     let bytes = html.as_bytes();
 
     // Find </head> case-insensitively — skip everything up to and including it.
-    let start = find_ci(bytes, b"</head>")
-        .map(|p| p + 7)
-        .unwrap_or(0);
+    let start = find_ci(bytes, b"</head>").map(|p| p + 7).unwrap_or(0);
     let working = &html[start..];
     let working_bytes = working.as_bytes();
 

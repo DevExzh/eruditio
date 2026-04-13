@@ -190,8 +190,8 @@ impl FormatWriter for OebWriter {
             let deflated: FileOptions<'_, ()> = FileOptions::default()
                 .compression_method(CompressionMethod::Deflated)
                 .compression_level(ZIP_DEFLATE_LEVEL);
-            let stored: FileOptions<'_, ()> = FileOptions::default()
-                .compression_method(CompressionMethod::Stored);
+            let stored: FileOptions<'_, ()> =
+                FileOptions::default().compression_method(CompressionMethod::Stored);
 
             /// Minimum entry size for using Deflated compression.
             const MIN_DEFLATE_SIZE: usize = 4096;
@@ -209,18 +209,26 @@ impl FormatWriter for OebWriter {
                 let title = chapter.title.as_deref().unwrap_or(&fallback_title);
 
                 let mut xhtml = String::with_capacity(256 + chapter.content.len());
-                xhtml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                xhtml.push_str(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
                      <!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \
                      \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">\n\
                      <html xmlns=\"http://www.w3.org/1999/xhtml\">\n\
-                     <head><title>");
+                     <head><title>",
+                );
                 push_escape_xml(&mut xhtml, title);
-                xhtml.push_str("</title></head>\n\
-                     <body>\n");
+                xhtml.push_str(
+                    "</title></head>\n\
+                     <body>\n",
+                );
                 xhtml.push_str(&chapter.content);
                 xhtml.push_str("\n</body>\n</html>");
 
-                let opts = if xhtml.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+                let opts = if xhtml.len() >= MIN_DEFLATE_SIZE {
+                    deflated
+                } else {
+                    stored
+                };
                 zip.start_file(&filename, opts)?;
                 zip.write_all(xhtml.as_bytes())?;
 
@@ -244,7 +252,11 @@ impl FormatWriter for OebWriter {
 
             // Generate OPF.
             let opf = build_opf(book, &content_items, &resource_items);
-            let opf_opts = if opf.len() >= MIN_DEFLATE_SIZE { deflated } else { stored };
+            let opf_opts = if opf.len() >= MIN_DEFLATE_SIZE {
+                deflated
+            } else {
+                stored
+            };
             zip.start_file("content.opf", opf_opts)?;
             zip.write_all(opf.as_bytes())?;
 
@@ -541,8 +553,7 @@ fn extract_body(html: &str) -> Option<&str> {
     let bytes = html.as_bytes();
     let body_start = text_utils::find_ci(bytes, b"<body")?;
     let content_start = html[body_start..].find('>')? + body_start + 1;
-    let content_end =
-        text_utils::find_ci(&bytes[content_start..], b"</body>")? + content_start;
+    let content_end = text_utils::find_ci(&bytes[content_start..], b"</body>")? + content_start;
 
     let body = html[content_start..content_end].trim();
     if body.is_empty() { None } else { Some(body) }

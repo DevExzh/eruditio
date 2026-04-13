@@ -201,7 +201,9 @@ fn parse_and_extract_data_uri(uri: &str, book: &mut Book, index: usize) -> Optio
     let b64_data = after_semi.strip_prefix("base64,")?;
 
     // Decode the base64 payload.
-    let decoded = base64_simd::STANDARD.decode_to_vec(b64_data.as_bytes()).ok()?;
+    let decoded = base64_simd::STANDARD
+        .decode_to_vec(b64_data.as_bytes())
+        .ok()?;
 
     // Determine file extension from media type.
     let ext = match media_type {
@@ -476,7 +478,12 @@ mod tests {
             content: "<p>Content with images</p>".into(),
             id: Some("ch1".into()),
         });
-        book.add_resource("img1", "cover.png", vec![0x89, 0x50, 0x4E, 0x47], "image/png");
+        book.add_resource(
+            "img1",
+            "cover.png",
+            vec![0x89, 0x50, 0x4E, 0x47],
+            "image/png",
+        );
 
         // Write to HTML (embeds images as data URIs).
         let mut output = Vec::new();

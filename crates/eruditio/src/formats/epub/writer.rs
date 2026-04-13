@@ -57,9 +57,7 @@ fn extract_body_content(html: &str) -> &str {
     let body_start = {
         let mut found = None;
         for i in 0..len.saturating_sub(4) {
-            if bytes[i] == b'<'
-                && bytes[i + 1..i + 5].eq_ignore_ascii_case(b"body")
-            {
+            if bytes[i] == b'<' && bytes[i + 1..i + 5].eq_ignore_ascii_case(b"body") {
                 // Find the closing '>' of the <body> tag.
                 if let Some(gt) = html[i..].find('>') {
                     found = Some(i + gt + 1);
@@ -121,7 +119,7 @@ fn sanitize_html_for_xhtml(html: &str) -> String {
                     out.push_str("&lt;");
                     pos += 1;
                     continue;
-                }
+                },
             };
 
             let tag = &html[pos..tag_end];
@@ -154,7 +152,11 @@ fn sanitize_html_for_xhtml(html: &str) -> String {
             }
 
             // Fix unquoted attributes inside opening/self-closing tags.
-            if tag.len() > 2 && bytes[pos + 1] != b'/' && bytes[pos + 1] != b'!' && bytes[pos + 1] != b'?' {
+            if tag.len() > 2
+                && bytes[pos + 1] != b'/'
+                && bytes[pos + 1] != b'!'
+                && bytes[pos + 1] != b'?'
+            {
                 sanitize_tag_attrs(&mut out, tag);
             } else {
                 out.push_str(tag);
@@ -184,18 +186,18 @@ fn sanitize_html_for_xhtml(html: &str) -> String {
                 Some(offset) if offset > 0 => {
                     out.push_str(&html[pos..pos + offset]);
                     pos += offset;
-                }
+                },
                 Some(_) => {
                     // offset == 0 shouldn't happen (would be caught above),
                     // but advance one char to avoid infinite loop.
                     let ch = html[pos..].chars().next().unwrap();
                     out.push(ch);
                     pos += ch.len_utf8();
-                }
+                },
                 None => {
                     out.push_str(&html[pos..]);
                     break;
-                }
+                },
             }
         }
     }
@@ -210,9 +212,9 @@ fn is_mobi_ns_tag(tag: &str) -> bool {
         return false;
     }
     let start = if bytes[1] == b'/' { 2 } else { 1 };
-    bytes.get(start..start + 4).is_some_and(|b| {
-        b[..3].eq_ignore_ascii_case(b"mbp") && b[3] == b':'
-    })
+    bytes
+        .get(start..start + 4)
+        .is_some_and(|b| b[..3].eq_ignore_ascii_case(b"mbp") && b[3] == b':')
 }
 
 /// Returns `true` if the tag is a structural HTML element that the XHTML
@@ -265,27 +267,35 @@ fn is_void_element_tag(tag: &str) -> bool {
             let a = name[0].to_ascii_lowercase();
             let b = name[1].to_ascii_lowercase();
             (a == b'b' || a == b'h') && b == b'r'
-        }
+        },
         3 => {
             let mut l = [0u8; 3];
-            for i in 0..3 { l[i] = name[i].to_ascii_lowercase(); }
+            for i in 0..3 {
+                l[i] = name[i].to_ascii_lowercase();
+            }
             l == *b"img" || l == *b"col" || l == *b"wbr"
-        }
+        },
         4 => {
             let mut l = [0u8; 4];
-            for i in 0..4 { l[i] = name[i].to_ascii_lowercase(); }
+            for i in 0..4 {
+                l[i] = name[i].to_ascii_lowercase();
+            }
             l == *b"area" || l == *b"base" || l == *b"meta" || l == *b"link"
-        }
+        },
         5 => {
             let mut l = [0u8; 5];
-            for i in 0..5 { l[i] = name[i].to_ascii_lowercase(); }
+            for i in 0..5 {
+                l[i] = name[i].to_ascii_lowercase();
+            }
             l == *b"input" || l == *b"embed" || l == *b"track"
-        }
+        },
         6 => {
             let mut l = [0u8; 6];
-            for i in 0..6 { l[i] = name[i].to_ascii_lowercase(); }
+            for i in 0..6 {
+                l[i] = name[i].to_ascii_lowercase();
+            }
             l == *b"source"
-        }
+        },
         _ => false,
     }
 }
@@ -305,7 +315,10 @@ fn is_valid_entity_ref(html: &str, pos: usize) -> bool {
     let inner = &rest[1..semi];
     if let Some(digits) = inner.strip_prefix('#') {
         // Numeric: &#123; or &#xAB;
-        if let Some(hex) = digits.strip_prefix('x').or_else(|| digits.strip_prefix('X')) {
+        if let Some(hex) = digits
+            .strip_prefix('x')
+            .or_else(|| digits.strip_prefix('X'))
+        {
             !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit())
         } else {
             !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
@@ -400,7 +413,9 @@ fn sanitize_void_element(out: &mut String, tag: &str) {
 /// ```
 fn wrap_xhtml(content: &str, lang: Option<&str>) -> String {
     let mut doc = String::with_capacity(content.len() + 256);
-    doc.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"");
+    doc.push_str(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"",
+    );
     if let Some(l) = lang {
         doc.push_str(" xml:lang=\"");
         push_escape_xml(&mut doc, l);
@@ -444,10 +459,9 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
     let stored: FileOptions<'_, ()> =
         FileOptions::default().compression_method(CompressionMethod::Stored);
     #[cfg(feature = "parallel")]
-    let deflated: FileOptions<'_, ()> =
-        FileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .compression_level(ZIP_DEFLATE_LEVEL);
+    let deflated: FileOptions<'_, ()> = FileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(ZIP_DEFLATE_LEVEL);
 
     // Structural data generated once.
     let opf_xml = generate_opf(book);
@@ -506,10 +520,9 @@ pub(crate) fn write_epub<W: Write + Seek>(book: &Book, writer: W) -> Result<()> 
         }
     }
 
-    let deflated: FileOptions<'_, ()> =
-        FileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .compression_level(ZIP_DEFLATE_LEVEL);
+    let deflated: FileOptions<'_, ()> = FileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(ZIP_DEFLATE_LEVEL);
 
     write_epub_sequential(book, writer, stored, deflated, &opf_xml, &ncx_xml)
 }
@@ -534,19 +547,31 @@ fn write_epub_sequential<W: Write + Seek>(
 
     // 2. container.xml — skip deflate for small entries.
     let container_xml = generate_container_xml();
-    let container_opts = if container_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
+    let container_opts = if container_xml.len() < MIN_DEFLATE_SIZE {
+        stored
+    } else {
+        deflated
+    };
     zip.start_file("META-INF/container.xml", container_opts)
         .map_err(|e| EruditioError::Format(format!("Failed to write container.xml: {}", e)))?;
     zip.write_all(container_xml.as_bytes())?;
 
     // 3. OPF
-    let opf_opts = if opf_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
+    let opf_opts = if opf_xml.len() < MIN_DEFLATE_SIZE {
+        stored
+    } else {
+        deflated
+    };
     zip.start_file("OEBPS/content.opf", opf_opts)
         .map_err(|e| EruditioError::Format(format!("Failed to write OPF: {}", e)))?;
     zip.write_all(opf_xml.as_bytes())?;
 
     // 4. NCX
-    let ncx_opts = if ncx_xml.len() < MIN_DEFLATE_SIZE { stored } else { deflated };
+    let ncx_opts = if ncx_xml.len() < MIN_DEFLATE_SIZE {
+        stored
+    } else {
+        deflated
+    };
     zip.start_file("OEBPS/toc.ncx", ncx_opts)
         .map_err(|e| EruditioError::Format(format!("Failed to write NCX: {}", e)))?;
     zip.write_all(ncx_xml.as_bytes())?;
@@ -567,8 +592,12 @@ fn write_epub_sequential<W: Write + Seek>(
         let is_xhtml = item.media_type == "application/xhtml+xml";
         let wrapped: Cow<'_, [u8]> = match &item.data {
             crate::domain::ManifestData::Text(t) => {
-                if is_xhtml { xhtml_bytes(t, lang) } else { Cow::Borrowed(t.as_bytes()) }
-            }
+                if is_xhtml {
+                    xhtml_bytes(t, lang)
+                } else {
+                    Cow::Borrowed(t.as_bytes())
+                }
+            },
             crate::domain::ManifestData::Inline(b) => Cow::Borrowed(b.as_ref()),
             crate::domain::ManifestData::Empty => Cow::Borrowed(&[]),
         };
@@ -673,21 +702,37 @@ fn write_epub_parallel<W: Write + Seek>(
         if is_already_compressed(&item.media_type) {
             match &item.data {
                 crate::domain::ManifestData::Inline(bytes) => {
-                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(bytes) });
+                    stored_entries.push(StoredEntry {
+                        zip_path,
+                        data: Cow::Borrowed(bytes),
+                    });
                 },
                 crate::domain::ManifestData::Text(text) => {
-                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(text.as_bytes()) });
+                    stored_entries.push(StoredEntry {
+                        zip_path,
+                        data: Cow::Borrowed(text.as_bytes()),
+                    });
                 },
                 crate::domain::ManifestData::Empty => {
-                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(&[]) });
+                    stored_entries.push(StoredEntry {
+                        zip_path,
+                        data: Cow::Borrowed(&[]),
+                    });
                 },
             }
         } else {
             match &item.data {
                 crate::domain::ManifestData::Text(text) => {
-                    let effective = if is_xhtml { xhtml_bytes(text, lang) } else { Cow::Borrowed(text.as_bytes()) };
+                    let effective = if is_xhtml {
+                        xhtml_bytes(text, lang)
+                    } else {
+                        Cow::Borrowed(text.as_bytes())
+                    };
                     if effective.len() < MIN_DEFLATE_SIZE {
-                        stored_entries.push(StoredEntry { zip_path, data: effective });
+                        stored_entries.push(StoredEntry {
+                            zip_path,
+                            data: effective,
+                        });
                     } else {
                         deflate_entries.push(DeflateEntry {
                             zip_path,
@@ -697,7 +742,10 @@ fn write_epub_parallel<W: Write + Seek>(
                 },
                 crate::domain::ManifestData::Inline(bytes) => {
                     if bytes.len() < MIN_DEFLATE_SIZE {
-                        stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(bytes) });
+                        stored_entries.push(StoredEntry {
+                            zip_path,
+                            data: Cow::Borrowed(bytes),
+                        });
                     } else {
                         deflate_entries.push(DeflateEntry {
                             zip_path,
@@ -706,7 +754,10 @@ fn write_epub_parallel<W: Write + Seek>(
                     }
                 },
                 crate::domain::ManifestData::Empty => {
-                    stored_entries.push(StoredEntry { zip_path, data: Cow::Borrowed(&[]) });
+                    stored_entries.push(StoredEntry {
+                        zip_path,
+                        data: Cow::Borrowed(&[]),
+                    });
                 },
             }
         }
@@ -740,7 +791,8 @@ fn write_epub_parallel<W: Write + Seek>(
                 // Compress the entry data, reusing the compressor state.
                 compressor.reset();
                 compress_buf.clear();
-                let max_out = uncompressed_size + (uncompressed_size >> 12) + (uncompressed_size >> 14) + 128;
+                let max_out =
+                    uncompressed_size + (uncompressed_size >> 12) + (uncompressed_size >> 14) + 128;
                 // SAFETY: We reserve `max_out` bytes and set the length without
                 // zeroing.  This is safe because flate2's `compress()` writes to
                 // the entire output region up to `total_out` and we immediately
@@ -748,28 +800,27 @@ fn write_epub_parallel<W: Write + Seek>(
                 // `total_out` and `max_out` are never read.  This eliminates
                 // 36.5M instructions of memset per conversion (37% of HTML→EPUB).
                 compress_buf.reserve(max_out);
-                unsafe { compress_buf.set_len(max_out); }
-                let status = compressor.compress(
-                    &entry.data,
-                    compress_buf,
-                    FlushCompress::Finish,
-                ).map_err(|e| EruditioError::Format(format!("deflate compress: {}", e)))?;
+                unsafe {
+                    compress_buf.set_len(max_out);
+                }
+                let status = compressor
+                    .compress(&entry.data, compress_buf, FlushCompress::Finish)
+                    .map_err(|e| EruditioError::Format(format!("deflate compress: {}", e)))?;
                 if status != flate2::Status::StreamEnd {
-                    return Err(EruditioError::Format("deflate did not complete in one pass".into()));
+                    return Err(EruditioError::Format(
+                        "deflate did not complete in one pass".into(),
+                    ));
                 }
                 let compressed_size = compressor.total_out() as usize;
                 compress_buf.truncate(compressed_size);
 
-                let compressed_u32 = u32::try_from(compressed_size)
-                    .map_err(|_| EruditioError::Format("compressed entry exceeds ZIP32 4 GB limit".into()))?;
+                let compressed_u32 = u32::try_from(compressed_size).map_err(|_| {
+                    EruditioError::Format("compressed entry exceeds ZIP32 4 GB limit".into())
+                })?;
                 let uncompressed_u32 = u32::try_from(uncompressed_size)
                     .map_err(|_| EruditioError::Format("entry exceeds ZIP32 4 GB limit".into()))?;
-                let mini = build_deflate_mini_zip(
-                    compress_buf,
-                    crc,
-                    compressed_u32,
-                    uncompressed_u32,
-                );
+                let mini =
+                    build_deflate_mini_zip(compress_buf, crc, compressed_u32, uncompressed_u32);
 
                 Ok((entry.zip_path, mini))
             },
@@ -783,7 +834,8 @@ fn write_epub_parallel<W: Write + Seek>(
         let mut archive = zip::ZipArchive::new(cursor)
             .map_err(|e| EruditioError::Format(format!("mini zip read: {}", e)))?;
         // Use by_index_raw to avoid allocating an inflate decompressor.
-        let file = archive.by_index_raw(0)
+        let file = archive
+            .by_index_raw(0)
             .map_err(|e| EruditioError::Format(format!("mini zip entry: {}", e)))?;
         zip.raw_copy_file_rename(file, &zip_path)
             .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", zip_path, e)))?;
@@ -791,8 +843,9 @@ fn write_epub_parallel<W: Write + Seek>(
 
     // Write stored entries (binary data, no compression needed).
     for entry in &stored_entries {
-        zip.start_file(&entry.zip_path, stored)
-            .map_err(|e| EruditioError::Format(format!("Failed to write {}: {}", entry.zip_path, e)))?;
+        zip.start_file(&entry.zip_path, stored).map_err(|e| {
+            EruditioError::Format(format!("Failed to write {}: {}", entry.zip_path, e))
+        })?;
         zip.write_all(&entry.data)?;
     }
 
@@ -1629,7 +1682,9 @@ mod tests {
         book.metadata.identifier_scheme = Some("URI".into());
         let opf = generate_opf(&book);
         assert!(
-            opf.contains(r#"<dc:identifier id="uid" opf:scheme="URI">urn:test:12345</dc:identifier>"#),
+            opf.contains(
+                r#"<dc:identifier id="uid" opf:scheme="URI">urn:test:12345</dc:identifier>"#
+            ),
             "Primary identifier should have opf:scheme attribute. Got:\n{}",
             opf
         );
@@ -1660,10 +1715,7 @@ mod tests {
         // Parse the generated OPF XML back
         let data = parse_opf_xml(&opf_xml).unwrap();
 
-        assert_eq!(
-            data.metadata.identifier.as_deref(),
-            Some("urn:test:12345"),
-        );
+        assert_eq!(data.metadata.identifier.as_deref(), Some("urn:test:12345"),);
         assert_eq!(
             data.metadata.identifier_scheme.as_deref(),
             Some("URI"),
@@ -1710,16 +1762,8 @@ mod tests {
                 "{} must contain <body> element",
                 name
             );
-            assert!(
-                content.contains("</body>"),
-                "{} must contain </body>",
-                name
-            );
-            assert!(
-                content.contains("</html>"),
-                "{} must contain </html>",
-                name
-            );
+            assert!(content.contains("</body>"), "{} must contain </body>", name);
+            assert!(content.contains("</html>"), "{} must contain </html>", name);
         }
     }
 
@@ -1761,7 +1805,8 @@ mod tests {
         // Should NOT be double-wrapped: only one <?xml declaration.
         let xml_count = content.matches("<?xml").count();
         assert_eq!(
-            xml_count, 1,
+            xml_count,
+            1,
             "Should have exactly 1 XML declaration, got {}. Content:\n{}",
             xml_count,
             &content[..content.len().min(300)]
@@ -1845,7 +1890,11 @@ mod tests {
     fn sanitize_strips_mobi_namespace_tags() {
         let html = r#"</mbp:pagebreak><p>Content</p><mbp:nu/>"#;
         let result = sanitize_html_for_xhtml(html);
-        assert!(!result.contains("mbp:"), "MOBI tags should be stripped. Got: {}", result);
+        assert!(
+            !result.contains("mbp:"),
+            "MOBI tags should be stripped. Got: {}",
+            result
+        );
         assert!(result.contains("<p>Content</p>"));
     }
 
@@ -1853,7 +1902,11 @@ mod tests {
     fn sanitize_escapes_bare_ampersand() {
         let html = "<p>A & B</p>";
         let result = sanitize_html_for_xhtml(html);
-        assert!(result.contains("A &amp; B"), "Bare & should be escaped. Got: {}", result);
+        assert!(
+            result.contains("A &amp; B"),
+            "Bare & should be escaped. Got: {}",
+            result
+        );
     }
 
     #[test]
@@ -1872,8 +1925,15 @@ mod tests {
         let mobi_html = r#"<html><head><guide><reference type="toc" title="TOC" filepos=0002371959 /></guide></head><body><p height="6em" width="0pt">Hello</p></body></html>"#;
         let result = xhtml_bytes(mobi_html, Some("zh"));
         let text = std::str::from_utf8(&result).unwrap();
-        assert!(text.starts_with("<?xml"), "Should be wrapped in XHTML: {:?}", &text[..80.min(text.len())]);
-        assert!(!text.contains("filepos=0002371959"), "Unquoted attr should be fixed");
+        assert!(
+            text.starts_with("<?xml"),
+            "Should be wrapped in XHTML: {:?}",
+            &text[..80.min(text.len())]
+        );
+        assert!(
+            !text.contains("filepos=0002371959"),
+            "Unquoted attr should be fixed"
+        );
         assert!(text.contains("Hello"), "Content should be preserved");
         assert!(!text.contains("<guide>"), "MOBI guide should be stripped");
     }

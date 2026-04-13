@@ -3,9 +3,9 @@
 //! Converts LIT binary token streams into HTML/OPF text. Ported from
 //! calibre's `ebooks/lit/reader.py` (`UnBinary` class).
 
+use ahash::AHashMap as HashMap;
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
-use ahash::AHashMap as HashMap;
 
 use crate::error::{EruditioError, Result};
 
@@ -450,7 +450,10 @@ pub(crate) fn unbinary_to_html(
 
     let mut result = escape_reserved(&buf).into_owned();
     // Trim leading whitespace in-place to avoid allocating a new String.
-    let leading_ws = result.bytes().take_while(|b| b.is_ascii_whitespace()).count();
+    let leading_ws = result
+        .bytes()
+        .take_while(|b| b.is_ascii_whitespace())
+        .count();
     if leading_ws > 0 {
         result.drain(..leading_ws);
     }

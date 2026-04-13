@@ -174,12 +174,8 @@ impl HashChain {
                 // `b_pos + 8 <= data.len()`, so reading 8 bytes from each
                 // position is within bounds. We use `read_unaligned` because
                 // these positions are not guaranteed to be 8-byte aligned.
-                let a_word = unsafe {
-                    (data.as_ptr().add(a_pos) as *const u64).read_unaligned()
-                };
-                let b_word = unsafe {
-                    (data.as_ptr().add(b_pos) as *const u64).read_unaligned()
-                };
+                let a_word = unsafe { (data.as_ptr().add(a_pos) as *const u64).read_unaligned() };
+                let b_word = unsafe { (data.as_ptr().add(b_pos) as *const u64).read_unaligned() };
 
                 let xor = a_word ^ b_word;
                 if xor != 0 {
@@ -192,9 +188,7 @@ impl HashChain {
                 // First 8 bytes match. Check remaining bytes (up to 2 more
                 // since MAX_MATCH=10) with scalar comparison.
                 let mut length = 8.min(max_len);
-                while length < max_len
-                    && data[a_pos + length] == data[b_pos + length]
-                {
+                while length < max_len && data[a_pos + length] == data[b_pos + length] {
                     length += 1;
                 }
                 return length;
@@ -204,9 +198,7 @@ impl HashChain {
         // Scalar fallback: used near the end of the buffer (where we can't
         // safely read 8 bytes) or on big-endian targets.
         let mut length = 0;
-        while length < max_len
-            && data[a_pos + length] == data[b_pos + length]
-        {
+        while length < max_len && data[a_pos + length] == data[b_pos + length] {
             length += 1;
         }
         length

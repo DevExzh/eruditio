@@ -520,8 +520,7 @@ impl LitContainer {
                     EruditioError::Parse(format!("Missing reset table: {rt_path}"))
                 })?;
                 let reset_table = Self::read_raw(&self.data, self.content_offset, rt_entry)?;
-                content =
-                    lit_lzx_decompress(&content, &control[control_offset..], &reset_table)?;
+                content = lit_lzx_decompress(&content, &control[control_offset..], &reset_table)?;
                 if csize <= remaining {
                     control_offset += csize;
                 }

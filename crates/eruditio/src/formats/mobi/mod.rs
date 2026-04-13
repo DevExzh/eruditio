@@ -147,7 +147,10 @@ fn resolve_kindle_references<'a>(
 /// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
 ///
 /// kindle:embed indices are 1-based: kindle:embed:0001 refers to the first image.
-fn try_resolve_embed<'a>(after_kindle: &str, image_paths: &'a [String]) -> Option<(&'a str, usize)> {
+fn try_resolve_embed<'a>(
+    after_kindle: &str,
+    image_paths: &'a [String],
+) -> Option<(&'a str, usize)> {
     let rest = after_kindle.strip_prefix("embed:")?;
     let consumed_prefix = 6; // "embed:"
 
@@ -184,7 +187,10 @@ fn try_resolve_embed<'a>(after_kindle: &str, image_paths: &'a [String]) -> Optio
 /// Flow indices use the same Kindle base-32 encoding as embed references
 /// (digits 0-9 plus letters A-V).
 /// Returns (replacement_string, bytes_consumed_after_"kindle:") or None.
-fn try_resolve_flow<'a>(after_kindle: &str, flow_paths: &'a [Option<String>]) -> Option<(&'a str, usize)> {
+fn try_resolve_flow<'a>(
+    after_kindle: &str,
+    flow_paths: &'a [Option<String>],
+) -> Option<(&'a str, usize)> {
     let rest = after_kindle.strip_prefix("flow:")?;
     let consumed_prefix = 5; // "flow:"
 
@@ -1245,7 +1251,6 @@ fn split_kf8_content<'a>(html: &'a str) -> Vec<SimpleChapter<'a>> {
 /// If there is no content after `</html>`, or if the structure doesn't match
 /// the expected KF8 skeleton pattern, the input is returned unchanged.
 fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
-
     // Find the closing </html> tag.
     let html_close_pos = match text_utils::find_ci(part.as_bytes(), b"</html") {
         Some(pos) => pos,
@@ -1456,8 +1461,12 @@ fn extract_first_heading(html: &str) -> Option<String> {
                 // Verify it's actually a tag (next char must be '>', ' ', or another
                 // attribute-starting character, not e.g. "html" or "href").
                 let after_digit = bytes[abs + 3];
-                if after_digit == b'>' || after_digit == b' ' || after_digit == b'\t'
-                    || after_digit == b'\n' || after_digit == b'\r' || after_digit == b'/'
+                if after_digit == b'>'
+                    || after_digit == b' '
+                    || after_digit == b'\t'
+                    || after_digit == b'\n'
+                    || after_digit == b'\r'
+                    || after_digit == b'/'
                 {
                     // Found a heading open tag. Find its '>' to get content start.
                     let tag_end_rel = bytes[abs..].iter().position(|&b| b == b'>')?;

@@ -364,7 +364,10 @@ fn parse_rtf_tokens(tokens: &[RtfToken]) -> RtfParseState {
                         in_paragraph = true;
                     }
                     // Escape for HTML.
-                    crate::formats::common::text_utils::push_escape_html(&mut state.html_content, text);
+                    crate::formats::common::text_utils::push_escape_html(
+                        &mut state.html_content,
+                        text,
+                    );
                 }
             },
             RtfToken::Unicode(code) => {
@@ -556,11 +559,7 @@ mod tests {
 
         assert_eq!(decoded.metadata.title.as_deref(), Some("RTF Test"));
         assert_eq!(decoded.metadata.authors, vec!["Author"]);
-        let content: String = decoded
-            .chapter_views()
-            .iter()
-            .map(|c| c.content)
-            .collect();
+        let content: String = decoded.chapter_views().iter().map(|c| c.content).collect();
         assert!(content.contains("Hello world"));
     }
 

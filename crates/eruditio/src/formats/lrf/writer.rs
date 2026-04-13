@@ -280,10 +280,7 @@ const HEADING_SIZES: [i16; 6] = [220, 180, 150, 130, 110, 100];
 ///
 /// Handles: `<p>`, `<br>`, `<b>`/`<strong>`, `<i>`/`<em>`, `<h1>`-`<h6>`,
 /// `<img>` (via Plot tag), and plain text.
-fn html_to_text_stream(
-    html: &str,
-    image_obj_map: &AHashMap<String, u32>,
-) -> Vec<u8> {
+fn html_to_text_stream(html: &str, image_obj_map: &AHashMap<String, u32>) -> Vec<u8> {
     let mut stream = Vec::with_capacity(html.len() * 2);
     let mut pos = 0;
     let bytes = html.as_bytes();
@@ -376,7 +373,10 @@ fn html_to_text_stream(
                     emit_font_weight(&mut stream, 400);
                     emit_font_size(&mut stream, default_size);
                 },
-                _ if tag_name.get(..3).is_some_and(|s| s.eq_ignore_ascii_case("img")) => {
+                _ if tag_name
+                    .get(..3)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("img")) =>
+                {
                     // Extract src attribute.
                     if let Some(src) = extract_attr(tag_content, "src") {
                         // Look up the image object ID.

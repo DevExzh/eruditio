@@ -84,9 +84,8 @@ fn add_kobo_spans(book: &Book) -> Book {
             if (item.media_type.contains("html") || item.media_type.contains("xml"))
                 && let Some(text) = item.data.as_text()
             {
-                let mut modified =
-                    ManifestItem::new(&item.id, &item.href, &item.media_type)
-                        .with_text(insert_kobo_spans(text));
+                let mut modified = ManifestItem::new(&item.id, &item.href, &item.media_type)
+                    .with_text(insert_kobo_spans(text));
                 modified.fallback.clone_from(&item.fallback);
                 modified.properties.clone_from(&item.properties);
                 modified

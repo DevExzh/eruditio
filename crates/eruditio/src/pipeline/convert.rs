@@ -2,8 +2,8 @@
 
 use crate::domain::Book;
 use crate::domain::format::Format;
-use crate::error::{EruditioError, Result};
 use crate::domain::load_filter::LoadFilter;
+use crate::error::{EruditioError, Result};
 use crate::transforms::{
     CoverHandler, DataUriExtractor, HtmlNormalizer, ManifestTrimmer, MetadataMerger,
     StructureDetector, TocGenerator,
@@ -134,12 +134,22 @@ impl Pipeline {
     /// transforms before writing. Since no input/output format is known,
     /// all enabled transforms run unconditionally (text-only and
     /// container-source optimizations are skipped).
-    pub fn apply_transforms_standalone(&self, book: Book, options: &ConversionOptions) -> Result<Book> {
+    pub fn apply_transforms_standalone(
+        &self,
+        book: Book,
+        options: &ConversionOptions,
+    ) -> Result<Book> {
         self.apply_transforms(book, options, None, None)
     }
 
     /// Applies the configured transforms to a book (takes ownership to avoid cloning).
-    fn apply_transforms(&self, book: Book, options: &ConversionOptions, input_format: Option<Format>, output_format: Option<Format>) -> Result<Book> {
+    fn apply_transforms(
+        &self,
+        book: Book,
+        options: &ConversionOptions,
+        input_format: Option<Format>,
+        output_format: Option<Format>,
+    ) -> Result<Book> {
         let transforms = self.build_transform_chain(options, input_format, output_format);
 
         let mut current = book;
@@ -159,10 +169,17 @@ impl Pipeline {
     /// When `input_format` is a non-container source (HTML, FB2, TXT, etc.),
     /// ManifestTrimmer is skipped because these readers only produce referenced
     /// resources — there are no orphan manifest items to trim.
-    fn build_transform_chain(&self, options: &ConversionOptions, input_format: Option<Format>, output_format: Option<Format>) -> Vec<TransformKind> {
+    fn build_transform_chain(
+        &self,
+        options: &ConversionOptions,
+        input_format: Option<Format>,
+        output_format: Option<Format>,
+    ) -> Vec<TransformKind> {
         let text_only = matches!(
             output_format,
-            Some(Format::Txt | Format::Txtz | Format::Tcr | Format::Md | Format::Pml | Format::Pmlz)
+            Some(
+                Format::Txt | Format::Txtz | Format::Tcr | Format::Md | Format::Pml | Format::Pmlz
+            )
         );
 
         // Source formats that bundle resources in a container (ZIP, etc.) may
@@ -170,10 +187,24 @@ impl Pipeline {
         // (HTML, FB2, TXT, …) only produce referenced resources.
         let source_has_container = matches!(
             input_format,
-            Some(Format::Epub | Format::Kepub | Format::Oeb | Format::Htmlz
-                 | Format::Cbz | Format::Cb7 | Format::Cbr | Format::Cbc
-                 | Format::Mobi | Format::Azw | Format::Azw3 | Format::Prc
-                 | Format::Fbz | Format::Pmlz | Format::Txtz | Format::Lit)
+            Some(
+                Format::Epub
+                    | Format::Kepub
+                    | Format::Oeb
+                    | Format::Htmlz
+                    | Format::Cbz
+                    | Format::Cb7
+                    | Format::Cbr
+                    | Format::Cbc
+                    | Format::Mobi
+                    | Format::Azw
+                    | Format::Azw3
+                    | Format::Prc
+                    | Format::Fbz
+                    | Format::Pmlz
+                    | Format::Txtz
+                    | Format::Lit
+            )
         );
         let mut chain = Vec::new();
 
@@ -190,7 +221,9 @@ impl Pipeline {
         }
 
         if let Some(ref overrides) = options.metadata_overrides {
-            chain.push(TransformKind::MetadataMerger(MetadataMerger::new(overrides.clone())));
+            chain.push(TransformKind::MetadataMerger(MetadataMerger::new(
+                overrides.clone(),
+            )));
         }
 
         if options.detect_structure && !text_only {

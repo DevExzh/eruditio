@@ -1,5 +1,5 @@
-use crate::domain::{Book, FormatReader, FormatWriter, TocItem};
 use crate::domain::load_filter::LoadFilter;
+use crate::domain::{Book, FormatReader, FormatWriter, TocItem};
 use crate::error::Result;
 use std::io::{Read, Write};
 use zip::ZipArchive;

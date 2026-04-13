@@ -29,7 +29,6 @@ pub fn escape_xml(text: &str) -> Cow<'_, str> {
     escape_impl(text, true)
 }
 
-
 fn escape_impl(text: &str, xml_mode: bool) -> Cow<'_, str> {
     let bytes = text.as_bytes();
     let len = bytes.len();
@@ -246,16 +245,16 @@ pub fn strip_tags(html: &str) -> Cow<'_, str> {
                             raw.push(b'\n');
                         }
                         pos = tag_start + end_offset + 1;
-                    }
+                    },
                     None => break,
                 }
-            }
+            },
             None => {
                 if head_depth == 0 {
                     raw.extend_from_slice(&bytes[pos..]);
                 }
                 break;
-            }
+            },
         }
     }
 
@@ -337,10 +336,14 @@ fn ws_collapse_in_place(buf: &mut Vec<u8>) -> usize {
                     }
                     w += 2;
                 } else if nl_count == 1 {
-                    unsafe { *ptr.add(w) = b'\n'; }
+                    unsafe {
+                        *ptr.add(w) = b'\n';
+                    }
                     w += 1;
                 } else {
-                    unsafe { *ptr.add(w) = b' '; }
+                    unsafe {
+                        *ptr.add(w) = b' ';
+                    }
                     w += 1;
                 }
             }
@@ -364,7 +367,9 @@ fn ws_collapse_in_place(buf: &mut Vec<u8>) -> usize {
             // copy is a no-op we can skip entirely.
             let chunk_len = r - start;
             if w != start {
-                unsafe { std::ptr::copy(ptr.add(start), ptr.add(w), chunk_len); }
+                unsafe {
+                    std::ptr::copy(ptr.add(start), ptr.add(w), chunk_len);
+                }
             }
             w += chunk_len;
         }
@@ -558,15 +563,15 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                                 } else {
                                     None
                                 }
-                            }
+                            },
                             b'l' if entity_bytes.len() == 4 && entity_bytes[2] == b't' => {
                                 // &lt;
                                 Some('<')
-                            }
+                            },
                             b'g' if entity_bytes.len() == 4 && entity_bytes[2] == b't' => {
                                 // &gt;
                                 Some('>')
-                            }
+                            },
                             b'q' if entity_bytes.len() == 6
                                 && entity_bytes[2] == b'u'
                                 && entity_bytes[3] == b'o'
@@ -574,7 +579,7 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                             {
                                 // &quot;
                                 Some('"')
-                            }
+                            },
                             b'n' if entity_bytes.len() == 6
                                 && entity_bytes[2] == b'b'
                                 && entity_bytes[3] == b's'
@@ -582,7 +587,7 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                             {
                                 // &nbsp;
                                 Some('\u{00A0}')
-                            }
+                            },
                             b'#' => {
                                 // Numeric entity: &#NNN; or &#xHHH;
                                 let num_part = &entity[2..entity.len() - 1];
@@ -602,7 +607,7 @@ pub fn unescape_basic_entities(text: &str) -> Cow<'_, str> {
                                     continue;
                                 }
                                 None
-                            }
+                            },
                             _ => None,
                         }
                     } else {

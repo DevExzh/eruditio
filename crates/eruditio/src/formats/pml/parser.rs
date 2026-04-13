@@ -10,7 +10,9 @@ use crate::formats::common::text_utils::push_escape_html;
 
 /// Pre-computed heading open/close tags to avoid `format!` in the parsing loop.
 const H_OPEN: [&str; 7] = ["", "<h1>", "<h2>", "<h3>", "<h4>", "<h5>", "<h6>"];
-const H_CLOSE: [&str; 7] = ["", "</h1>\n", "</h2>\n", "</h3>\n", "</h4>\n", "</h5>\n", "</h6>\n"];
+const H_CLOSE: [&str; 7] = [
+    "", "</h1>\n", "</h2>\n", "</h3>\n", "</h4>\n", "</h5>\n", "</h6>\n",
+];
 
 /// Converts PML markup to HTML.
 pub(crate) fn pml_to_html(pml: &str) -> String {
@@ -499,8 +501,11 @@ pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
         // Verify it's a tag (next byte is > or space).
         if abs + 3 < bytes.len() && (bytes[abs + 3] == b'>' || bytes[abs + 3] == b' ') {
             // Find closing </h1>.
-            let tag_end = memchr::memchr(b'>', &bytes[abs..]).map(|e| abs + e + 1).unwrap_or(abs);
-            let close_pos = memchr::memmem::find(&lowered[tag_end..], b"</h1>").map(|e| tag_end + e);
+            let tag_end = memchr::memchr(b'>', &bytes[abs..])
+                .map(|e| abs + e + 1)
+                .unwrap_or(abs);
+            let close_pos =
+                memchr::memmem::find(&lowered[tag_end..], b"</h1>").map(|e| tag_end + e);
             let title_end = close_pos.map(|c| c + 5).unwrap_or(tag_end);
             // Extract title text.
             if let Some(close) = close_pos {
@@ -542,7 +547,9 @@ pub(crate) fn split_pml_chapters(html: &str) -> Vec<(Option<String>, String)> {
         match kind {
             SplitKind::H1 { title_end } => {
                 // Extract title from <h1>...</h1>.
-                let tag_end = memchr::memchr(b'>', &bytes[*pos..]).map(|e| *pos + e + 1).unwrap_or(*pos);
+                let tag_end = memchr::memchr(b'>', &bytes[*pos..])
+                    .map(|e| *pos + e + 1)
+                    .unwrap_or(*pos);
                 let close = title_end.saturating_sub(5);
                 if close > tag_end {
                     let raw_title = &html[tag_end..close];

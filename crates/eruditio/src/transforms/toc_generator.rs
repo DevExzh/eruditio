@@ -81,20 +81,18 @@ fn extract_first_heading(html: &str) -> Option<String> {
                 None => {
                     i += 1;
                     continue;
-                }
+                },
             };
             // Build the closing tag and search case-insensitively.
             let close_tag = [b'<', b'/', b'h', b'0' + level, b'>'];
-            let close_pos = match crate::formats::common::text_utils::find_ci(
-                &bytes[tag_end..],
-                &close_tag,
-            ) {
-                Some(pos) => tag_end + pos,
-                None => {
-                    i += 1;
-                    continue;
-                }
-            };
+            let close_pos =
+                match crate::formats::common::text_utils::find_ci(&bytes[tag_end..], &close_tag) {
+                    Some(pos) => tag_end + pos,
+                    None => {
+                        i += 1;
+                        continue;
+                    },
+                };
             let heading_html = &html[tag_end..close_pos];
             let heading_text = strip_inner_tags(heading_html);
             let text = heading_text.trim().to_string();

@@ -179,9 +179,9 @@ pub(crate) fn load_manifest_data_parallel(
     let entry_count = manifest
         .ids()
         .filter(|id| {
-            manifest
-                .get(id)
-                .is_some_and(|item| item.data.is_empty() && filter.matches_media_type(&item.media_type))
+            manifest.get(id).is_some_and(|item| {
+                item.data.is_empty() && filter.matches_media_type(&item.media_type)
+            })
         })
         .count();
 
@@ -213,11 +213,9 @@ fn load_sequential(
         manifest
             .ids()
             .filter(|id| {
-                manifest
-                    .get(id)
-                    .is_some_and(|item| {
-                        item.data.is_empty() && filter.matches_media_type(&item.media_type)
-                    })
+                manifest.get(id).is_some_and(|item| {
+                    item.data.is_empty() && filter.matches_media_type(&item.media_type)
+                })
             })
             .map(String::from),
     );
@@ -288,22 +286,22 @@ fn load_parallel(
     filter: LoadFilter,
 ) -> Result<()> {
     let mut entries: Vec<(String, String, String, bool)> = Vec::with_capacity(entry_count);
-    entries.extend(manifest
-        .ids()
-        .filter(|id| {
-            manifest
-                .get(id)
-                .is_some_and(|item| {
+    entries.extend(
+        manifest
+            .ids()
+            .filter(|id| {
+                manifest.get(id).is_some_and(|item| {
                     item.data.is_empty() && filter.matches_media_type(&item.media_type)
                 })
-        })
-        .filter_map(|id| {
-            let item = manifest.get(&id)?;
-            let zip_path = resolve_href(opf_dir, &item.href);
-            let fallback = item.href.clone();
-            let is_text = is_text_media_type(&item.media_type);
-            Some((id.to_string(), zip_path, fallback, is_text))
-        }));
+            })
+            .filter_map(|id| {
+                let item = manifest.get(&id)?;
+                let zip_path = resolve_href(opf_dir, &item.href);
+                let fallback = item.href.clone();
+                let is_text = is_text_media_type(&item.media_type);
+                Some((id.to_string(), zip_path, fallback, is_text))
+            }),
+    );
 
     // Extract metadata before consuming the archive so per-thread archives
     // can skip EOCD scanning and central directory parsing entirely.
@@ -318,24 +316,28 @@ fn load_parallel(
                     // SAFETY: metadata was extracted from the same archive whose
                     // raw bytes back `zip_ref`, so they are guaranteed compatible.
                     unsafe {
-                        ZipArchive::unsafe_new_with_metadata(
-                            Cursor::new(zip_ref),
-                            metadata.clone(),
-                        )
+                        ZipArchive::unsafe_new_with_metadata(Cursor::new(zip_ref), metadata.clone())
                     },
                     Decompress::new(false),
                     Vec::new(),
                 )
             },
-            |(archive, decompressor, raw_buf),
-             (id, zip_path, fallback, is_text)| {
+            |(archive, decompressor, raw_buf), (id, zip_path, fallback, is_text)| {
                 let data = match read_from_archive_reuse(
-                    archive, &zip_path, is_text, decompressor, raw_buf,
+                    archive,
+                    &zip_path,
+                    is_text,
+                    decompressor,
+                    raw_buf,
                 ) {
                     Ok(d) => d,
                     Err(_) => {
                         match read_from_archive_reuse(
-                            archive, &fallback, is_text, decompressor, raw_buf,
+                            archive,
+                            &fallback,
+                            is_text,
+                            decompressor,
+                            raw_buf,
                         ) {
                             Ok(d) => d,
                             Err(_) => return None,

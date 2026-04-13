@@ -121,18 +121,14 @@ fn bench_epub_filtered_parsing(c: &mut Criterion) {
         });
 
         // Text only (EPUB->TXT path)
-        group.bench_with_input(
-            BenchmarkId::new("text_only", "large_1m"),
-            &data,
-            |b, d| {
-                b.iter(|| {
-                    let mut cursor = Cursor::new(black_box(d.as_slice()));
-                    reader
-                        .read_book_filtered(&mut cursor, LoadFilter::TEXT)
-                        .unwrap()
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("text_only", "large_1m"), &data, |b, d| {
+            b.iter(|| {
+                let mut cursor = Cursor::new(black_box(d.as_slice()));
+                reader
+                    .read_book_filtered(&mut cursor, LoadFilter::TEXT)
+                    .unwrap()
+            })
+        });
 
         // Text + images (EPUB->MOBI/FB2 path)
         let text_images = LoadFilter::TEXT | LoadFilter::IMAGES;
@@ -142,9 +138,7 @@ fn bench_epub_filtered_parsing(c: &mut Criterion) {
             |b, d| {
                 b.iter(|| {
                     let mut cursor = Cursor::new(black_box(d.as_slice()));
-                    reader
-                        .read_book_filtered(&mut cursor, text_images)
-                        .unwrap()
+                    reader.read_book_filtered(&mut cursor, text_images).unwrap()
                 })
             },
         );
@@ -426,13 +420,7 @@ fn bench_pipeline_filtered_conversion(c: &mut Criterion) {
                     let mut input = Cursor::new(black_box(epub_data.as_slice()));
                     let mut output = Vec::with_capacity(epub_data.len());
                     pipeline
-                        .convert(
-                            Format::Epub,
-                            Format::Txt,
-                            &mut input,
-                            &mut output,
-                            &opts,
-                        )
+                        .convert(Format::Epub, Format::Txt, &mut input, &mut output, &opts)
                         .unwrap()
                 })
             });
@@ -445,13 +433,7 @@ fn bench_pipeline_filtered_conversion(c: &mut Criterion) {
                     let mut input = Cursor::new(black_box(epub_data.as_slice()));
                     let mut output = Vec::with_capacity(epub_data.len() * 2);
                     pipeline
-                        .convert(
-                            Format::Epub,
-                            Format::Epub,
-                            &mut input,
-                            &mut output,
-                            &opts,
-                        )
+                        .convert(Format::Epub, Format::Epub, &mut input, &mut output, &opts)
                         .unwrap()
                 })
             });
@@ -464,13 +446,7 @@ fn bench_pipeline_filtered_conversion(c: &mut Criterion) {
                     let mut input = Cursor::new(black_box(epub_data.as_slice()));
                     let mut output = Vec::with_capacity(epub_data.len() * 2);
                     pipeline
-                        .convert(
-                            Format::Epub,
-                            Format::Mobi,
-                            &mut input,
-                            &mut output,
-                            &opts,
-                        )
+                        .convert(Format::Epub, Format::Mobi, &mut input, &mut output, &opts)
                         .unwrap()
                 })
             });

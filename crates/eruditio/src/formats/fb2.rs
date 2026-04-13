@@ -72,20 +72,15 @@ impl FormatReader for Fb2Reader {
                     if tag_bytes == b"body" {
                         in_body = true;
                     } else if tag_bytes == b"binary" {
-                        current_binary_id = e
-                            .try_get_attribute(b"id")
-                            .ok()
-                            .flatten()
-                            .map(|a| {
+                        current_binary_id =
+                            e.try_get_attribute(b"id").ok().flatten().map(|a| {
                                 crate::formats::common::text_utils::bytes_to_string(&a.value)
                             });
                         current_binary_ctype = e
                             .try_get_attribute(b"content-type")
                             .ok()
                             .flatten()
-                            .map(|a| {
-                                crate::formats::common::text_utils::bytes_to_string(&a.value)
-                            });
+                            .map(|a| crate::formats::common::text_utils::bytes_to_string(&a.value));
                     } else if tag_bytes == b"section" && in_body {
                         // Entering a (possibly nested) section. If there is
                         // already accumulated content from the parent section,
@@ -157,13 +152,17 @@ impl FormatReader for Fb2Reader {
                             || path_buf == "FictionBook/description/title-info/author/middle-name"
                         {
                             if tag_bytes == b"first-name" {
-                                book.metadata.authors.push(std::mem::take(&mut current_text));
+                                book.metadata
+                                    .authors
+                                    .push(std::mem::take(&mut current_text));
                             } else if tag_bytes == b"last-name" || tag_bytes == b"middle-name" {
                                 if let Some(last) = book.metadata.authors.last_mut() {
                                     last.push(' ');
                                     last.push_str(&current_text);
                                 } else {
-                                    book.metadata.authors.push(std::mem::take(&mut current_text));
+                                    book.metadata
+                                        .authors
+                                        .push(std::mem::take(&mut current_text));
                                 }
                             }
                         } else if path_buf == "FictionBook/description/title-info/lang" {
@@ -447,7 +446,11 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                 }
 
                 // First-byte dispatch for tag processing
-                let first = if tag_bytes.len() > 1 { tag_bytes[1].to_ascii_lowercase() } else { 0 };
+                let first = if tag_bytes.len() > 1 {
+                    tag_bytes[1].to_ascii_lowercase()
+                } else {
+                    0
+                };
 
                 match first {
                     b'p' => {
@@ -465,7 +468,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         }
                         // else: unknown tag starting with 'p' (e.g. <pre>) — skip
                         pos += gt + 1;
-                    }
+                    },
                     b'b' => {
                         // Could be <br>, <b>, <body> (body already skipped above)
                         if starts_with_ci(tag_str, "<br") {
@@ -495,7 +498,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                         }
                         // <body> already handled in structural skip above
                         pos += gt + 1;
-                    }
+                    },
                     b'a' => {
                         // <a> anchor
                         if tag_bytes.len() >= 3 && (tag_bytes[2] == b' ' || tag_bytes[2] == b'>') {
@@ -514,7 +517,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                             // If no href, just skip the tag (keep the text content)
                         }
                         pos += gt + 1;
-                    }
+                    },
                     b'h' => {
                         // Could be <h1>-<h6> heading (head/html already handled above)
                         if tag_bytes.len() >= 4
@@ -532,7 +535,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                             in_p = true;
                         }
                         pos += gt + 1;
-                    }
+                    },
                     b'i' | b'e' => {
                         // <i>, <em> italic open
                         if eq_ci(tag_str, "<i>")
@@ -545,7 +548,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                             in_emphasis = true;
                         }
                         pos += gt + 1;
-                    }
+                    },
                     b's' => {
                         // <strong> bold open
                         if eq_ci(tag_str, "<strong>") || starts_with_ci(tag_str, "<strong ") {
@@ -554,7 +557,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                             in_strong = true;
                         }
                         pos += gt + 1;
-                    }
+                    },
                     b'd' => {
                         // <div> — div open handling (is_div_open already computed above)
                         if is_div_open {
@@ -574,10 +577,14 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                             block_depth += 1;
                         }
                         pos += gt + 1;
-                    }
+                    },
                     b'/' => {
                         // Closing tags — dispatch on byte after '/'
-                        let close = if tag_bytes.len() > 2 { tag_bytes[2].to_ascii_lowercase() } else { 0 };
+                        let close = if tag_bytes.len() > 2 {
+                            tag_bytes[2].to_ascii_lowercase()
+                        } else {
+                            0
+                        };
                         match close {
                             b'p' => {
                                 // </p>
@@ -590,7 +597,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                 flush_paragraph(&mut out, &mut inline_buf);
                                 reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
                                 in_p = false;
-                            }
+                            },
                             b'a' => {
                                 // </a>
                                 // Closing </a> tag
@@ -598,7 +605,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                     inline_buf.push_str("</a>");
                                     in_anchor = false;
                                 }
-                            }
+                            },
                             b'h' => {
                                 // </h1>-</h6>
                                 if tag_bytes.len() >= 5
@@ -607,16 +614,24 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                 {
                                     // Closing </h1>..</h6> tag
                                     inline_buf.push_str("</strong>");
-                                    close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                    close_inline_formatting(
+                                        &mut inline_buf,
+                                        in_strong,
+                                        in_emphasis,
+                                    );
                                     if in_anchor {
                                         inline_buf.push_str("</a>");
                                         in_anchor = false;
                                     }
                                     flush_paragraph(&mut out, &mut inline_buf);
-                                    reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                                    reopen_inline_formatting(
+                                        &mut inline_buf,
+                                        in_emphasis,
+                                        in_strong,
+                                    );
                                     in_p = false;
                                 }
-                            }
+                            },
                             b'b' => {
                                 // </b>
                                 if eq_ci(tag_str, "</b>") {
@@ -624,7 +639,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                     inline_buf.push_str("</strong>");
                                     in_strong = false;
                                 }
-                            }
+                            },
                             b's' => {
                                 // </strong>
                                 if eq_ci(tag_str, "</strong>") {
@@ -632,7 +647,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                     inline_buf.push_str("</strong>");
                                     in_strong = false;
                                 }
-                            }
+                            },
                             b'i' => {
                                 // </i>
                                 if eq_ci(tag_str, "</i>") {
@@ -640,7 +655,7 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                     inline_buf.push_str("</emphasis>");
                                     in_emphasis = false;
                                 }
-                            }
+                            },
                             b'e' => {
                                 // </em>
                                 if eq_ci(tag_str, "</em>") {
@@ -648,35 +663,43 @@ fn html_to_fb2_paragraphs(html: &str) -> String {
                                     inline_buf.push_str("</emphasis>");
                                     in_emphasis = false;
                                 }
-                            }
+                            },
                             b'd' => {
                                 // </div>
                                 if is_div_close {
                                     // Closing </div> – flush accumulated block content
                                     block_depth = block_depth.saturating_sub(1);
                                     if !in_p && block_depth == 0 {
-                                        close_inline_formatting(&mut inline_buf, in_strong, in_emphasis);
+                                        close_inline_formatting(
+                                            &mut inline_buf,
+                                            in_strong,
+                                            in_emphasis,
+                                        );
                                         if in_anchor {
                                             inline_buf.push_str("</a>");
                                             in_anchor = false;
                                         }
                                         flush_paragraph(&mut out, &mut inline_buf);
-                                        reopen_inline_formatting(&mut inline_buf, in_emphasis, in_strong);
+                                        reopen_inline_formatting(
+                                            &mut inline_buf,
+                                            in_emphasis,
+                                            in_strong,
+                                        );
                                     }
                                 }
-                            }
-                            _ => { /* unknown closing tag — skip */ }
+                            },
+                            _ => { /* unknown closing tag — skip */ },
                         }
                         pos += gt + 1;
-                    }
+                    },
                     b'!' | b'?' => {
                         // Already handled in structural skip above, but catch any stragglers
                         pos += gt + 1;
-                    }
+                    },
                     _ => {
                         // Other tags (e.g. <span>, <ul>, <ol>, <table>, etc.) – skip the tag, keep going
                         pos += gt + 1;
-                    }
+                    },
                 }
             } else {
                 // Unclosed '<' – treat as text

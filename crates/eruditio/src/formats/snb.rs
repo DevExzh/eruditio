@@ -9,6 +9,7 @@ use crate::formats::common::text_utils::{
     ends_with_ascii_ci, push_escape_html, push_escape_xml, strip_tags_and_unescape,
 };
 use crate::formats::common::xml_utils;
+use ahash::AHashMap as HashMap;
 use bzip2::Compression as BzCompression;
 use bzip2::read::BzDecoder;
 use bzip2::write::BzEncoder;
@@ -17,7 +18,6 @@ use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use ahash::AHashMap as HashMap;
 use std::io::{Read, Write};
 
 /// SNB ebook format reader.
@@ -661,21 +661,31 @@ impl FormatWriter for SnbWriter {
         let publisher = book.metadata.publisher.as_deref().unwrap_or("");
 
         let mut meta_xml = String::with_capacity(256);
-        meta_xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+        meta_xml.push_str(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
              <book-snbf version=\"1.0\">\n  <head>\n\
-             \x20   <name>");
+             \x20   <name>",
+        );
         push_escape_xml(&mut meta_xml, title);
-        meta_xml.push_str("</name>\n\
-             \x20   <author>");
+        meta_xml.push_str(
+            "</name>\n\
+             \x20   <author>",
+        );
         push_escape_xml(&mut meta_xml, author);
-        meta_xml.push_str("</author>\n\
-             \x20   <language>");
+        meta_xml.push_str(
+            "</author>\n\
+             \x20   <language>",
+        );
         push_escape_xml(&mut meta_xml, language);
-        meta_xml.push_str("</language>\n\
-             \x20   <publisher>");
+        meta_xml.push_str(
+            "</language>\n\
+             \x20   <publisher>",
+        );
         push_escape_xml(&mut meta_xml, publisher);
-        meta_xml.push_str("</publisher>\n\
-             \x20 </head>\n</book-snbf>");
+        meta_xml.push_str(
+            "</publisher>\n\
+             \x20 </head>\n</book-snbf>",
+        );
         plain_files.push(("snbf/book.snbf".into(), meta_xml.into_bytes()));
 
         // 2. Build TOC and chapter SNBC files.

@@ -2,8 +2,8 @@
 #![allow(dead_code)]
 
 use crate::error::{EruditioError, Result};
-use flate2::bufread::ZlibDecoder;
 use ahash::AHashMap as HashMap;
+use flate2::bufread::ZlibDecoder;
 use std::io::Read as IoRead;
 
 use super::header::{read_u16_le, read_u32_le};

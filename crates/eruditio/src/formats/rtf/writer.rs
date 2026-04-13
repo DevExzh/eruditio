@@ -316,20 +316,17 @@ fn parse_css_alignment_rules(css: &str, map: &mut HashMap<String, &'static str>)
                 .unwrap_or(after_ta)
                 .trim_start();
 
-            let align_value =
-                if after_colon.len() >= 5 && after_colon[..5].eq_ignore_ascii_case("right") {
-                    Some("right")
-                } else if after_colon.len() >= 6
-                    && after_colon[..6].eq_ignore_ascii_case("center")
-                {
-                    Some("center")
-                } else if after_colon.len() >= 4
-                    && after_colon[..4].eq_ignore_ascii_case("left")
-                {
-                    Some("left")
-                } else {
-                    None
-                };
+            let align_value = if after_colon.len() >= 5
+                && after_colon[..5].eq_ignore_ascii_case("right")
+            {
+                Some("right")
+            } else if after_colon.len() >= 6 && after_colon[..6].eq_ignore_ascii_case("center") {
+                Some("center")
+            } else if after_colon.len() >= 4 && after_colon[..4].eq_ignore_ascii_case("left") {
+                Some("left")
+            } else {
+                None
+            };
 
             if let Some(align) = align_value {
                 // Extract class name from selector. Support:
@@ -527,7 +524,14 @@ fn html_to_rtf(
             let start = pos;
             while pos < len {
                 let b = bytes[pos];
-                if b == b'<' || b == b'&' || b == b'\\' || b == b'{' || b == b'}' || b == b'\n' || b >= 128 {
+                if b == b'<'
+                    || b == b'&'
+                    || b == b'\\'
+                    || b == b'{'
+                    || b == b'}'
+                    || b == b'\n'
+                    || b >= 128
+                {
                     break;
                 }
                 pos += 1;

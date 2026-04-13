@@ -4,7 +4,11 @@
 //! and production-ready parsing and generation of ebook formats such as EPUB, MOBI,
 //! PDF, FB2, and others.
 
-#[cfg(all(feature = "mimalloc", not(feature = "dhat-heap"), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "mimalloc",
+    not(feature = "dhat-heap"),
+    not(target_arch = "wasm32")
+))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

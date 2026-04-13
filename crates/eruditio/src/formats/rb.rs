@@ -6,8 +6,8 @@
 
 use crate::domain::{Book, Chapter, FormatReader, FormatWriter};
 use crate::error::{EruditioError, Result};
-use flate2::{Compress, Decompress};
 use ahash::AHashMap as HashMap;
+use flate2::{Compress, Decompress};
 use std::fmt::Write as FmtWrite;
 use std::io::{Read, Write};
 

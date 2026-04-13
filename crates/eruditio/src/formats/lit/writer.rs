@@ -498,11 +498,7 @@ impl<'a> BinaryEncoder<'a> {
             .map_or((value, None), |(p, f)| (p, Some(f)));
 
         // Try to resolve path back to manifest internal ID
-        let target_id = self
-            .href_to_id
-            .get(path_part)
-            .copied()
-            .unwrap_or(path_part);
+        let target_id = self.href_to_id.get(path_part).copied().unwrap_or(path_part);
 
         let mut href_body = String::from('\x01');
         href_body.push_str(target_id);
