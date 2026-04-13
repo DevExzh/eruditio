@@ -1304,7 +1304,7 @@ fn reassemble_kf8_xhtml<'a>(part: &'a str) -> Cow<'a, str> {
 /// Returns a vector of string slices, each being a complete XHTML document.
 /// If the content does not contain multiple `<?xml` declarations, falls back
 /// to looking for multiple `<html` tags as boundaries.
-fn split_on_xhtml_boundaries<'a>(html: &'a str) -> Vec<&'a str> {
+fn split_on_xhtml_boundaries(html: &str) -> Vec<&str> {
     let xml_positions = find_all_tags(html.as_bytes(), b"<?xml");
     if xml_positions.len() > 1 {
         return split_at_positions(html, &xml_positions);
@@ -1409,7 +1409,7 @@ struct SimpleChapter<'a> {
 }
 
 /// Splits HTML on `<mbp:pagebreak` tags.
-fn split_on_pagebreaks<'a>(html: &'a str) -> Vec<&'a str> {
+fn split_on_pagebreaks(html: &str) -> Vec<&str> {
     let needle = b"<mbp:pagebreak";
     let positions = find_all_tags(html.as_bytes(), needle);
 

@@ -115,18 +115,20 @@ fn parse_options(options: JsValue) -> Result<ConversionOptions, JsError> {
         || js_opts.rights.is_some();
 
     if has_overrides {
-        let mut meta = Metadata::default();
-        meta.title = js_opts.title;
+        let mut meta = Metadata {
+            title: js_opts.title,
+            publisher: js_opts.publisher,
+            language: js_opts.language,
+            isbn: js_opts.isbn,
+            description: js_opts.description,
+            series: js_opts.series,
+            series_index: js_opts.series_index,
+            rights: js_opts.rights,
+            ..Default::default()
+        };
         if let Some(authors) = js_opts.authors {
             meta.authors = authors.split(',').map(|s| s.trim().to_string()).collect();
         }
-        meta.publisher = js_opts.publisher;
-        meta.language = js_opts.language;
-        meta.isbn = js_opts.isbn;
-        meta.description = js_opts.description;
-        meta.series = js_opts.series;
-        meta.series_index = js_opts.series_index;
-        meta.rights = js_opts.rights;
         if let Some(tags) = js_opts.tags {
             meta.subjects = tags.split(',').map(|s| s.trim().to_string()).collect();
         }

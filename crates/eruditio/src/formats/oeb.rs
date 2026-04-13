@@ -206,7 +206,7 @@ impl FormatWriter for OebWriter {
                 let filename = format!("content/chapter_{}.xhtml", i);
                 let id = format!("chapter_{}", i);
                 let fallback_title = format!("Chapter {}", i + 1);
-                let title = chapter.title.as_deref().unwrap_or(&fallback_title);
+                let title = chapter.title.unwrap_or(&fallback_title);
 
                 let mut xhtml = String::with_capacity(256 + chapter.content.len());
                 xhtml.push_str(
@@ -221,7 +221,7 @@ impl FormatWriter for OebWriter {
                     "</title></head>\n\
                      <body>\n",
                 );
-                xhtml.push_str(&chapter.content);
+                xhtml.push_str(chapter.content);
                 xhtml.push_str("\n</body>\n</html>");
 
                 let opts = if xhtml.len() >= MIN_DEFLATE_SIZE {

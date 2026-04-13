@@ -793,16 +793,7 @@ fn write_epub_parallel<W: Write + Seek>(
                 compress_buf.clear();
                 let max_out =
                     uncompressed_size + (uncompressed_size >> 12) + (uncompressed_size >> 14) + 128;
-                // SAFETY: We reserve `max_out` bytes and set the length without
-                // zeroing.  This is safe because flate2's `compress()` writes to
-                // the entire output region up to `total_out` and we immediately
-                // `truncate()` to that length.  The uninitialized bytes between
-                // `total_out` and `max_out` are never read.  This eliminates
-                // 36.5M instructions of memset per conversion (37% of HTML→EPUB).
-                compress_buf.reserve(max_out);
-                unsafe {
-                    compress_buf.set_len(max_out);
-                }
+                compress_buf.resize(max_out, 0);
                 let status = compressor
                     .compress(&entry.data, compress_buf, FlushCompress::Finish)
                     .map_err(|e| EruditioError::Format(format!("deflate compress: {}", e)))?;

@@ -131,7 +131,8 @@ fn test_pg23962_mobi_content() {
             continue;
         }
 
-        let book = EruditioParser::parse_file(&path).expect(&format!("{} should parse", rel));
+        let book =
+            EruditioParser::parse_file(&path).unwrap_or_else(|_| panic!("{} should parse", rel));
 
         assert!(
             book.chapter_count() >= 1,
@@ -171,7 +172,8 @@ fn test_pg31757_epub_content() {
             continue;
         }
 
-        let book = EruditioParser::parse_file(&path).expect(&format!("{} should parse", rel));
+        let book =
+            EruditioParser::parse_file(&path).unwrap_or_else(|_| panic!("{} should parse", rel));
 
         assert!(
             book.chapter_count() >= 1,
@@ -211,7 +213,8 @@ fn test_pg31757_mobi_content() {
             continue;
         }
 
-        let book = EruditioParser::parse_file(&path).expect(&format!("{} should parse", rel));
+        let book =
+            EruditioParser::parse_file(&path).unwrap_or_else(|_| panic!("{} should parse", rel));
 
         assert!(
             book.chapter_count() >= 1,

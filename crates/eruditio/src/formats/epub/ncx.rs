@@ -60,10 +60,10 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
                         current_text.clear();
                     },
                     "content" if in_nav_map && !stack.is_empty() => {
-                        if let Some(attr) = e.try_get_attribute(b"src").ok().flatten() {
-                            if let Some(item) = stack.last_mut() {
-                                item.href = xml_utils::bytes_to_string(&attr.value);
-                            }
+                        if let Some(attr) = e.try_get_attribute(b"src").ok().flatten()
+                            && let Some(item) = stack.last_mut()
+                        {
+                            item.href = xml_utils::bytes_to_string(&attr.value);
                         }
                     },
                     _ => {},
@@ -72,12 +72,13 @@ pub fn parse_ncx(xml: &str) -> Result<Vec<TocItem>> {
             Ok(Event::Empty(ref e)) => {
                 let name = e.name();
                 let tag = xml_utils::local_tag_name(name.as_ref());
-                if tag == "content" && in_nav_map && !stack.is_empty() {
-                    if let Some(attr) = e.try_get_attribute(b"src").ok().flatten() {
-                        if let Some(item) = stack.last_mut() {
-                            item.href = xml_utils::bytes_to_string(&attr.value);
-                        }
-                    }
+                if tag == "content"
+                    && in_nav_map
+                    && !stack.is_empty()
+                    && let Some(attr) = e.try_get_attribute(b"src").ok().flatten()
+                    && let Some(item) = stack.last_mut()
+                {
+                    item.href = xml_utils::bytes_to_string(&attr.value);
                 }
             },
             Ok(Event::Text(ref e)) => {

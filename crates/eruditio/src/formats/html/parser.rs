@@ -435,8 +435,8 @@ mod tests {
     #[test]
     fn extract_attribute_works() {
         let tag = r#"<meta name="author" content="Bob">"#;
-        assert_eq!(extract_attribute(tag, "name"), Some("author".into()));
-        assert_eq!(extract_attribute(tag, "content"), Some("Bob".into()));
+        assert_eq!(extract_attribute(tag, "name"), Some("author"));
+        assert_eq!(extract_attribute(tag, "content"), Some("Bob"));
     }
 
     #[test]

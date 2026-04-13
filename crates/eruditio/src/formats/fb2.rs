@@ -1063,7 +1063,7 @@ fn generate_fb2(book: &Book) -> String {
         if section_written {
             xml.push_str("      <empty-line/>\n");
         }
-        xml.push_str(&fb2_content);
+        xml.push_str(fb2_content);
         xml.push_str("    </section>\n");
         section_written = true;
     }

@@ -92,9 +92,9 @@ pub(crate) fn pml_to_html(pml: &str) -> String {
                         pos += 1;
                     }
                     let title = &pml[title_start..pos];
-                    html.push_str(H_OPEN[level as usize]);
+                    html.push_str(H_OPEN[level]);
                     push_escape_html(&mut html, title);
-                    html.push_str(H_CLOSE[level as usize]);
+                    html.push_str(H_CLOSE[level]);
                 },
                 // Bold toggle.
                 b'b' | b'B' => {

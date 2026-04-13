@@ -15,12 +15,12 @@ use super::registry::FormatRegistry;
 use crate::domain::traits::Transform;
 
 /// Enum dispatch for transforms — avoids `Box<dyn Transform>` vtable overhead
-/// and heap allocation per conversion.  All variants except `MetadataMerger`
-/// are zero-sized, so the enum is small and cache-friendly.
+/// and heap allocation per conversion.  The `MetadataMerger` variant is boxed
+/// to keep the overall enum size small.
 enum TransformKind {
     DataUriExtractor(DataUriExtractor),
     HtmlNormalizer(HtmlNormalizer),
-    MetadataMerger(MetadataMerger),
+    MetadataMerger(Box<MetadataMerger>),
     StructureDetector(StructureDetector),
     TocGenerator(TocGenerator),
     CoverHandler(CoverHandler),
@@ -32,7 +32,7 @@ impl TransformKind {
         match self {
             Self::DataUriExtractor(t) => Transform::apply(t, book),
             Self::HtmlNormalizer(t) => Transform::apply(t, book),
-            Self::MetadataMerger(t) => Transform::apply(t, book),
+            Self::MetadataMerger(t) => Transform::apply(t.as_ref(), book),
             Self::StructureDetector(t) => Transform::apply(t, book),
             Self::TocGenerator(t) => Transform::apply(t, book),
             Self::CoverHandler(t) => Transform::apply(t, book),
@@ -221,8 +221,8 @@ impl Pipeline {
         }
 
         if let Some(ref overrides) = options.metadata_overrides {
-            chain.push(TransformKind::MetadataMerger(MetadataMerger::new(
-                overrides.clone(),
+            chain.push(TransformKind::MetadataMerger(Box::new(
+                MetadataMerger::new(overrides.clone()),
             )));
         }
 

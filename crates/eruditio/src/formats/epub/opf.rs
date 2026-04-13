@@ -287,7 +287,7 @@ fn parse_spine_itemref(e: &quick_xml::events::BytesStart<'_>, spine: &mut Spine)
         .try_get_attribute(b"linear")
         .ok()
         .flatten()
-        .map_or(true, |attr| attr.value.as_ref() != b"no");
+        .is_none_or(|attr| attr.value.as_ref() != b"no");
 
     let item = if linear {
         SpineItem::new(idref)

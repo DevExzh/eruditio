@@ -295,7 +295,7 @@ fn load_parallel(
                 })
             })
             .filter_map(|id| {
-                let item = manifest.get(&id)?;
+                let item = manifest.get(id)?;
                 let zip_path = resolve_href(opf_dir, &item.href);
                 let fallback = item.href.clone();
                 let is_text = is_text_media_type(&item.media_type);
