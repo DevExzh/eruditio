@@ -99,6 +99,20 @@ All text-processing hot paths use hand-tuned AVX-512/AVX2/SSE2/NEON intrinsics w
 | DOCX | Planned |
 | ODT | Planned |
 
+## Web Converter
+
+Eruditio compiles to WebAssembly and ships a browser-based converter built with Svelte 5. All conversion runs locally in a Web Worker — no server upload required.
+
+```bash
+# Build the WASM module
+cd web && bash build-wasm.sh
+
+# Install deps and start dev server
+npm install && npm run dev
+```
+
+The web app lives in `web/` and uses the `eruditio-wasm` crate (`crates/eruditio-wasm/`) which exposes `convert()` and `supported_formats()` to JavaScript via `wasm-bindgen`.
+
 ## CLI
 
 Eruditio ships a CLI converter (`eruditio-convert`) with the same interface as Calibre's `ebook-convert`:
@@ -198,26 +212,30 @@ let book = EruditioParser::parse(&mut cursor, Some("fb2"))?;
 ## Architecture
 
 ```
-src/
-├── domain/          Core models (Book, Chapter, Metadata, Resource, Format)
-├── formats/         Format-specific readers and writers
-│   ├── common/      Shared utilities (XML, HTML, ZIP, ITSS container)
-│   │   └── intrinsics/  SIMD-accelerated text primitives (AVX-512/AVX2/SSE2/NEON/SIMD128)
-│   ├── epub/        EPUB reader/writer
-│   ├── mobi/        MOBI/KF8 reader/writer
-│   ├── djvu/        DjVu reader (IFF85 parser + BZZ decompressor)
-│   ├── chm/         CHM reader (ITSS + LZX decompression)
-│   ├── lit/         LIT reader/writer (ITSS + unbinary + MS DES/SHA1 for DRM)
-│   ├── lrf/         Sony LRF reader/writer
-│   ├── html/        HTML reader/writer
-│   ├── rtf/         RTF reader/writer
-│   ├── pml/         PML reader/writer
-│   └── ...          Other format modules (FB2, CBZ, SNB, OEB, MD, PDB, etc.)
-├── transforms/      Book-to-Book transformation pipeline
-├── pipeline/        Format registry and conversion orchestration
-├── parser.rs        EruditioParser — unified entry point
-├── error.rs         Error types (EruditioError)
-└── lib.rs           Public API re-exports
+crates/
+├── eruditio/            Core library
+│   └── src/
+│       ├── domain/          Core models (Book, Chapter, Metadata, Resource, Format)
+│       ├── formats/         Format-specific readers and writers
+│       │   ├── common/      Shared utilities (XML, HTML, ZIP, ITSS container)
+│       │   │   └── intrinsics/  SIMD-accelerated text primitives (AVX-512/AVX2/SSE2/NEON/SIMD128)
+│       │   ├── epub/        EPUB reader/writer
+│       │   ├── mobi/        MOBI/KF8 reader/writer
+│       │   ├── djvu/        DjVu reader (IFF85 parser + BZZ decompressor)
+│       │   ├── chm/         CHM reader (ITSS + LZX decompression)
+│       │   ├── lit/         LIT reader/writer (ITSS + unbinary + MS DES/SHA1 for DRM)
+│       │   ├── lrf/         Sony LRF reader/writer
+│       │   ├── html/        HTML reader/writer
+│       │   ├── rtf/         RTF reader/writer
+│       │   ├── pml/         PML reader/writer
+│       │   └── ...          Other format modules (FB2, CBZ, SNB, OEB, MD, PDB, etc.)
+│       ├── transforms/      Book-to-Book transformation pipeline
+│       ├── pipeline/        Format registry and conversion orchestration
+│       ├── parser.rs        EruditioParser — unified entry point
+│       ├── error.rs         Error types (EruditioError)
+│       └── lib.rs           Public API re-exports
+├── eruditio-wasm/       WASM bindings (wasm-bindgen, convert + supported_formats)
+web/                     Browser converter (Svelte 5 + Vite + Web Worker)
 ```
 
 ~57,000 lines of Rust across the library, tests, and benchmarks.
@@ -226,6 +244,7 @@ Key design principles:
 
 - **Pure Rust**: No C/C++ dependencies for format parsing. BZZ, LZX, MS DES, MS SHA-1, PalmDOC LZ77, and Huffman/CDIC decoders are all implemented in Rust.
 - **SIMD-accelerated**: Hot paths use hand-tuned AVX-512BW/AVX2/SSE2 (x86), NEON (aarch64), and SIMD128 (wasm32) intrinsics with runtime feature detection for ASCII validation, whitespace skipping, byte scanning, pattern matching, case folding, and CP-1252 decoding.
+- **WASM-ready**: The library compiles to WebAssembly via `wasm-pack`, with optional features (`parallel`, `mimalloc`) gated behind feature flags for compatibility.
 - **Stream-oriented**: All readers accept `&mut dyn Read`, enabling parsing from files, network streams, or in-memory buffers.
 - **Trait-based**: `FormatReader` and `FormatWriter` traits allow uniform handling across all formats.
 - **Immutability**: `Book` and all domain types are treated as immutable values. Transforms produce new `Book` instances.
@@ -243,7 +262,7 @@ cargo +nightly test lit
 cargo +nightly test chm
 ```
 
-The test suite includes 1,070+ tests covering unit tests within each format module and integration tests in `tests/`.
+The test suite includes 1,090+ tests: 1,034 Rust tests (unit + integration + doc) and 59 Svelte component tests.
 
 ### Running Benchmarks
 
@@ -257,6 +276,12 @@ python3 scripts/generate_plots.py
 
 # Full comparison against Calibre (requires ebook-convert)
 python3 bench_compare.py
+```
+
+### Web App Tests
+
+```bash
+cd web && npm test
 ```
 
 ## Test Data Management
