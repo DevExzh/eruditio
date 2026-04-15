@@ -149,12 +149,7 @@ mod aarch64 {
 
 /// Scalar merge: adds c1, c2, c3 into c0 element-by-element.
 #[inline]
-fn merge_histograms_scalar(
-    c0: &mut [u32; 256],
-    c1: &[u32; 256],
-    c2: &[u32; 256],
-    c3: &[u32; 256],
-) {
+fn merge_histograms_scalar(c0: &mut [u32; 256], c1: &[u32; 256], c2: &[u32; 256], c3: &[u32; 256]) {
     for i in 0..256 {
         c0[i] += c1[i] + c2[i] + c3[i];
     }
@@ -173,12 +168,7 @@ fn merge_histograms_scalar(
 /// - Scalar fallback for other architectures
 #[allow(unreachable_code)]
 #[inline]
-fn merge_histograms(
-    c0: &mut [u32; 256],
-    c1: &[u32; 256],
-    c2: &[u32; 256],
-    c3: &[u32; 256],
-) {
+fn merge_histograms(c0: &mut [u32; 256], c1: &[u32; 256], c2: &[u32; 256], c3: &[u32; 256]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {

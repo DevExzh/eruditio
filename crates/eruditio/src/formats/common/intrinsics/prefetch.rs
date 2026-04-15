@@ -20,9 +20,7 @@
 
 #[cfg(target_arch = "x86_64")]
 mod x86 {
-    use core::arch::x86_64::{
-        _mm_prefetch, _MM_HINT_ET0, _MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1,
-    };
+    use core::arch::x86_64::{_MM_HINT_ET0, _MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _mm_prefetch};
 
     /// Prefetch for reading into L1 cache.
     ///
@@ -274,25 +272,25 @@ mod tests {
 
     #[test]
     fn prefetch_read_l1_valid_pointer() {
-        let data = vec![0u8; 128];
+        let data = [0u8; 128];
         prefetch_read_l1(data.as_ptr());
     }
 
     #[test]
     fn prefetch_read_l2_valid_pointer() {
-        let data = vec![0u8; 128];
+        let data = [0u8; 128];
         prefetch_read_l2(data.as_ptr());
     }
 
     #[test]
     fn prefetch_write_l1_valid_pointer() {
-        let data = vec![0u8; 128];
+        let data = [0u8; 128];
         prefetch_write_l1(data.as_ptr());
     }
 
     #[test]
     fn prefetch_nta_valid_pointer() {
-        let data = vec![0u8; 128];
+        let data = [0u8; 128];
         prefetch_nta(data.as_ptr());
     }
 
