@@ -11,6 +11,7 @@
 //! - `0xC0..=0xFF`: space + (byte XOR 0x80)
 
 use crate::error::{EruditioError, Result};
+use crate::formats::common::intrinsics::prefetch::prefetch_read_l1;
 
 /// Maximum uncompressed text record size.
 pub const RECORD_SIZE: usize = 4096;
@@ -229,9 +230,31 @@ impl HashChain {
         while candidate != NO_ENTRY && steps < MAX_CHAIN {
             let cand = candidate as usize;
 
+            // Prefetch the next chain link early, before the heavy work
+            // (match_length). Reading `self.prev[cand]` now and issuing a
+            // prefetch for the next candidate's data gives the memory
+            // subsystem time to fetch the cache line while we're busy
+            // comparing bytes.
+            //
+            // Prefetch distance: 1 step ahead. Justification: the chain
+            // walk body is ~15-20 cycles (match_length + comparisons), L1
+            // latency is ~4-5 cycles, so 1 step gives sufficient time for
+            // the prefetch to complete.
+            let next_candidate = self.prev[cand];
+            if next_candidate != NO_ENTRY {
+                let next_cand = next_candidate as usize;
+                if next_cand < data.len() {
+                    // SAFETY: `next_cand < data.len()` guarantees the pointer
+                    // is within the allocation. `prefetch_read_l1` is a hint
+                    // and does not dereference the pointer — a faulting
+                    // address is silently ignored by the CPU.
+                    prefetch_read_l1(unsafe { data.as_ptr().add(next_cand) });
+                }
+            }
+
             // Candidate must be before `pos` and inside the sliding window.
             if cand >= pos || cand < window_start {
-                candidate = self.prev[cand];
+                candidate = next_candidate;
                 steps += 1;
                 continue;
             }
@@ -250,7 +273,7 @@ impl HashChain {
                 }
             }
 
-            candidate = self.prev[cand];
+            candidate = next_candidate;
             steps += 1;
         }
 
