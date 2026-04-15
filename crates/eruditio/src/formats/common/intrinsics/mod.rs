@@ -16,5 +16,6 @@ pub(crate) mod hex_decode;
 pub(crate) mod histogram;
 pub(crate) mod is_ascii;
 pub(crate) mod match_length;
+pub(crate) mod prefetch;
 pub(crate) mod short_pattern;
 pub(crate) mod skip_ws;
