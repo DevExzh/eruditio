@@ -11,7 +11,7 @@
 //! - `0xC0..=0xFF`: space + (byte XOR 0x80)
 
 use crate::error::{EruditioError, Result};
-use crate::formats::common::intrinsics::prefetch::prefetch_read_l1;
+use crate::formats::common::intrinsics::prefetch::{prefetch_read_l1, prefetch_read_l2};
 
 /// Maximum uncompressed text record size.
 pub const RECORD_SIZE: usize = 4096;
@@ -509,6 +509,30 @@ impl PalmDocCompressor {
         let mut i = 0;
 
         while i < input_len {
+            // Software-pipelined input prefetch: warm the next cache lines of input
+            // data while processing the current position. This overlaps memory
+            // latency with the hash chain operations and match-finding work.
+            //
+            // L1 prefetch at +64 bytes (1 cache line ahead): covers the next
+            // ~64 bytes of sequential access. The loop body takes ~20-40 cycles
+            // per iteration (hash + potential match_length), giving L1 (~4-5 cycles)
+            // ample time to complete.
+            //
+            // L2 prefetch at +256 bytes (4 cache lines ahead): warms L2 for data
+            // that will reach L1 in ~4-8 iterations, hiding L2 latency (~12-14 cycles).
+            //
+            // μop budget: 2 prefetch μops per iteration. On x86_64, the main loop
+            // body is estimated at ~15-20 μops for the common path (hash + literal),
+            // so 2 extra μops keeps us well within LSD eligibility (≤28 μops).
+            if i + 64 < input_len {
+                // SAFETY: `i + 64 < input_len` guarantees the pointer is within bounds.
+                prefetch_read_l1(unsafe { input.as_ptr().add(i + 64) });
+            }
+            if i + 256 < input_len {
+                // SAFETY: `i + 256 < input_len` guarantees the pointer is within bounds.
+                prefetch_read_l2(unsafe { input.as_ptr().add(i + 256) });
+            }
+
             // Try LZ77 back-reference.
             if i >= MIN_MATCH
                 && input_len - i >= MIN_MATCH
