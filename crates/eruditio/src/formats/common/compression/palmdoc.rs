@@ -244,10 +244,10 @@ impl HashChain {
             if next_candidate != NO_ENTRY {
                 let next_cand = next_candidate as usize;
                 if next_cand < data.len() {
-                    // SAFETY: `next_cand < data.len()` guarantees the pointer
-                    // is within the allocation. `prefetch_read_l1` is a hint
-                    // and does not dereference the pointer — a faulting
-                    // address is silently ignored by the CPU.
+                    // SAFETY: `next_cand < data.len()` guarantees the offset
+                    // is within the allocation, so `ptr::add` does not exceed
+                    // bounds. The resulting pointer is passed to `prefetch_read_l1`
+                    // which is a safe hint that never dereferences.
                     prefetch_read_l1(unsafe { data.as_ptr().add(next_cand) });
                 }
             }
@@ -525,11 +525,13 @@ impl PalmDocCompressor {
             // body is estimated at ~15-20 μops for the common path (hash + literal),
             // so 2 extra μops keeps us well within LSD eligibility (≤28 μops).
             if i + 64 < input_len {
-                // SAFETY: `i + 64 < input_len` guarantees the pointer is within bounds.
+                // SAFETY: `i + 64 < input_len` guarantees the offset is within
+                // the allocation, so `ptr::add` does not exceed bounds.
                 prefetch_read_l1(unsafe { input.as_ptr().add(i + 64) });
             }
             if i + 256 < input_len {
-                // SAFETY: `i + 256 < input_len` guarantees the pointer is within bounds.
+                // SAFETY: `i + 256 < input_len` guarantees the offset is within
+                // the allocation, so `ptr::add` does not exceed bounds.
                 prefetch_read_l2(unsafe { input.as_ptr().add(i + 256) });
             }
 

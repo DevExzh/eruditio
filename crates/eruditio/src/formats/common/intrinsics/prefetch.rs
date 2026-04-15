@@ -59,8 +59,9 @@ mod x86 {
     #[inline]
     pub(crate) fn prefetch_write_l1(ptr: *const u8) {
         // SAFETY: `_mm_prefetch` is a hint instruction that never faults, even
-        // on null or unmapped addresses. SSE is always available on x86_64.
-        // `_MM_HINT_ET0` requests exclusive ownership into L1 (PREFETCHW).
+        // on null or unmapped addresses. `_MM_HINT_ET0` compiles to PREFETCHW
+        // (available on Intel Broadwell+ / AMD K8+); on older CPUs it degrades
+        // to a regular prefetch or NOP.
         unsafe {
             _mm_prefetch(ptr as *const i8, _MM_HINT_ET0);
         }
