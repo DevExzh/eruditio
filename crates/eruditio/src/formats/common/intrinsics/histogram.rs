@@ -2,8 +2,10 @@
 //!
 //! Uses 4 independent counter arrays to avoid store-forwarding stalls,
 //! a micro-architectural optimization that reduces memory dependency
-//! bottlenecks on large inputs. This is not SIMD vectorization per se,
-//! but achieves significant throughput improvement on all platforms.
+//! bottlenecks on large inputs. The final merge of the 4 histogram
+//! arrays is SIMD-vectorized (AVX2/SSE2/NEON) for throughput.
+
+use super::prefetch::prefetch_read_l1;
 
 /// Counts the frequency of each byte value in `data` using a single counter array.
 #[allow(dead_code)]
@@ -15,10 +17,199 @@ pub(crate) fn byte_histogram_scalar(data: &[u8]) -> [u32; 256] {
     counts
 }
 
+// ---------------------------------------------------------------------------
+// x86_64 SIMD merge implementations
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+mod x86 {
+    use core::arch::x86_64::*;
+
+    /// AVX2 merge: processes 8 u32s (256 bits) per iteration, 32 iterations total.
+    ///
+    /// Prefetches the next cache line of c1/c2/c3 ahead of the current iteration
+    /// to keep the L1 data cache warm.
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn merge_histograms_avx2(
+        c0: &mut [u32; 256],
+        c1: &[u32; 256],
+        c2: &[u32; 256],
+        c3: &[u32; 256],
+    ) {
+        let c0_ptr = c0.as_mut_ptr();
+        let c1_ptr = c1.as_ptr();
+        let c2_ptr = c2.as_ptr();
+        let c3_ptr = c3.as_ptr();
+
+        // 256 u32s / 8 per AVX2 register = 32 iterations.
+        // Each iteration processes 32 bytes (8 * 4 bytes per u32).
+        // A cache line is 64 bytes = 16 u32s = 2 iterations.
+        unsafe {
+            for i in 0..32 {
+                let offset = i * 8;
+
+                // Prefetch next cache line of c1/c2/c3 (64 bytes = 16 u32s ahead).
+                if i % 2 == 0 && i + 2 < 32 {
+                    let prefetch_offset = (i + 2) * 8;
+                    super::prefetch_read_l1(c1_ptr.add(prefetch_offset) as *const u8);
+                    super::prefetch_read_l1(c2_ptr.add(prefetch_offset) as *const u8);
+                    super::prefetch_read_l1(c3_ptr.add(prefetch_offset) as *const u8);
+                }
+
+                let v0 = _mm256_loadu_si256(c0_ptr.add(offset) as *const __m256i);
+                let v1 = _mm256_loadu_si256(c1_ptr.add(offset) as *const __m256i);
+                let v2 = _mm256_loadu_si256(c2_ptr.add(offset) as *const __m256i);
+                let v3 = _mm256_loadu_si256(c3_ptr.add(offset) as *const __m256i);
+
+                let sum01 = _mm256_add_epi32(v0, v1);
+                let sum23 = _mm256_add_epi32(v2, v3);
+                let total = _mm256_add_epi32(sum01, sum23);
+
+                _mm256_storeu_si256(c0_ptr.add(offset) as *mut __m256i, total);
+            }
+        }
+    }
+
+    /// SSE2 merge: processes 4 u32s (128 bits) per iteration, 64 iterations total.
+    #[target_feature(enable = "sse2")]
+    pub(super) unsafe fn merge_histograms_sse2(
+        c0: &mut [u32; 256],
+        c1: &[u32; 256],
+        c2: &[u32; 256],
+        c3: &[u32; 256],
+    ) {
+        let c0_ptr = c0.as_mut_ptr();
+        let c1_ptr = c1.as_ptr();
+        let c2_ptr = c2.as_ptr();
+        let c3_ptr = c3.as_ptr();
+
+        // 256 u32s / 4 per SSE2 register = 64 iterations.
+        unsafe {
+            for i in 0..64 {
+                let offset = i * 4;
+
+                let v0 = _mm_loadu_si128(c0_ptr.add(offset) as *const __m128i);
+                let v1 = _mm_loadu_si128(c1_ptr.add(offset) as *const __m128i);
+                let v2 = _mm_loadu_si128(c2_ptr.add(offset) as *const __m128i);
+                let v3 = _mm_loadu_si128(c3_ptr.add(offset) as *const __m128i);
+
+                let sum01 = _mm_add_epi32(v0, v1);
+                let sum23 = _mm_add_epi32(v2, v3);
+                let total = _mm_add_epi32(sum01, sum23);
+
+                _mm_storeu_si128(c0_ptr.add(offset) as *mut __m128i, total);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// aarch64 NEON merge implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64 {
+    use core::arch::aarch64::*;
+
+    /// NEON merge: processes 4 u32s (128 bits) per iteration, 64 iterations total.
+    pub(super) unsafe fn merge_histograms_neon(
+        c0: &mut [u32; 256],
+        c1: &[u32; 256],
+        c2: &[u32; 256],
+        c3: &[u32; 256],
+    ) {
+        let c0_ptr = c0.as_mut_ptr();
+        let c1_ptr = c1.as_ptr();
+        let c2_ptr = c2.as_ptr();
+        let c3_ptr = c3.as_ptr();
+
+        // 256 u32s / 4 per NEON register = 64 iterations.
+        unsafe {
+            for i in 0..64 {
+                let offset = i * 4;
+
+                let v0 = vld1q_u32(c0_ptr.add(offset));
+                let v1 = vld1q_u32(c1_ptr.add(offset));
+                let v2 = vld1q_u32(c2_ptr.add(offset));
+                let v3 = vld1q_u32(c3_ptr.add(offset));
+
+                let sum01 = vaddq_u32(v0, v1);
+                let sum23 = vaddq_u32(v2, v3);
+                let total = vaddq_u32(sum01, sum23);
+
+                vst1q_u32(c0_ptr.add(offset), total);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scalar merge fallback
+// ---------------------------------------------------------------------------
+
+/// Scalar merge: adds c1, c2, c3 into c0 element-by-element.
+#[inline]
+fn merge_histograms_scalar(
+    c0: &mut [u32; 256],
+    c1: &[u32; 256],
+    c2: &[u32; 256],
+    c3: &[u32; 256],
+) {
+    for i in 0..256 {
+        c0[i] += c1[i] + c2[i] + c3[i];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch
+// ---------------------------------------------------------------------------
+
+/// Merges four histogram arrays by adding c1, c2, c3 into c0.
+///
+/// Selects the best available SIMD implementation at runtime:
+/// - AVX2: 8 u32s per iteration (32 iterations)
+/// - SSE2: 4 u32s per iteration (64 iterations)
+/// - NEON: 4 u32s per iteration (64 iterations)
+/// - Scalar fallback for other architectures
+#[allow(unreachable_code)]
+#[inline]
+fn merge_histograms(
+    c0: &mut [u32; 256],
+    c1: &[u32; 256],
+    c2: &[u32; 256],
+    c3: &[u32; 256],
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 feature is confirmed present by the runtime check.
+            unsafe {
+                x86::merge_histograms_avx2(c0, c1, c2, c3);
+            }
+            return;
+        }
+        // SAFETY: SSE2 is always available on x86_64.
+        unsafe {
+            x86::merge_histograms_sse2(c0, c1, c2, c3);
+        }
+        return;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON is always available on aarch64.
+        unsafe {
+            aarch64::merge_histograms_neon(c0, c1, c2, c3);
+        }
+        return;
+    }
+    merge_histograms_scalar(c0, c1, c2, c3);
+}
+
 /// Counts the frequency of each byte value in `data`.
 ///
 /// Uses 4 independent counter arrays to avoid store-forwarding stalls
-/// when consecutive bytes index the same cache line.
+/// when consecutive bytes index the same cache line. The final merge
+/// of the 4 arrays is SIMD-vectorized for throughput.
 #[allow(dead_code)]
 #[inline]
 pub(crate) fn byte_histogram(data: &[u8]) -> [u32; 256] {
@@ -49,10 +240,8 @@ pub(crate) fn byte_histogram(data: &[u8]) -> [u32; 256] {
         c0[data[tail_start + i] as usize] += 1;
     }
 
-    // Merge the 4 arrays.
-    for i in 0..256 {
-        c0[i] += c1[i] + c2[i] + c3[i];
-    }
+    // Merge the 4 arrays using SIMD-vectorized addition.
+    merge_histograms(&mut c0, &c1, &c2, &c3);
 
     c0
 }
