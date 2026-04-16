@@ -36,12 +36,12 @@ All text-processing hot paths use hand-tuned AVX-512/AVX2/SSE2/NEON intrinsics w
 
 | Intrinsic | Throughput | Scalar Baseline | Speedup |
 |---|---:|---:|---:|
-| `is_ascii` (1 KB) | 282 GB/s | 4.2 GB/s | **67x** |
-| `short_pattern` (10 KB) | 130 GB/s | 4.2 GB/s | **31x** |
-| `skip_whitespace` (1 KB) | 76 GB/s | 3.2 GB/s | **23x** |
-| `byte_scan` (10 KB) | 81 GB/s | -- | -- |
-| `cp1252_decode` (10 KB) | 74 GB/s | -- | -- |
-| `case_fold` (1 KB) | 40 GB/s | -- | -- |
+| `is_ascii` (1 KB) | 289 GB/s | 4.3 GB/s | **68x** |
+| `short_pattern` (10 KB) | 112 GB/s | 4.4 GB/s | **25x** |
+| `skip_whitespace` (1 KB) | 78 GB/s | 3.3 GB/s | **24x** |
+| `byte_scan` (10 KB) | 82 GB/s | -- | -- |
+| `cp1252_decode` (10 KB) | 65 GB/s | -- | -- |
+| `case_fold` (1 KB) | 46 GB/s | -- | -- |
 | `find_ci` (50 KB) | 5.4 GB/s | -- | -- |
 
 ## Supported Formats
